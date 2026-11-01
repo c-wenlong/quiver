@@ -6,10 +6,10 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from quiver.mcp.discover import MergeResult, McpFinding
-from quiver.harness.discover import HarnessFinding
-from quiver.setup.commands import cmd_setup
-from quiver.setup.wizard import (
+from swe.mcp.discover import MergeResult, McpFinding
+from swe.harness.discover import HarnessFinding
+from swe.setup.commands import cmd_setup
+from swe.setup.wizard import (
     StageOutcome,
     _ask_yes_no,
     _stage_harnesses,
@@ -21,14 +21,14 @@ from quiver.setup.wizard import (
     backup_file,
     run_setup_wizard,
 )
-from quiver.skills.symlinks import SkillsSymlinkHint
+from swe.skills.symlinks import SkillsSymlinkHint
 
 
 class SetupWizardTest(unittest.TestCase):
     def setUp(self):
         # The hub stage joins only while ~/.quiver can take a clone, which a
         # throwaway HOME always can; these tests are about the other six.
-        patcher = patch("quiver.init.hub.can_clone", return_value=False)
+        patcher = patch("swe.init.hub.can_clone", return_value=False)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -52,9 +52,9 @@ class SetupWizardTest(unittest.TestCase):
         self.assertTrue(result)
         self.assertIn("Enter yes or no", output.getvalue())
 
-    @patch("quiver.setup.wizard.backup_file")
-    @patch("quiver.setup.wizard.apply_findings", return_value=(["claude"], []))
-    @patch("quiver.setup.wizard.discover_harnesses")
+    @patch("swe.setup.wizard.backup_file")
+    @patch("swe.setup.wizard.apply_findings", return_value=(["claude"], []))
+    @patch("swe.setup.wizard.discover_harnesses")
     def test_harness_stage_confirms_and_applies_high_confidence_findings(
         self, discover, apply, backup
     ):
@@ -96,7 +96,7 @@ class SetupWizardTest(unittest.TestCase):
             key: stage(key)
             for key in ("harnesses", "providers", "mcp", "skills", "report", "check")
         }
-        with patch.dict("quiver.setup.wizard._STAGES", stages, clear=True):
+        with patch.dict("swe.setup.wizard._STAGES", stages, clear=True):
             result = run_setup_wizard(input_fn=lambda _prompt: "")
 
         self.assertEqual(result, 0)
@@ -115,7 +115,7 @@ class SetupWizardTest(unittest.TestCase):
             "check": Mock(),
         }
         output = io.StringIO()
-        with patch.dict("quiver.setup.wizard._STAGES", stages, clear=True), redirect_stdout(output):
+        with patch.dict("swe.setup.wizard._STAGES", stages, clear=True), redirect_stdout(output):
             result = run_setup_wizard()
 
         self.assertEqual(result, 130)
@@ -138,7 +138,7 @@ class SetupWizardTest(unittest.TestCase):
             "check": Mock(),
         }
         output = io.StringIO()
-        with patch.dict("quiver.setup.wizard._STAGES", stages, clear=True), redirect_stdout(output):
+        with patch.dict("swe.setup.wizard._STAGES", stages, clear=True), redirect_stdout(output):
             result = run_setup_wizard()
 
         self.assertEqual(result, 130)
@@ -157,15 +157,15 @@ class SetupWizardTest(unittest.TestCase):
             "check": Mock(return_value=StageOutcome("check", "Check", "ready", "ok")),
         }
         output = io.StringIO()
-        with patch.dict("quiver.setup.wizard._STAGES", stages, clear=True), redirect_stdout(output):
+        with patch.dict("swe.setup.wizard._STAGES", stages, clear=True), redirect_stdout(output):
             result = run_setup_wizard()
 
         self.assertEqual(result, 0)
         later.assert_called_once()
         self.assertIn("broken registry", output.getvalue())
 
-    @patch("quiver.setup.wizard.discover_provider_keys")
-    @patch("quiver.setup.wizard.load_provider_registry", return_value={"openai": {}})
+    @patch("swe.setup.wizard.discover_provider_keys")
+    @patch("swe.setup.wizard.load_provider_registry", return_value={"openai": {}})
     def test_provider_stage_distinguishes_configured_and_missing_keys(
         self, _registry, discover
     ):
@@ -181,12 +181,12 @@ class SetupWizardTest(unittest.TestCase):
         self.assertEqual(ready.status, "ready")
         self.assertEqual(attention.status, "attention")
 
-    @patch("quiver.setup.wizard.backup_file", return_value=Path("/tmp/mcp.json.bak"))
+    @patch("swe.setup.wizard.backup_file", return_value=Path("/tmp/mcp.json.bak"))
     @patch(
-    "quiver.setup.wizard.apply_mcp_findings",
+    "swe.setup.wizard.apply_mcp_findings",
     return_value=MergeResult(added=["notion"], updated=[], orphaned=[], pruned=[]),
 )
-    @patch("quiver.setup.wizard.discover_mcp_servers")
+    @patch("swe.setup.wizard.discover_mcp_servers")
     def test_mcp_stage_applies_confirmed_findings(self, discover, apply, _backup):
         finding = McpFinding(
             name="notion",
@@ -205,8 +205,8 @@ class SetupWizardTest(unittest.TestCase):
         self.assertEqual(outcome.changed, ("notion",))
         apply.assert_called_once_with([finding])
 
-    @patch("quiver.setup.wizard.apply_skills_symlink_hints", return_value=["symlink codex"])
-    @patch("quiver.setup.wizard.skills_symlink_hints")
+    @patch("swe.setup.wizard.apply_skills_symlink_hints", return_value=["symlink codex"])
+    @patch("swe.setup.wizard.skills_symlink_hints")
     def test_skills_stage_applies_safe_hint_and_rechecks(self, hints, apply):
         safe = SkillsSymlinkHint(
             label="codex",
@@ -224,8 +224,8 @@ class SetupWizardTest(unittest.TestCase):
         self.assertEqual(outcome.status, "changed")
         apply.assert_called_once_with([safe], home=Path("/tmp/home"))
 
-    @patch("quiver.setup.wizard.report_setup_complete", return_value=True)
-    @patch("quiver.setup.wizard.load_resolved_config", return_value={})
+    @patch("swe.setup.wizard.report_setup_complete", return_value=True)
+    @patch("swe.setup.wizard.load_resolved_config", return_value={})
     def test_report_stage_quick_mode_keeps_valid_configuration(self, _load, _complete):
         outcome = _stage_report(
             1, 1, input_fn=lambda _prompt: "", home=Path("/tmp/home"), quick=True
@@ -234,13 +234,13 @@ class SetupWizardTest(unittest.TestCase):
         self.assertEqual(outcome.status, "ready")
         self.assertEqual(outcome.changed, ())
 
-    @patch("quiver.setup.wizard.skills_symlink_hints", return_value=[])
-    @patch("quiver.setup.wizard.load_resolved_config", return_value={})
-    @patch("quiver.setup.wizard.report_setup_complete", return_value=False)
-    @patch("quiver.setup.wizard.check_config", return_value=["broken"])
-    @patch("quiver.setup.wizard.discover_provider_keys", return_value=[])
-    @patch("quiver.setup.wizard.load_provider_registry", return_value={})
-    @patch("quiver.setup.wizard.discover_harnesses", return_value=[])
+    @patch("swe.setup.wizard.skills_symlink_hints", return_value=[])
+    @patch("swe.setup.wizard.load_resolved_config", return_value={})
+    @patch("swe.setup.wizard.report_setup_complete", return_value=False)
+    @patch("swe.setup.wizard.check_config", return_value=["broken"])
+    @patch("swe.setup.wizard.discover_provider_keys", return_value=[])
+    @patch("swe.setup.wizard.load_provider_registry", return_value={})
+    @patch("swe.setup.wizard.discover_harnesses", return_value=[])
     def test_check_stage_reports_attention_for_missing_setup(self, *_mocks):
         outcome = _stage_check(
             1, 1, input_fn=lambda _prompt: "", home=Path("/tmp/home"), quick=False
@@ -250,14 +250,14 @@ class SetupWizardTest(unittest.TestCase):
 
 
 class SetupCommandRoutingTest(unittest.TestCase):
-    @patch("quiver.setup.commands.run_setup_wizard", return_value=0)
-    @patch("quiver.setup.commands.sys.stdin.isatty", return_value=True)
+    @patch("swe.setup.commands.run_setup_wizard", return_value=0)
+    @patch("swe.setup.commands.sys.stdin.isatty", return_value=True)
     def test_interactive_setup_routes_section_and_quick_mode(self, _isatty, wizard):
         self.assertEqual(cmd_setup(["report", "--quick"]), 0)
         wizard.assert_called_once_with(section="report", quick=True)
 
-    @patch("quiver.setup.commands.run_setup_wizard")
-    @patch("quiver.setup.commands.sys.stdin.isatty", return_value=False)
+    @patch("swe.setup.commands.run_setup_wizard")
+    @patch("swe.setup.commands.sys.stdin.isatty", return_value=False)
     def test_section_requires_interactive_terminal(self, _isatty, wizard):
         output = io.StringIO()
         with redirect_stdout(output):

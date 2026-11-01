@@ -7,13 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from quiver.ledger.models import LedgerRecord, UsageEvent
-from quiver.ledger.pricing import (PricingCatalog, alias_target, base_name, load_catalog, rates_from_entry,
+from swe.ledger.models import LedgerRecord, UsageEvent
+from swe.ledger.pricing import (PricingCatalog, alias_target, base_name, load_catalog, rates_from_entry,
                                    remove_overrides, save_override)
-from quiver.ledger.store import LedgerStore
-from quiver.webapp.api import WebApp
-from quiver.webapp.pages import _brands, pricing
-from quiver.webapp.static import STATIC_DIR
+from swe.ledger.store import LedgerStore
+from swe.webapp.api import WebApp
+from swe.webapp.pages import _brands, pricing
+from swe.webapp.static import STATIC_DIR
 
 from tests.test_remote_hub import HubBase
 
@@ -285,9 +285,9 @@ class TestRoute(HubBase):
         from types import SimpleNamespace
         from unittest.mock import patch
 
-        from quiver.ledger.store import ledger_path_for
+        from swe.ledger.store import ledger_path_for
 
-        scan = patch("quiver.webapp.api.scan", return_value=SimpleNamespace(errors=[]))
+        scan = patch("swe.webapp.api.scan", return_value=SimpleNamespace(errors=[]))
         scan.start()
         self.addCleanup(scan.stop)
         store = LedgerStore(ledger_path_for(self.srv.home))

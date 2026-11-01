@@ -12,7 +12,7 @@ import os
 import unittest
 from pathlib import Path
 
-from quiver.plugins.catalog import _public, build_catalog, owners, plugin_dirs
+from swe.plugins.catalog import _public, build_catalog, owners, plugin_dirs
 
 try:  # `unittest discover -s tests` puts tests/ itself on sys.path
     from test_json_output import decode

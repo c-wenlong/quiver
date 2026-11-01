@@ -2,7 +2,7 @@
 
 ``GatewayServerTest`` runs the real HTTP server in-process against a fake
 stdio server (``fixtures/fake_stdio_mcp.py``). The CLI tests run
-``python -m quiver.mcp`` against a throwaway HOME, the way
+``python -m swe.mcp`` against a throwaway HOME, the way
 ``test_mcp_sync_integration`` does.
 """
 
@@ -19,10 +19,10 @@ import urllib.error
 import urllib.request
 from unittest.mock import patch
 
-from quiver.mcp import gateway
-from quiver.mcp import gateway_server
-from quiver.mcp.gateway_server import Gateway, make_server
-from quiver.remote import launchd
+from swe.mcp import gateway
+from swe.mcp import gateway_server
+from swe.mcp.gateway_server import Gateway, make_server
+from swe.remote import launchd
 
 FAKE = pathlib.Path(__file__).resolve().parent / "fixtures" / "fake_stdio_mcp.py"
 PROJECT_SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
@@ -388,7 +388,7 @@ class GatewayCommandsInProcessTest(unittest.TestCase):
     """The command handlers, run in-process against a throwaway HOME."""
 
     def setUp(self):
-        from quiver.mcp import cli as mcp_cli
+        from swe.mcp import cli as mcp_cli
 
         self.tmp = tempfile.TemporaryDirectory()
         self.home = pathlib.Path(self.tmp.name)
@@ -415,7 +415,7 @@ class GatewayCommandsInProcessTest(unittest.TestCase):
         import io
         from contextlib import redirect_stderr, redirect_stdout
 
-        from quiver.mcp.gateway_commands import cmd_gateway
+        from swe.mcp.gateway_commands import cmd_gateway
 
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -448,7 +448,7 @@ class GatewayCommandsInProcessTest(unittest.TestCase):
             gateway_server.load_hub_specs()
 
     def test_status_text_and_json(self):
-        from quiver.mcp import gateway_commands as gc
+        from swe.mcp import gateway_commands as gc
 
         self.run_cmd("share", "api")
         live = {"error": "cannot read the hub, keeping the last good servers: bad",
@@ -473,7 +473,7 @@ class GatewayCommandsInProcessTest(unittest.TestCase):
             self.assertIn("down", out)
 
     def test_install_and_uninstall(self):
-        from quiver.mcp import gateway_commands as gc
+        from swe.mcp import gateway_commands as gc
 
         installed = {}
 
@@ -506,7 +506,7 @@ class GatewayCommandsInProcessTest(unittest.TestCase):
         self.assertEqual((code, "no swe here" in err), (1, True))
 
     def test_gateway_program_always_names_the_port(self):
-        from quiver.mcp import gateway_commands as gc
+        from swe.mcp import gateway_commands as gc
 
         with patch.object(gc.launchd, "bundled_swe", return_value=pathlib.Path("/Apps/swe")), \
                 patch.object(gc, "_supports_gateway", return_value=True):
@@ -527,7 +527,7 @@ class GatewayCommandsInProcessTest(unittest.TestCase):
     def test_serve_runs_until_interrupted_and_stops_servers(self):
         import io
 
-        from quiver.mcp import gateway_commands as gc
+        from swe.mcp import gateway_commands as gc
 
         class Stub:
             def serve_forever(self):
@@ -588,7 +588,7 @@ class GatewayCliTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_mcp(self, *args):
-        return subprocess.run([sys.executable, "-m", "quiver.mcp", *args], capture_output=True,
+        return subprocess.run([sys.executable, "-m", "swe.mcp", *args], capture_output=True,
                               text=True, env=_env(self.home), timeout=60)
 
     def hub_data(self):
@@ -685,7 +685,7 @@ class GatewayCliTest(unittest.TestCase):
 
 class GatewayLaunchdTest(unittest.TestCase):
     def test_the_agent_gets_its_own_label(self):
-        from quiver.mcp.gateway_commands import LABEL
+        from swe.mcp.gateway_commands import LABEL
 
         with tempfile.TemporaryDirectory() as tmp:
             home = pathlib.Path(tmp)

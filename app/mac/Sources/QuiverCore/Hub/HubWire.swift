@@ -1,7 +1,7 @@
 import Foundation
 
 /// Wire types for the hub's `/v1/sessions` routes, as the Sessions chat
-/// reads them. Field names match `src/quiver/remote/protocol.py` and
+/// reads them. Field names match `src/swe/remote/protocol.py` and
 /// `catalog.py`; the iPhone app's `Models.swift` (app/ios) holds the
 /// same shapes. Every field the hub may omit is optional, so a newer hub
 /// never breaks decoding.

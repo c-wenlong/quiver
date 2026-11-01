@@ -6,15 +6,15 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-import quiver
-from quiver.cli import COMMANDS, cmd_providers
+import swe
+from swe.cli import COMMANDS, cmd_providers
 
 
 def _run_main(argv):
     out, err = io.StringIO(), io.StringIO()
     with mock.patch("sys.argv", ["swe", *argv]), \
             redirect_stdout(out), redirect_stderr(err):
-        from quiver.cli import main
+        from swe.cli import main
         status = main()
     return status, out.getvalue(), err.getvalue()
 
@@ -25,7 +25,7 @@ class VersionCommandTest(unittest.TestCase):
             with self.subTest(spelling=spelling):
                 status, out, err = _run_main([spelling])
                 self.assertEqual(status, 0)
-                self.assertEqual(out, f"swe {quiver.__version__}\n")
+                self.assertEqual(out, f"swe {swe.__version__}\n")
                 self.assertEqual(err, "")
 
     def test_version_is_dispatchable_not_an_alias_hack(self):
@@ -40,7 +40,7 @@ class VersionCommandTest(unittest.TestCase):
                 doc = json.loads(out)
                 self.assertEqual(doc["schema"], 1)
                 self.assertEqual(doc["data"]["name"], "swe")
-                self.assertEqual(doc["data"]["version"], quiver.__version__)
+                self.assertEqual(doc["data"]["version"], swe.__version__)
                 self.assertIn("python", doc["data"])
                 self.assertEqual(err, "")
 
@@ -53,9 +53,9 @@ class VersionCommandTest(unittest.TestCase):
         # Patch the path registry.py actually reads, the way
         # test_registry_state.py isolates ~/.quiver: the module constants
         # are bound at import, so HOME alone proves nothing.
-        from quiver import cli
-        from quiver.configuration import ConfigurationError
-        from quiver.harness import registry
+        from swe import cli
+        from swe.configuration import ConfigurationError
+        from swe.harness import registry
         with tempfile.TemporaryDirectory() as home:
             harness_file = (pathlib.Path(home) / ".quiver" / "config"
                             / "harness.json")
@@ -68,7 +68,7 @@ class VersionCommandTest(unittest.TestCase):
                 with redirect_stdout(out), redirect_stderr(err):
                     status = cli.cmd_version([])
         self.assertEqual(status, 0)
-        self.assertEqual(out.getvalue(), f"swe {quiver.__version__}\n")
+        self.assertEqual(out.getvalue(), f"swe {swe.__version__}\n")
 
     def test_version_help_routes_through_cmd_help(self):
         for spelling in ("version", "-v", "-V", "--version"):
@@ -90,9 +90,9 @@ class FirstRunScaffoldingTest(unittest.TestCase):
     def _fresh_registry_paths(self, home: pathlib.Path):
         config = home / ".quiver" / "config"
         return (
-            mock.patch("quiver.harness.registry.CONFIG_DIR", config),
-            mock.patch("quiver.harness.registry.HARNESS_FILE", config / "harness.json"),
-            mock.patch("quiver.harness.registry.TOOLS_FILE", config / "tools.json"),
+            mock.patch("swe.harness.registry.CONFIG_DIR", config),
+            mock.patch("swe.harness.registry.HARNESS_FILE", config / "harness.json"),
+            mock.patch("swe.harness.registry.TOOLS_FILE", config / "tools.json"),
         )
 
     def _run_with_fresh_paths(self, home: pathlib.Path, argv):
@@ -118,25 +118,25 @@ class FirstRunScaffoldingTest(unittest.TestCase):
             home = pathlib.Path(tmp)
             status, out, _err = self._run_with_fresh_paths(home, ["--version"])
             self.assertEqual(status, 0)
-            self.assertEqual(out, f"swe {quiver.__version__}\n")
+            self.assertEqual(out, f"swe {swe.__version__}\n")
             self.assertFalse((home / ".quiver").exists())
 
 
 class VersionCompletionTest(unittest.TestCase):
     def test_version_is_in_primary_completions(self):
-        from quiver.completion import _PRIMARY_COMMANDS
+        from swe.completion import _PRIMARY_COMMANDS
         names = [name for name, _ in _PRIMARY_COMMANDS]
         self.assertIn("version", names)
 
     def test_version_flag_completion_offers_json(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
         candidates = [name for name, _ in get_completions(["version", "--"])]
         self.assertIn("--json", candidates)
 
 
 class ProvidersCliRoutingTest(unittest.TestCase):
     def test_cmd_providers_forwards_arguments_and_status(self):
-        with mock.patch("quiver.cli.providers_cli.main", return_value=7) as provider_main:
+        with mock.patch("swe.cli.providers_cli.main", return_value=7) as provider_main:
             result = cmd_providers(["info", "anthropic"])
 
         self.assertEqual(result, 7)
@@ -148,7 +148,7 @@ class ProvidersCliRoutingTest(unittest.TestCase):
 
 
 class LazyRemoteImportTest(unittest.TestCase):
-    """#517: `import quiver.cli` must not pull `quiver.remote` in.
+    """#517: `import swe.cli` must not pull `swe.remote` in.
 
     cli.py dispatches `swe remote` through a function-local import so
     `swe version` and friends don't pay for sessions, reports and the
@@ -160,9 +160,9 @@ class LazyRemoteImportTest(unittest.TestCase):
         import subprocess
         import sys
         code = (
-            "import sys, quiver.cli\n"
-            "sys.exit(any(m == 'quiver.remote' or "
-            "m.startswith('quiver.remote.') for m in sys.modules))"
+            "import sys, swe.cli\n"
+            "sys.exit(any(m == 'swe.remote' or "
+            "m.startswith('swe.remote.') for m in sys.modules))"
         )
         proc = subprocess.run([sys.executable, "-c", code],
                               capture_output=True, text=True, timeout=60)
@@ -175,12 +175,12 @@ class ProvidersHelpRouteTest(unittest.TestCase):
 
     def test_providers_help_bypasses_top_level_summary(self):
         import sys
-        from quiver.cli import main
+        from swe.cli import main
 
         for argv in (["swe", "providers", "--help"], ["swe", "pv", "-h"]):
             with self.subTest(argv=argv):
                 with mock.patch.object(sys, "argv", argv), mock.patch(
-                    "quiver.cli.providers_cli.main", return_value=0
+                    "swe.cli.providers_cli.main", return_value=0
                 ) as provider_main:
                     result = main()
                 self.assertEqual(result, 0)

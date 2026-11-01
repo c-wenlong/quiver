@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from quiver.ledger.models import LedgerRecord, UsageEvent
-from quiver.ledger.scan import scan
-from quiver.ledger.store import LedgerStore, ledger_path_for
+from swe.ledger.models import LedgerRecord, UsageEvent
+from swe.ledger.scan import scan
+from swe.ledger.store import LedgerStore, ledger_path_for
 
 
 def _rec(key, total, msg=None, sidechain=False, ts=1000.0):
@@ -242,7 +242,7 @@ class TestDatabaseSources(unittest.TestCase):
         # One count just under SQLite's int64 limit, one past it (stored
         # as REAL): uncapped, the first overflowed the Overview's SUMs and
         # the second failed the insert. Mac twin: #1312.
-        from quiver.ledger.models import MAX_TOKENS
+        from swe.ledger.models import MAX_TOKENS
 
         def reply(tokens):
             return json.dumps({"role": "assistant", "modelID": "gpt-x",
@@ -269,7 +269,7 @@ class TestDatabaseSources(unittest.TestCase):
         # A row saved uncapped before the readers capped: an unchanged
         # source is never re-read and an upsert keeps the larger total,
         # so the store itself clamps such rows when it opens.
-        from quiver.ledger.models import MAX_TOKENS
+        from swe.ledger.models import MAX_TOKENS
 
         path = ledger_path_for(self.home)
         self.store.db.execute(
@@ -291,7 +291,7 @@ class TestDatabaseSources(unittest.TestCase):
             2 * MAX_TOKENS)
 
     def test_a_corrupt_huge_devin_count_is_capped(self):
-        from quiver.ledger.models import MAX_TOKENS
+        from swe.ledger.models import MAX_TOKENS
 
         meta = {"request_id": "r1", "generation_model": "swe-2",
                 "created_at": "2026-10-03T10:00:00Z",

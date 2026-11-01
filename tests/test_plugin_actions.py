@@ -13,7 +13,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from quiver.plugins.actions import (
+from swe.plugins.actions import (
     ActionError,
     _edit_enabled,
     plugin_action,
@@ -270,7 +270,7 @@ class CodexTomlEditTest(_ActionHome, unittest.TestCase):
         import threading
         import time
 
-        from quiver.paths import cache_dir_for
+        from swe.paths import cache_dir_for
 
         self.write('[plugins."tool@mk"]\nenabled = true\n')
         lock = cache_dir_for(self.home) / "codex-config.lock"

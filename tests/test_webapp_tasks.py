@@ -13,10 +13,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.github import gh, manage, repos
-from quiver.remote import tasks as tasks_mod
-from quiver.github import shared as G
-from quiver.webapp.pages import tasks as T
+from swe.github import gh, manage, repos
+from swe.remote import tasks as tasks_mod
+from swe.github import shared as G
+from swe.webapp.pages import tasks as T
 
 from tests.test_remote_hub import _Server, _session
 from tests.test_remote_pulls import _row
@@ -46,12 +46,12 @@ class _Base(unittest.TestCase):
             lambda name, state, limit: {
                 "repo": name, "status": "ok",
                 "issues": [_issue_row(5), _issue_row(6)]})
-        with patch("quiver.github.gh.probe_env", return_value=env), \
-             patch("quiver.remote.pulls._repo_pulls",
+        with patch("swe.github.gh.probe_env", return_value=env), \
+             patch("swe.remote.pulls._repo_pulls",
                    side_effect=pulls), \
-             patch("quiver.github.cli._fetch_issues",
+             patch("swe.github.cli._fetch_issues",
                    side_effect=issues), \
-             patch("quiver.github.gh.run_json",
+             patch("swe.github.gh.run_json",
                    side_effect=run_json or (lambda *a, **k:
                                             gh.GhResult("not-found"))):
             yield
@@ -117,7 +117,7 @@ class TestPageRoute(_Base):
 
     def test_harnesses_answer(self):
         # The rows are the Repositories page's harnesses(), tested there.
-        with patch("quiver.webapp.pages.tasks.harnesses",
+        with patch("swe.webapp.pages.tasks.harnesses",
                    return_value=[{"name": "claude"}]) as rows:
             status, body = self._get("/v1/app/tasks?harnesses=1")
         self.assertEqual(status, 200, body)
@@ -125,7 +125,7 @@ class TestPageRoute(_Base):
         rows.assert_called_once_with(self.srv.home)
         self.assertEqual(body["machine"], self.srv.state.machine["name"])
         # The flag doesn't pull the task list at all.
-        with patch("quiver.remote.catalog.launchable_harnesses",
+        with patch("swe.remote.catalog.launchable_harnesses",
                    return_value=[]), \
              patch.object(tasks_mod, "list_view") as view:
             status, body = self._get("/v1/app/tasks?harnesses=1")

@@ -8,11 +8,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.remote import catalog as catalog_mod
-from quiver.remote import supervise
-from quiver.sessions.models import Session
-from quiver.webapp.pages import PageContext, PageError
-from quiver.webapp.pages import sessions as sessions_page
+from swe.remote import catalog as catalog_mod
+from swe.remote import supervise
+from swe.sessions.models import Session
+from swe.webapp.pages import PageContext, PageError
+from swe.webapp.pages import sessions as sessions_page
 
 
 def _session(sid="s1", tool="claude", path="/tmp", ts=0):

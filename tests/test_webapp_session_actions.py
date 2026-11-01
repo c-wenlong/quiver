@@ -13,12 +13,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from quiver.webapp import sessions
+from swe.webapp import sessions
 
 from tests.test_webapp import app_js_function
 from tests.test_webapp_launch_sheets import MENU_JS, STUB
 
-STATIC = Path(__file__).resolve().parent.parent / "src" / "quiver" / "webapp" / "static"
+STATIC = Path(__file__).resolve().parent.parent / "src" / "swe" / "webapp" / "static"
 SESSIONS_JS = STATIC / "sessions.js"
 CHAT_JS = STATIC / "pages" / "chat.js"
 

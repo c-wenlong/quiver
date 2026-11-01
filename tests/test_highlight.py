@@ -13,7 +13,7 @@ import re
 import unittest
 from pathlib import Path
 
-from quiver.find.highlight import STYLE, highlight, language_for
+from swe.find.highlight import STYLE, highlight, language_for
 from tests._tempdir import temp_dir
 
 NESTED = re.compile(r"\x1b\[[0-9;]*\x1b")
@@ -123,7 +123,7 @@ class PaneIntegrationTest(unittest.TestCase):
     def test_the_browser_colours_after_truncating(self):
         """Read as source: colouring first would let the pane's own
         truncation cut an escape in half."""
-        source = Path("src/quiver/find/browser.py").read_text()
+        source = Path("src/swe/find/browser.py").read_text()
         block = source[source.index("text = truncate(preview[row]"):]
         block = block[:block.index("out.append")]
         self.assertLess(block.index("truncate("), block.index("highlight("))
@@ -131,8 +131,8 @@ class PaneIntegrationTest(unittest.TestCase):
     def test_a_file_row_uses_a_different_bar_from_a_folder(self):
         """Blue reads as "there is more below this", and on a file there
         is not."""
-        from quiver.find.browser import _left_cell
-        from quiver.find.entries import Entry
+        from swe.find.browser import _left_cell
+        from swe.find.entries import Entry
 
         d = temp_dir(self)
         f = d / "SKILL.md"
@@ -147,8 +147,8 @@ class PaneIntegrationTest(unittest.TestCase):
         import io
         from contextlib import redirect_stdout
 
-        from quiver.find.browser import _render
-        from quiver.find.entries import Entry
+        from swe.find.browser import _render
+        from swe.find.entries import Entry
 
         buf = io.StringIO()
         with redirect_stdout(buf):

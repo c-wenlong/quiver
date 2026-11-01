@@ -9,21 +9,21 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.engines.common import (
+from swe.sessions.engines.common import (
     clean_title,
     extract_user_text,
     parse_iso_ts,
     path_from_encoded_dir,
     strip_file_uri,
 )
-from quiver.sessions.engines.json_engine import JsonParserConfig, parse_json_store
-from quiver.sessions.models import Session
-from quiver.sessions.engines.jsonl_engine import (
+from swe.sessions.engines.json_engine import JsonParserConfig, parse_json_store
+from swe.sessions.models import Session
+from swe.sessions.engines.jsonl_engine import (
     JsonlParserConfig,
     first_user_title,
     parse_jsonl_projects,
 )
-from quiver.sessions.engines.sqlite_engine import SqliteParserConfig, parse_sqlite
+from swe.sessions.engines.sqlite_engine import SqliteParserConfig, parse_sqlite
 
 
 class CommonHelpersTest(unittest.TestCase):
@@ -909,7 +909,7 @@ class EngineCommonHelpersTest(unittest.TestCase):
     """Error and edge branches in sessions/engines/common.py."""
 
     def test_expand_path_rules(self):
-        from quiver.sessions.engines.common import expand_path
+        from swe.sessions.engines.common import expand_path
         self.assertEqual(expand_path(""), "")
         self.assertEqual(expand_path("/abs/path"), "/abs/path")
         self.assertEqual(expand_path("rel/path"), "rel/path")
@@ -918,7 +918,7 @@ class EngineCommonHelpersTest(unittest.TestCase):
         self.assertTrue(expanded.endswith("/x"))
 
     def test_open_sqlite_ro(self):
-        from quiver.sessions.engines.common import open_sqlite_ro
+        from swe.sessions.engines.common import open_sqlite_ro
         self.assertIsNone(open_sqlite_ro("/definitely/not/a/db.sqlite"))
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "d.sqlite"
@@ -939,20 +939,20 @@ class EngineCommonHelpersTest(unittest.TestCase):
             lazy.close()
 
     def test_path_from_encoded_dir(self):
-        from quiver.sessions.engines.common import path_from_encoded_dir
+        from swe.sessions.engines.common import path_from_encoded_dir
         self.assertEqual(path_from_encoded_dir("-Users-a-b"), "/Users/a/b")
         self.assertEqual(path_from_encoded_dir("noprefix"), "/noprefix")
         self.assertEqual(path_from_encoded_dir("-"), "")
         self.assertEqual(path_from_encoded_dir(""), "")
 
     def test_strip_file_uri(self):
-        from quiver.sessions.engines.common import strip_file_uri
+        from swe.sessions.engines.common import strip_file_uri
         self.assertEqual(strip_file_uri("file:///a%20b/c"), "/a b/c")
         self.assertEqual(strip_file_uri("/plain"), "/plain")
         self.assertEqual(strip_file_uri(42), "")
 
     def test_dig(self):
-        from quiver.sessions.engines.common import dig
+        from swe.sessions.engines.common import dig
         d = {"a": {"b": {"c": 7}}}
         self.assertEqual(dig(d, "a", "b", "c"), 7)
         self.assertEqual(dig(d, "a", "x"), None)
@@ -961,7 +961,7 @@ class EngineCommonHelpersTest(unittest.TestCase):
         self.assertEqual(dig(None, "a"), None)
 
     def test_extract_user_text_shapes(self):
-        from quiver.sessions.engines.common import extract_user_text
+        from swe.sessions.engines.common import extract_user_text
         self.assertEqual(extract_user_text("plain"), "plain")
         self.assertEqual(extract_user_text(["  ", {"type": "text", "text": "blk"}]), "blk")
         self.assertEqual(extract_user_text([{"text": "untyped"}]), "untyped")
@@ -972,7 +972,7 @@ class EngineCommonHelpersTest(unittest.TestCase):
         self.assertEqual(extract_user_text({}), "")
 
     def test_parse_iso_ts_edges(self):
-        from quiver.sessions.engines.common import parse_iso_ts
+        from swe.sessions.engines.common import parse_iso_ts
         self.assertEqual(parse_iso_ts(None), 0.0)
         self.assertEqual(parse_iso_ts(float("nan")), 0.0)
         self.assertEqual(parse_iso_ts(float("inf")), 0.0)

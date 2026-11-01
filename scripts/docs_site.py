@@ -63,7 +63,7 @@ def strip_ansi(text: str) -> str:
 def cli_page(root: Path) -> str:
     """The `swe help` output rendered as one page, one H3 per command."""
     sys.path.insert(0, str(root / "src"))
-    from quiver.help_text import COMMAND_CATEGORIES, HELP  # noqa: PLC0415
+    from swe.help_text import COMMAND_CATEGORIES, HELP  # noqa: PLC0415
 
     out = ["# CLI reference", "",
            "> Generated from `swe help` by `scripts/docs_site.py` — do not edit.",

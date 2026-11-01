@@ -4,8 +4,8 @@ off-PATH harness."""
 import unittest
 from unittest.mock import patch
 
-from quiver.harness.doctor import install_method
-from quiver.harness.path_health import OffPathHit
+from swe.harness.doctor import install_method
+from swe.harness.path_health import OffPathHit
 
 NVM_CODEX = "/home/u/.nvm/versions/node/v22/lib/node_modules/@openai/codex/bin/codex.js"
 
@@ -13,8 +13,8 @@ NVM_CODEX = "/home/u/.nvm/versions/node/v22/lib/node_modules/@openai/codex/bin/c
 class InstallMethodTest(unittest.TestCase):
     def method(self, on_path, hits):
         with patch("shutil.which", side_effect=lambda t: f"/usr/bin/{t}" if t in on_path else None), \
-                patch("quiver.harness.path_health.search_dirs_for_command", return_value=hits), \
-                patch("quiver.harness.registry.load_registry_readonly",
+                patch("swe.harness.path_health.search_dirs_for_command", return_value=hits), \
+                patch("swe.harness.registry.load_registry_readonly",
                       return_value={"codex": {"command": "codex"}}):
             return install_method("codex")
 

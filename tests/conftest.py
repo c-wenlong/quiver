@@ -15,10 +15,10 @@ def _pin_terminal_width(monkeypatch):
     """Render every test against a fixed, generous width.
 
     Tests that care about narrow terminals should patch
-    ``quiver.console.terminal_width`` themselves rather than relying on
+    ``swe.console.terminal_width`` themselves rather than relying on
     whatever shell invoked pytest.
     """
     monkeypatch.setenv("COLUMNS", "200")
     monkeypatch.setenv("LINES", "50")
-    monkeypatch.setattr("quiver.console.terminal_width", lambda default=146: 200)
+    monkeypatch.setattr("swe.console.terminal_width", lambda default=146: 200)
     yield

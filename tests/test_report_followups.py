@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from quiver.reports.followups import FollowUpLedger, stable_follow_up_id
-from quiver.reports.store import MalformedReportStateError
+from swe.reports.followups import FollowUpLedger, stable_follow_up_id
+from swe.reports.store import MalformedReportStateError
 
 
 class TickingClock:

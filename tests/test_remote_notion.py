@@ -16,12 +16,12 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver import paths
-from quiver.github import gh
-from quiver.mcp import secrets as mcp_secrets
-from quiver.remote import notion
-from quiver.remote import tasks as tasks_mod
-from quiver.github import shared as G
+from swe import paths
+from swe.github import gh
+from swe.mcp import secrets as mcp_secrets
+from swe.remote import notion
+from swe.remote import tasks as tasks_mod
+from swe.github import shared as G
 
 from tests.test_remote_hub import _Server, _session
 
@@ -147,7 +147,7 @@ class _Home(unittest.TestCase):
 
     def _run(self, routes, call):
         router = _Router(routes)
-        with patch("quiver.remote.notion._request", side_effect=router):
+        with patch("swe.remote.notion._request", side_effect=router):
             out = call(notion.NotionTasks(self.home))
         return out, router
 
@@ -787,7 +787,7 @@ def _http_error(code, body=None, headers=None):
 
 class TestTransport(unittest.TestCase):
     def test_headers_and_body(self):
-        with patch("quiver.remote.notion.urllib.request.urlopen",
+        with patch("swe.remote.notion.urllib.request.urlopen",
                    return_value=_Resp({"object": "list"})) as call:
             out = notion._request("ntn_k", "POST", "/databases/d/query",
                                   {"page_size": 1})
@@ -810,7 +810,7 @@ class TestTransport(unittest.TestCase):
                 raise reply
             return reply
 
-        with patch("quiver.remote.notion.urllib.request.urlopen",
+        with patch("swe.remote.notion.urllib.request.urlopen",
                    side_effect=urlopen), \
                 patch.object(notion, "_sleep", waits.append):
             out = notion._request("k", "GET", "/users/me")
@@ -819,7 +819,7 @@ class TestTransport(unittest.TestCase):
 
     def test_429_gives_up_after_the_retries_and_caps_the_wait(self):
         waits = []
-        with patch("quiver.remote.notion.urllib.request.urlopen",
+        with patch("swe.remote.notion.urllib.request.urlopen",
                    side_effect=lambda *a, **k: (_ for _ in ()).throw(
                        _http_error(429, headers={"Retry-After": "600"}))), \
                 patch.object(notion, "_sleep", waits.append):
@@ -830,7 +830,7 @@ class TestTransport(unittest.TestCase):
         self.assertEqual(waits, [notion.RETRY_CAP] * notion.MAX_RETRIES)
 
     def test_401_is_auth_required(self):
-        with patch("quiver.remote.notion.urllib.request.urlopen",
+        with patch("swe.remote.notion.urllib.request.urlopen",
                    side_effect=_http_error(401)):
             out = notion._request("k", "GET", "/users/me")
         self.assertEqual((out.status, out.code), ("auth-required", 401))
@@ -839,14 +839,14 @@ class TestTransport(unittest.TestCase):
         err = _http_error(404, {"object": "error", "code":
                                 "object_not_found",
                                 "message": "Could not find database"})
-        with patch("quiver.remote.notion.urllib.request.urlopen",
+        with patch("swe.remote.notion.urllib.request.urlopen",
                    side_effect=err):
             out = notion._request("k", "GET", "/databases/x")
         self.assertEqual((out.status, out.code), ("upstream-error", 404))
         self.assertIn("Could not find database", out.error)
 
     def test_network_failure_and_bad_json(self):
-        with patch("quiver.remote.notion.urllib.request.urlopen",
+        with patch("swe.remote.notion.urllib.request.urlopen",
                    side_effect=OSError("no route")):
             out = notion._request("k", "GET", "/users/me")
         self.assertIn("unreachable", out.error)
@@ -855,7 +855,7 @@ class TestTransport(unittest.TestCase):
             def read(self):
                 return b"<html>"
 
-        with patch("quiver.remote.notion.urllib.request.urlopen",
+        with patch("swe.remote.notion.urllib.request.urlopen",
                    return_value=Bad(None)):
             out = notion._request("k", "GET", "/users/me")
         self.assertEqual(out.status, "upstream-error")
@@ -874,8 +874,8 @@ class TestTasksRoute(unittest.TestCase):
 
     def _get(self, routes=None):
         router = _Router(routes or {})
-        with patch("quiver.github.gh.probe_env", return_value=OK_ENV), \
-                patch("quiver.remote.notion._request", side_effect=router):
+        with patch("swe.github.gh.probe_env", return_value=OK_ENV), \
+                patch("swe.remote.notion._request", side_effect=router):
             status, data = self.srv.request("GET", "/v1/tasks",
                                             headers=self.hdr)
         return status, json.loads(data)

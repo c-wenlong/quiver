@@ -22,13 +22,13 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from quiver.hooks import commands as hooks_commands
-from quiver.hooks import shared as _shared
-from quiver.hooks.contracts import CONTRACTS, contract_for
-from quiver.hooks.inventory import foreign_rows, hook_rows
-from quiver.hooks.settings import declarations, harness_declarations
-from quiver.init.hooks import plan_hooks
-from quiver.init.layout import hooks_dir
+from swe.hooks import commands as hooks_commands
+from swe.hooks import shared as _shared
+from swe.hooks.contracts import CONTRACTS, contract_for
+from swe.hooks.inventory import foreign_rows, hook_rows
+from swe.hooks.settings import declarations, harness_declarations
+from swe.init.hooks import plan_hooks
+from swe.init.layout import hooks_dir
 
 
 def _home(tmp: str) -> Path:
@@ -370,7 +370,7 @@ class ShimEndToEndTest(unittest.TestCase):
     def test_runtime_translates_directly(self):
         # The runtime is importable: unit-test the translate edges that
         # subprocess coverage finds awkward.
-        from quiver.hooks import shim_runtime
+        from swe.hooks import shim_runtime
 
         flat = {"harness": "cursor", "schema": "flat",
                 "event_map": {"preToolUse": "PreToolUse"},
@@ -807,7 +807,7 @@ class CrudCommandsTest(unittest.TestCase):
             # An interactive y works when stdin is a tty.
             with mock.patch.object(
                     sys.stdin, "isatty", return_value=True), \
-                    mock.patch("quiver.prompt.read_line",
+                    mock.patch("swe.prompt.read_line",
                                return_value="y") as rl:
                 code, out = _run(home, "delete", "gate")
             self.assertEqual(code, 0, out)
@@ -905,7 +905,7 @@ class ShimRuntimeUnitTest(unittest.TestCase):
     """main()/_split/edges the subprocess e2e can't reach for coverage."""
 
     def _main(self, argv, stdin_text="{}"):
-        from quiver.hooks import shim_runtime
+        from swe.hooks import shim_runtime
         out, err = StringIO(), StringIO()
         with mock.patch("sys.stdin", StringIO(stdin_text)), \
                 mock.patch("sys.stdout", out), \
@@ -933,7 +933,7 @@ class ShimRuntimeUnitTest(unittest.TestCase):
         return str(p)
 
     def test_split_needs_separator_and_a_script(self):
-        from quiver.hooks import shim_runtime
+        from swe.hooks import shim_runtime
         for argv in (["--contract", "{}", "s.py"],
                      ["--contract", "{}", "--"],
                      ["--"]):
@@ -1072,7 +1072,7 @@ class ShimRuntimeUnitTest(unittest.TestCase):
             self.assertEqual(json.loads(out), {"permission": "deny"})
 
     def test_blocked_keeps_script_json_but_forces_the_decision(self):
-        from quiver.hooks import shim_runtime
+        from swe.hooks import shim_runtime
         grouped = {"schema": "grouped"}
         self.assertEqual(
             json.loads(shim_runtime._blocked(
@@ -1090,7 +1090,7 @@ class ShimRuntimeUnitTest(unittest.TestCase):
             {"permission": "deny", "continue": False})
 
     def test_normalize_aliases_and_defaults(self):
-        from quiver.hooks import shim_runtime
+        from swe.hooks import shim_runtime
         norm, native = shim_runtime.normalize(
             {"hook_event_name": "X", "error_message": "boom",
              "source": "resume", "agent_transcript": "/t"},
@@ -1104,7 +1104,7 @@ class ShimRuntimeUnitTest(unittest.TestCase):
         self.assertEqual(norm2["tool_name"], "Shell")
 
     def test_default_and_block_output_shapes(self):
-        from quiver.hooks import shim_runtime
+        from swe.hooks import shim_runtime
         flat = {"schema": "flat"}
         self.assertEqual(
             shim_runtime.default_output(flat, "preToolUse"),
@@ -1122,7 +1122,7 @@ class ShimRuntimeUnitTest(unittest.TestCase):
             '{"decision": "block"}')
 
     def test_permission_of_each_answer_shape(self):
-        from quiver.hooks import shim_runtime
+        from swe.hooks import shim_runtime
         cases = [
             ({"hookSpecificOutput": {"permissionDecision": "ask"}}, "ask"),
             ({"decision": "approve"}, "allow"),
@@ -1137,7 +1137,7 @@ class ShimRuntimeUnitTest(unittest.TestCase):
                 shim_runtime._permission_of(payload), want, payload)
 
     def test_translate_flat_non_permission_events(self):
-        from quiver.hooks import shim_runtime
+        from swe.hooks import shim_runtime
         flat = {"schema": "flat"}
         self.assertEqual(
             shim_runtime.translate(flat, "stop", '{"continue": false}'),
@@ -1185,7 +1185,7 @@ class ContractOverrideTest(unittest.TestCase):
         self.assertEqual(contract.settings, (home / ".cl/hooks.json",))
 
     def test_hooks_caps_and_normalized_event_edges(self):
-        from quiver.hooks.contracts import hooks_caps, normalized_event
+        from swe.hooks.contracts import hooks_caps, normalized_event
         self.assertEqual(hooks_caps({"x": "nope"}, "x"), {})
         self.assertEqual(hooks_caps({"x": {}}, "x"), {})
         self.assertEqual(hooks_caps({}, "x"), {})
@@ -1212,7 +1212,7 @@ class PendingDeployTest(unittest.TestCase):
                 self.assertEqual(_shared.pending_deploy(home, {}), 1)
 
     def test_dormant_shared_script_rows_as_skipped(self):
-        from quiver.hooks.inventory import shared_rows
+        from swe.hooks.inventory import shared_rows
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             _shared_hook(home, "quiet.py", "import sys\n")
@@ -1225,7 +1225,7 @@ class PendingDeployTest(unittest.TestCase):
 
 class ApplyHookStatusBranchTest(unittest.TestCase):
     def test_conflict_with_force_backs_up_then_links(self):
-        from quiver.init.hooks import apply_hook_status
+        from swe.init.hooks import apply_hook_status
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             src = hooks_dir(home) / "claude/gate.py"
@@ -1248,7 +1248,7 @@ class ApplyHookStatusBranchTest(unittest.TestCase):
             self.assertTrue(backups)
 
     def test_absorb_replaces_an_identical_copy_with_backup(self):
-        from quiver.init.hooks import apply_hook_status
+        from swe.init.hooks import apply_hook_status
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             src = hooks_dir(home) / "claude/gate.py"
@@ -1263,7 +1263,7 @@ class ApplyHookStatusBranchTest(unittest.TestCase):
             self.assertTrue(dest.is_symlink())
 
     def test_disabled_unlink_only_takes_our_symlink(self):
-        from quiver.init.hooks import apply_hook_status
+        from swe.init.hooks import apply_hook_status
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             src = hooks_dir(home) / "claude/gate.py"
@@ -1290,7 +1290,7 @@ class ApplyHookStatusBranchTest(unittest.TestCase):
 
 class ManagedSettingsTest(unittest.TestCase):
     def test_a_symlinked_settings_file_is_a_note_not_drift(self):
-        from quiver.hooks.inventory import hook_findings
+        from swe.hooks.inventory import hook_findings
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             real = home / "nix/settings.json"
@@ -1303,7 +1303,7 @@ class ManagedSettingsTest(unittest.TestCase):
             kinds = {f.kind for f in findings}
             self.assertIn("managed", kinds)
             # Doctor keeps the note out of its actionable warnings.
-            from quiver.harness.drift import check_hook_drift
+            from swe.harness.drift import check_hook_drift
             self.assertFalse(
                 [f for f in check_hook_drift(home)
                  if "managed" in f.message])
@@ -1311,7 +1311,7 @@ class ManagedSettingsTest(unittest.TestCase):
 
 class InitSharedDeployTest(unittest.TestCase):
     def test_check_reports_pending_and_a_run_writes(self):
-        from quiver.init.commands import run_init
+        from swe.init.commands import run_init
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             (home / ".claude").mkdir()
@@ -1522,7 +1522,7 @@ class ReviewFixesTest(unittest.TestCase):
     # --- only the executed file is a foreign hook (inventory.py #11) ---
 
     def test_file_arguments_do_not_row_as_foreign_hooks(self):
-        from quiver.hooks.inventory import foreign_rows
+        from swe.hooks.inventory import foreign_rows
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             other = home / "other"
@@ -1544,7 +1544,7 @@ class ReviewFixesTest(unittest.TestCase):
     # --- same foreign file rows per harness (inventory.py #12) ---------
 
     def test_one_foreign_script_rows_under_each_declaring_harness(self):
-        from quiver.hooks.inventory import foreign_rows
+        from swe.hooks.inventory import foreign_rows
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             outside = home / "elsewhere/gate.py"

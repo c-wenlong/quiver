@@ -14,12 +14,12 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver.console import strip_ansi, visible_len
-from quiver.find import commands as fc
-from quiver.find.mcps import ToolView
-from quiver.find.plugin_drift import Finding
-from quiver.find.summary import Group, tally
-from quiver.harness import registry
+from swe.console import strip_ansi, visible_len
+from swe.find import commands as fc
+from swe.find.mcps import ToolView
+from swe.find.plugin_drift import Finding
+from swe.find.summary import Group, tally
+from swe.harness import registry
 
 TREE_GLYPHS = ("├─", "└─")
 LOCAL = {"command": "npx", "args": ["thing"]}
@@ -74,14 +74,14 @@ class _FindHome(unittest.TestCase):
             mock.patch.object(Path, "home", staticmethod(lambda: self.home)),
             mock.patch.object(Path, "cwd", staticmethod(lambda: self.home)),
             mock.patch.object(registry, "HARNESS_FILE", Path("/nonexistent/harness.json")),
-            mock.patch("quiver.console.terminal_width", return_value=200),
+            mock.patch("swe.console.terminal_width", return_value=200),
             # find.commands holds its own top-level terminal_width
             # binding, so pinning console alone never reached cmd_find.
-            mock.patch("quiver.find.commands.terminal_width", return_value=200),
-            mock.patch("quiver.mcp.cli.get_hub_servers", return_value=dict(self.hub)),
-            mock.patch("quiver.find.mcps.tool_views", return_value=list(self.views)),
-            mock.patch("quiver.find.mcps.scan_configs", return_value=[]),
-            mock.patch("quiver.find.mcps.unmanaged", return_value={}),
+            mock.patch("swe.find.commands.terminal_width", return_value=200),
+            mock.patch("swe.mcp.cli.get_hub_servers", return_value=dict(self.hub)),
+            mock.patch("swe.find.mcps.tool_views", return_value=list(self.views)),
+            mock.patch("swe.find.mcps.scan_configs", return_value=[]),
+            mock.patch("swe.find.mcps.unmanaged", return_value={}),
         ]
         for p in patches:
             p.start()
@@ -153,9 +153,9 @@ class SkillsSummaryTest(_FindHome):
         self.assertIn("dv@", out)
 
     def test_swe_skills_tree_still_draws_the_tree(self):
-        from quiver.skills.commands import cmd_skills
+        from swe.skills.commands import cmd_skills
 
-        with mock.patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+        with mock.patch("swe.find.commands.cmd_find_skills", return_value=0) as m:
             with redirect_stdout(io.StringIO()):
                 cmd_skills(["tree"])
         self.assertTrue(m.call_args.kwargs.get("full"))
@@ -194,7 +194,7 @@ class PluginDriftTest(_FindHome):
 
     def stub(self, sources=True, findings=None):
         found = self.findings if findings is None else findings
-        for target, value in (("quiver_plugins", [object()] if sources else []),
+        for target, value in (("swe_plugins", [object()] if sources else []),
                               ("plugin_drift", list(found))):
             p = mock.patch.object(fc, target, return_value=value)
             p.start()

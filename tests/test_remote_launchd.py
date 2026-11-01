@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from quiver.remote import launchd
+from swe.remote import launchd
 
 from tests._tempdir import temp_dir
 

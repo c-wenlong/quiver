@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.configuration import CorruptConfigurationError
-from quiver.harness.catalog import HARNESS_CATALOG
-from quiver.harness.registry import (
+from swe.configuration import CorruptConfigurationError
+from swe.harness.catalog import HARNESS_CATALOG
+from swe.harness.registry import (
     alias_map,
     load_registry,
     load_registry_readonly,
@@ -43,9 +43,9 @@ class HarnessRegistryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / ".quiver" / "config"
             registry_file = config_dir / "harness.json"
-            with patch("quiver.harness.registry.CONFIG_DIR", config_dir), patch(
-                "quiver.harness.registry.HARNESS_FILE", registry_file
-            ), patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"):
+            with patch("swe.harness.registry.CONFIG_DIR", config_dir), patch(
+                "swe.harness.registry.HARNESS_FILE", registry_file
+            ), patch("swe.harness.registry.TOOLS_FILE", config_dir / "tools.json"):
                 tools = load_registry()
                 self.assertEqual(tools, {})
                 self.assertFalse(registry_file.exists())
@@ -56,9 +56,9 @@ class HarnessRegistryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / ".quiver" / "config"
             registry_file = config_dir / "harness.json"
-            with patch("quiver.harness.registry.CONFIG_DIR", config_dir), patch(
-                "quiver.harness.registry.HARNESS_FILE", registry_file
-            ), patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"):
+            with patch("swe.harness.registry.CONFIG_DIR", config_dir), patch(
+                "swe.harness.registry.HARNESS_FILE", registry_file
+            ), patch("swe.harness.registry.TOOLS_FILE", config_dir / "tools.json"):
                 save_registry({"claude": {"command": "claude"}})
                 self.assertTrue(registry_file.is_file())
                 self.assertEqual(load_registry(), {"claude": {"command": "claude"}})
@@ -80,9 +80,9 @@ class HarnessRegistryTest(unittest.TestCase):
                 "tags": ["agentic"],
                 "aliases": ["mt"],
             }
-            with patch("quiver.harness.registry.CONFIG_DIR", config_dir), patch(
-                "quiver.harness.registry.HARNESS_FILE", registry_file
-            ), patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"):
+            with patch("swe.harness.registry.CONFIG_DIR", config_dir), patch(
+                "swe.harness.registry.HARNESS_FILE", registry_file
+            ), patch("swe.harness.registry.TOOLS_FILE", config_dir / "tools.json"):
                 save_registry(custom)
                 loaded = load_registry()
                 self.assertIn("mytool", loaded)
@@ -99,11 +99,11 @@ class RegistryRobustnessTest(unittest.TestCase):
 
     def _patches(self, config_dir):
         return (
-            patch("quiver.harness.registry.CONFIG_DIR", config_dir),
-            patch("quiver.harness.registry.HARNESS_FILE", config_dir / "harness.json"),
-            patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"),
-            patch("quiver.harness.registry.STARS_FILE", config_dir / "stars.json"),
-            patch("quiver.harness.registry.ARCHIVE_FILE", config_dir / "archived.json"),
+            patch("swe.harness.registry.CONFIG_DIR", config_dir),
+            patch("swe.harness.registry.HARNESS_FILE", config_dir / "harness.json"),
+            patch("swe.harness.registry.TOOLS_FILE", config_dir / "tools.json"),
+            patch("swe.harness.registry.STARS_FILE", config_dir / "stars.json"),
+            patch("swe.harness.registry.ARCHIVE_FILE", config_dir / "archived.json"),
         )
 
     def test_non_object_entry_raises_controlled_error(self):

@@ -7,9 +7,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.harness.models import RateLimitInfo
-from quiver.remote import agent as agent_mod
-from quiver.remote import pairing, usage
+from swe.harness.models import RateLimitInfo
+from swe.remote import agent as agent_mod
+from swe.remote import pairing, usage
 
 from tests.test_remote_hub import HubBase
 
@@ -34,16 +34,16 @@ class _Patched:
             return dict(limits or {})
 
         self._patches = [
-            patch("quiver.harness.registry.load_registry_readonly",
+            patch("swe.harness.registry.load_registry_readonly",
                   return_value=registry),
-            patch("quiver.harness.stars.load_stars", return_value=list(stars)),
-            patch("quiver.harness.archive.load_archive",
+            patch("swe.harness.stars.load_stars", return_value=list(stars)),
+            patch("swe.harness.archive.load_archive",
                   return_value=dict(archived or {})),
-            patch("quiver.harness.rate_limits.get_all_rate_limits",
+            patch("swe.harness.rate_limits.get_all_rate_limits",
                   side_effect=fetch),
-            patch("quiver.sessions.usage.session_counts",
+            patch("swe.sessions.usage.session_counts",
                   return_value=dict(counts or {})),
-            patch("quiver.harness.tools.is_installed", return_value=True),
+            patch("swe.harness.tools.is_installed", return_value=True),
         ]
 
     def __enter__(self):
@@ -157,11 +157,11 @@ class TestSatelliteStore(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp())
 
     def test_round_trip_newest_first(self):
-        with patch("quiver.remote.usage.time.time", return_value=100.0):
+        with patch("swe.remote.usage.time.time", return_value=100.0):
             usage.save_satellite(self.home, "old", {
                 "harnesses": [{"name": "codex"}], "server_time": 90.0,
             })
-        with patch("quiver.remote.usage.time.time", return_value=200.0):
+        with patch("swe.remote.usage.time.time", return_value=200.0):
             usage.save_satellite(self.home, "mbp", {
                 "harnesses": [{"name": "claude"}, "junk"],
                 "window_days": 100, "server_time": 195.5,

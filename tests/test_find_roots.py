@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.find.plugins import Plugin
-from quiver.find.roots import (
+from swe.find.plugins import Plugin
+from swe.find.roots import (
     _label_from_capability_root,
     _is_dir,
     _exists,
@@ -21,7 +21,7 @@ from quiver.find.roots import (
     skills_roots,
     SCOPE_ALL,
 )
-from quiver.find.tree import Node
+from swe.find.tree import Node
 
 
 class PathHelpersTest(unittest.TestCase):
@@ -91,9 +91,9 @@ class SkillsRootsTest(unittest.TestCase):
                 self._node("lone", lone, state="keep"),
                 self._node("claude", home / ".claude" / "skills", state="linked"),
             ]
-            with patch("quiver.find.roots.skills_tree", return_value=(shared, nodes)), \
-                    patch("quiver.find.roots.count_skills", return_value=3), \
-                    patch("quiver.find.roots.load_registry_if_present", return_value={}):
+            with patch("swe.find.roots.skills_tree", return_value=(shared, nodes)), \
+                    patch("swe.find.roots.count_skills", return_value=3), \
+                    patch("swe.find.roots.load_registry_if_present", return_value={}):
                 out = skills_roots(home, scope=SCOPE_ALL)
             self.assertEqual(out[0].detail, "3 skills, the shared tree")
             self.assertIn("not synced", out[1].detail)
@@ -106,10 +106,10 @@ class SkillsRootsTest(unittest.TestCase):
             (home / ".old" / "skills").mkdir(parents=True)
             nodes = [self._node("old", home / ".old" / "skills", state="keep")]
             reg = {"old": {"state": "archived", "command": "old"}}
-            with patch("quiver.find.roots.skills_tree",
+            with patch("swe.find.roots.skills_tree",
                        return_value=(home / ".quiver" / "skills", nodes)), \
-                    patch("quiver.find.roots.count_skills", return_value=0), \
-                    patch("quiver.find.roots.load_registry_if_present", return_value=reg):
+                    patch("swe.find.roots.count_skills", return_value=0), \
+                    patch("swe.find.roots.load_registry_if_present", return_value=reg):
                 out = skills_roots(home, scope=SCOPE_ALL)
             # shared dir does not exist; archived harness folds into the footer
             self.assertEqual(len(out), 1)
@@ -132,8 +132,8 @@ class PluginsRootsTest(unittest.TestCase):
                 self._plugin("alpha", path=pdir, components={"skill": 2, "agent": 1}),
                 self._plugin("beta", marketplace="", version="", enabled=None),
             ]
-            with patch("quiver.find.roots.discover_plugins", return_value=plugins), \
-                    patch("quiver.find.roots.load_registry_if_present", return_value={}):
+            with patch("swe.find.roots.discover_plugins", return_value=plugins), \
+                    patch("swe.find.roots.load_registry_if_present", return_value={}):
                 out = plugins_roots(home, scope=SCOPE_ALL)
             self.assertEqual(len(out), 1)
             harness_row = out[0]
@@ -150,8 +150,8 @@ class PluginsRootsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             plugins = [self._plugin("ghost", enabled=None)]
-            with patch("quiver.find.roots.discover_plugins", return_value=plugins), \
-                    patch("quiver.find.roots.load_registry_if_present", return_value={}):
+            with patch("swe.find.roots.discover_plugins", return_value=plugins), \
+                    patch("swe.find.roots.load_registry_if_present", return_value={}):
                 out = plugins_roots(home, scope=SCOPE_ALL)
             plugin_row = out[0].children[0].children[0]
             self.assertIn("no directory on disk", plugin_row.detail)
@@ -162,8 +162,8 @@ class PluginsRootsTest(unittest.TestCase):
             home = Path(tmp)
             reg = {"ghostcli": {"state": "archived", "command": "ghost"}}
             plugins = [self._plugin("x", harness="ghostcli")]
-            with patch("quiver.find.roots.discover_plugins", return_value=plugins), \
-                    patch("quiver.find.roots.load_registry_if_present", return_value=reg):
+            with patch("swe.find.roots.discover_plugins", return_value=plugins), \
+                    patch("swe.find.roots.load_registry_if_present", return_value=reg):
                 out = plugins_roots(home, scope=SCOPE_ALL)
             self.assertEqual(len(out), 1)
             self.assertIn("archived harness hidden", out[0].label)

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.skills.discovery import discover_skills, parse_skill_md, skill_roots
+from swe.skills.discovery import discover_skills, parse_skill_md, skill_roots
 
 
 class SkillsDiscoveryTest(unittest.TestCase):
@@ -52,7 +52,7 @@ class SkillsDiscoveryTest(unittest.TestCase):
         self._write_skill(self.skills, "alpha", "alpha", "First skill")
         self._write_skill(self.builtin, "beta", "beta", "Builtin skill")
 
-        with patch("quiver.skills.discovery.load_skill_catalogs", return_value=[]):
+        with patch("swe.skills.discovery.load_skill_catalogs", return_value=[]):
             found = discover_skills(home=self.home, cwd=self.home)
         names = {s["name"] for s in found}
         scopes = {s["scope"] for s in found}

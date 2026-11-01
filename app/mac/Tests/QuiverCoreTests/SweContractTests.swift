@@ -6,7 +6,7 @@ import Testing
 /// captured from a real swe run against a throwaway HOME (the made-up
 /// `fixturetool` and `oldtool` registry entries, the fixture-market hub
 /// marketplace and the fixture session). `swe-find-plugins-fix` and
-/// `swe-plugins-action` are built to the shape src/quiver emits, because
+/// `swe-plugins-action` are built to the shape src/swe emits, because
 /// running them needs a harness CLI; `swe-list-usage` carries a rate-limit
 /// reading added by hand, since a fake HOME has no providers to poll.
 @Suite struct SweContractTests {

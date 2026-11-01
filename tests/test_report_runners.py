@@ -3,7 +3,7 @@ import subprocess
 import unittest
 from unittest.mock import Mock, patch
 
-from quiver.reports.runners import (
+from swe.reports.runners import (
     REPORT_ENV_MARKER,
     REPORT_ENV_OUTPUT_KIND,
     REPORT_ENV_RUN_ID,
@@ -143,7 +143,7 @@ class RunStructuredTest(unittest.TestCase):
     def completed(self, stdout, *, returncode=0, stderr=""):
         return subprocess.CompletedProcess([], returncode, stdout, stderr)
 
-    @patch("quiver.reports.runners.subprocess.run")
+    @patch("swe.reports.runners.subprocess.run")
     def test_passes_prompt_on_stdin_and_marks_environment(self, run):
         run.return_value = self.completed(json.dumps(SUMMARY))
 
@@ -166,7 +166,7 @@ class RunStructuredTest(unittest.TestCase):
         self.assertEqual(kwargs["env"][REPORT_ENV_OUTPUT_KIND], "session_summary_batch")
         self.assertRegex(kwargs["env"][REPORT_ENV_RUN_ID], r"^[0-9a-f]{32}$")
 
-    @patch("quiver.reports.runners.subprocess.run")
+    @patch("swe.reports.runners.subprocess.run")
     def test_extracts_claude_result_json(self, run):
         run.return_value = self.completed(json.dumps({"result": json.dumps(SUMMARY)}))
         result = run_structured(
@@ -174,7 +174,7 @@ class RunStructuredTest(unittest.TestCase):
         )
         self.assertEqual(result.data, SUMMARY)
 
-    @patch("quiver.reports.runners.subprocess.run")
+    @patch("swe.reports.runners.subprocess.run")
     def test_extracts_codex_jsonl_agent_message(self, run):
         event = {
             "type": "item.completed",
@@ -188,7 +188,7 @@ class RunStructuredTest(unittest.TestCase):
         )
         self.assertEqual(result.data, SUMMARY)
 
-    @patch("quiver.reports.runners.subprocess.run")
+    @patch("swe.reports.runners.subprocess.run")
     def test_rejects_malformed_json_without_retry(self, run):
         run.return_value = self.completed("not json")
         with self.assertRaisesRegex(RunnerOutputError, "malformed"):
@@ -199,7 +199,7 @@ class RunStructuredTest(unittest.TestCase):
             )
         self.assertEqual(run.call_count, 1)
 
-    @patch("quiver.reports.runners.subprocess.run")
+    @patch("swe.reports.runners.subprocess.run")
     def test_rejects_invalid_schema(self, run):
         invalid = dict(SUMMARY, sessions=[])
         run.return_value = self.completed(json.dumps(invalid))
@@ -210,7 +210,7 @@ class RunStructuredTest(unittest.TestCase):
                 output_kind="session_summary_batch",
             )
 
-    @patch("quiver.reports.runners.subprocess.run")
+    @patch("swe.reports.runners.subprocess.run")
     def test_validates_final_report_and_user_owned_follow_up_status(self, run):
         report = {
             "kind": "final_report",
@@ -234,7 +234,7 @@ class RunStructuredTest(unittest.TestCase):
                 output_kind="final_report",
             )
 
-    @patch("quiver.reports.runners.subprocess.run")
+    @patch("swe.reports.runners.subprocess.run")
     def test_timeout_retries_once_then_stops(self, run):
         run.side_effect = subprocess.TimeoutExpired(["codex"], 1)
         with self.assertRaisesRegex(RunnerTimeoutError, "2 attempts"):
@@ -246,7 +246,7 @@ class RunStructuredTest(unittest.TestCase):
             )
         self.assertEqual(run.call_count, 2)
 
-    @patch("quiver.reports.runners.subprocess.run")
+    @patch("swe.reports.runners.subprocess.run")
     def test_transient_failure_retries_once_and_succeeds(self, run):
         run.side_effect = [
             self.completed("", returncode=1, stderr="429 rate limit"),
@@ -261,7 +261,7 @@ class RunStructuredTest(unittest.TestCase):
         self.assertEqual(result.attempts, 2)
         self.assertEqual(run.call_count, 2)
 
-    @patch("quiver.reports.runners.subprocess.run")
+    @patch("swe.reports.runners.subprocess.run")
     def test_second_transient_failure_stops(self, run):
         run.return_value = self.completed("", returncode=1, stderr="service unavailable")
         with self.assertRaises(RunnerError):
@@ -273,7 +273,7 @@ class RunStructuredTest(unittest.TestCase):
             )
         self.assertEqual(run.call_count, 2)
 
-    @patch("quiver.reports.runners.subprocess.run")
+    @patch("swe.reports.runners.subprocess.run")
     def test_claude_stdout_auth_error_is_actionable(self, run):
         run.return_value = self.completed(
             json.dumps(
@@ -302,7 +302,7 @@ class RunStructuredTest(unittest.TestCase):
         self.assertNotIn("no diagnostic output", message)
         self.assertEqual(run.call_count, 1)
 
-    @patch("quiver.reports.runners.subprocess.run")
+    @patch("swe.reports.runners.subprocess.run")
     def test_error_redacts_tokens_and_sensitive_argument_values(self, run):
         run.return_value = self.completed(
             "",

@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.remote import attachments, inject, protocol, supervise
-from quiver.sessions.models import Session
+from swe.remote import attachments, inject, protocol, supervise
+from swe.sessions.models import Session
 
 from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server
@@ -821,7 +821,7 @@ class TestAttachments(unittest.TestCase):
         )
 
     def test_stage_oserror_reported(self):
-        with patch("quiver.remote.attachments.os.open",
+        with patch("swe.remote.attachments.os.open",
                    side_effect=OSError("disk full")):
             payload, err = attachments.stage(
                 self.home, self.key, "a.txt", b"x"
@@ -1008,7 +1008,7 @@ class TestAttachmentCapability(unittest.TestCase):
             "\n", attachments.prompt_text("hi", paths, "codex", {}))
 
     def test_reads_registry_when_not_given(self):
-        from quiver.harness import registry
+        from swe.harness import registry
         reg = {"pi": {"capabilities": {"attachments": {"at_refs": True}}}}
         with patch.object(registry, "load_registry_readonly",
                           return_value=reg):

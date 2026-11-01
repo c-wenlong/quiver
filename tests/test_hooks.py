@@ -16,18 +16,18 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from quiver.harness import drift
-from quiver.hooks import commands as hooks_commands
-from quiver.hooks import create as mk
-from quiver.hooks.inventory import find_script, hook_findings, script_summary
-from quiver.hooks.models import HookRow
-from quiver.hooks.settings import (
+from swe.harness import drift
+from swe.hooks import commands as hooks_commands
+from swe.hooks import create as mk
+from swe.hooks.inventory import find_script, hook_findings, script_summary
+from swe.hooks.models import HookRow
+from swe.hooks.settings import (
     basenames_in,
     declarations,
     expand_command_path,
     settings_files,
 )
-from quiver.init.layout import hooks_dir
+from swe.init.layout import hooks_dir
 
 
 def _home(tmp: str) -> Path:
@@ -533,7 +533,7 @@ class CheckCommandTest(unittest.TestCase):
 class DropScriptDeclarationsTest(unittest.TestCase):
     """Doctor's Run button for declared-missing: the one settings write."""
     def test_removes_the_entries_and_the_empty_groups(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -556,7 +556,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
             self.assertIn("gone.py", backups[0].read_text())
 
     def test_a_working_command_with_the_same_basename_survives(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -577,7 +577,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
             self.assertEqual(hooks, [{"command": f"python3 {live}"}])
 
     def test_a_flat_schema_drops_the_entry(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -594,7 +594,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
             self.assertEqual(data["hooks"]["sessionStart"], [{"command": "keep.py"}])
 
     def test_a_managed_file_is_refused(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -611,7 +611,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
                                          ["gone.py"], {}, "muse", home)
 
     def test_a_file_changed_under_the_read_is_refused(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -624,13 +624,13 @@ class DropScriptDeclarationsTest(unittest.TestCase):
                     {"hooks": [{"command": "plugin-toggle"}]}]}}))
                 return real_read
 
-            with mock.patch("quiver.hooks.settings._read_json",
+            with mock.patch("swe.hooks.settings._read_json",
                             side_effect=write_under_read), \
                     self.assertRaises(ValueError):
                 drop_script_declarations(path, ["gone.py"], {}, "claude", home)
 
     def test_nothing_matching_is_an_error_not_a_write(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -642,7 +642,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
             self.assertEqual(path.read_text(), before)
 
     def test_unusable_calls_are_errors_not_writes(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -658,7 +658,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
                 drop_script_declarations(path, ["gone.py"], {}, "claude", home)
 
     def test_malformed_events_and_entries_are_left_alone(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -677,7 +677,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
                 {"matcher": "x"}, {"hooks": [{"type": "command"}]}])
 
     def test_a_flat_schema_drops_the_emptied_event(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -1121,7 +1121,7 @@ class EditEdgeTest(unittest.TestCase):
             out = StringIO()
             with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
                  mock.patch("sys.stdin", stdin), \
-                 mock.patch("quiver.prompt.read_line", return_value="2"), \
+                 mock.patch("swe.prompt.read_line", return_value="2"), \
                  mock.patch("subprocess.run", fake_run), \
                  redirect_stdout(out):
                 code = hooks_commands.cmd_hooks(["edit", "guard"])
@@ -1134,7 +1134,7 @@ class EditEdgeTest(unittest.TestCase):
                 with mock.patch.object(Path, "home",
                                        staticmethod(lambda: home)), \
                      mock.patch("sys.stdin", stdin), \
-                     mock.patch("quiver.prompt.read_line",
+                     mock.patch("swe.prompt.read_line",
                                 return_value=bad), \
                      redirect_stdout(out):
                     code = hooks_commands.cmd_hooks(["edit", "guard"])
@@ -1144,7 +1144,7 @@ class EditEdgeTest(unittest.TestCase):
             out = StringIO()
             with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
                  mock.patch("sys.stdin", stdin), \
-                 mock.patch("quiver.prompt.read_line",
+                 mock.patch("swe.prompt.read_line",
                             side_effect=EOFError), \
                  redirect_stdout(out):
                 code = hooks_commands.cmd_hooks(["edit", "guard"])

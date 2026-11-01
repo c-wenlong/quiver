@@ -12,7 +12,7 @@ struct StagedAttachment: Decodable, Equatable {
     var size: Int? = nil
 }
 
-/// What the hub takes (`src/quiver/remote/attachments.py`) and how the
+/// What the hub takes (`src/swe/remote/attachments.py`) and how the
 /// composer words a refusal. Kept in step with the hub's caps by hand.
 enum AttachmentRules {
     /// `attachments.MAX_BYTES`: 20 MB per file.

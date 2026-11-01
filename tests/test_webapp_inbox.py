@@ -10,10 +10,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quiver.github import gh
-from quiver.webapp.pages import PageError
-from quiver.github import shared as G
-from quiver.webapp.pages import inbox
+from swe.github import gh
+from swe.webapp.pages import PageError
+from swe.github import shared as G
+from swe.webapp.pages import inbox
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp_repositories import FakeGh
@@ -32,7 +32,7 @@ class TestInbox(unittest.TestCase):
 
     def test_rows_read_included_without_a_probe(self):
         reply = {"status": "ok", "notifications": [NOTE]}
-        with patch("quiver.github.cli._fetch_inbox", return_value=reply) as fetch, \
+        with patch("swe.github.cli._fetch_inbox", return_value=reply) as fetch, \
                 patch.object(gh, "probe_env") as probe:
             body = inbox.get(self.ctx, {})
             inbox.get(self.ctx, {})
@@ -45,14 +45,14 @@ class TestInbox(unittest.TestCase):
 
     def test_a_failure_is_classified_by_the_probe(self):
         failed = {"status": "upstream-error", "notifications": [], "error": "502"}
-        with patch("quiver.github.cli._fetch_inbox", return_value=failed), \
+        with patch("swe.github.cli._fetch_inbox", return_value=failed), \
                 patch.object(gh, "probe_env", return_value=gh.GhEnv(installed=True)):
             body = inbox.get(self.ctx, {})
         self.assertEqual((body["status"], body["github"]["status"]), ("auth-required", "auth-required"))
         self.assertEqual(body["notifications"], [])
         G.CACHE.clear()
         ok_env = gh.GhEnv(installed=True, authenticated=True)
-        with patch("quiver.github.cli._fetch_inbox", return_value=failed), \
+        with patch("swe.github.cli._fetch_inbox", return_value=failed), \
                 patch.object(gh, "probe_env", return_value=ok_env):
             body = inbox.get(self.ctx, {})
         # gh works, GitHub failed: the page says "GitHub returned …".
@@ -63,7 +63,7 @@ class TestRoute(HubBase):
     def test_needs_a_device(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/inbox")[0], 401)
         with patch.object(G, "CACHE", G.TtlCache()), \
-                patch("quiver.github.cli._fetch_inbox",
+                patch("swe.github.cli._fetch_inbox",
                       return_value={"status": "ok", "notifications": [NOTE]}):
             status, data = self.srv.request("GET", "/v1/app/inbox", headers=self.auth())
         self.assertEqual(status, 200, data)

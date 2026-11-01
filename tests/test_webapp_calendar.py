@@ -10,11 +10,11 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.ledger.models import LedgerRecord, UsageEvent
-from quiver.ledger.overview import Priced
-from quiver.ledger.pricing import PricingCatalog, rates_from_entry
-from quiver.ledger.store import LedgerStore
-from quiver.webapp.pages import calendar as cal
+from swe.ledger.models import LedgerRecord, UsageEvent
+from swe.ledger.overview import Priced
+from swe.ledger.pricing import PricingCatalog, rates_from_entry
+from swe.ledger.store import LedgerStore
+from swe.webapp.pages import calendar as cal
 
 from tests.test_remote_hub import HubBase
 
@@ -358,7 +358,7 @@ class TestRoute(HubBase):
         self.assertEqual(status, 200, data)
 
     def test_an_unreadable_ledger_is_a_503(self):
-        with patch("quiver.webapp.api.by_session", side_effect=OSError("disk gone")):
+        with patch("swe.webapp.api.by_session", side_effect=OSError("disk gone")):
             status, _ = self.srv.request("GET", "/v1/app/calendar", headers=self.auth())
         self.assertEqual(status, 503)
 

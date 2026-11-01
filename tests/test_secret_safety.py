@@ -19,9 +19,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.mcp import cli as mcp_cli
-from quiver.providers.keys import find_key_file
-from quiver.providers import commands as providers_commands
+from swe.mcp import cli as mcp_cli
+from swe.providers.keys import find_key_file
+from swe.providers import commands as providers_commands
 
 
 class McpEditTmpFileTest(unittest.TestCase):
@@ -222,7 +222,7 @@ class ProviderFileContainmentTest(unittest.TestCase):
         None); 3.13 resolves the loop to itself, and read_key's ELOOP
         then reports missing. Pin the contract both ways: no content.
         """
-        from quiver.providers.keys import read_key
+        from swe.providers.keys import read_key
 
         with tempfile.TemporaryDirectory() as tmp:
             keys_dir = Path(tmp) / "keys"

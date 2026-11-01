@@ -11,8 +11,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import quote
 
-from quiver.webapp.pages import PageError
-from quiver.webapp.pages import hooks as page
+from swe.webapp.pages import PageError
+from swe.webapp.pages import hooks as page
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp_doctor import _TempHome
@@ -115,7 +115,7 @@ class TestList(_HooksHome, unittest.TestCase):
 
     def test_a_check_that_fails_degrades_not_dies(self):
         _hook(self.home, "claude", "guard.py")
-        with patch("quiver.hooks.inventory.hook_findings", side_effect=ValueError("boom")):
+        with patch("swe.hooks.inventory.hook_findings", side_effect=ValueError("boom")):
             d = page.get(self.ctx, {})
         self.assertEqual(d["findings"], [])
         self.assertIn("boom", d["check_error"])
@@ -266,7 +266,7 @@ class TestLink(_HooksHome, unittest.TestCase):
 
     def test_link_runs_plain_init_and_replace_forces(self):
         calls = []
-        with patch("quiver.webapp.pages.doctor._run_init",
+        with patch("swe.webapp.pages.doctor._run_init",
                    side_effect=lambda home, force=False: calls.append(force)):
             page.post(self.ctx, "link", {})
             page.post(self.ctx, "replace", {})
@@ -285,7 +285,7 @@ class TestLink(_HooksHome, unittest.TestCase):
             started.set()
             release.wait(5)
 
-        with patch("quiver.webapp.pages.doctor._run_init", side_effect=slow):
+        with patch("swe.webapp.pages.doctor._run_init", side_effect=slow):
             first = threading.Thread(target=page.post, args=(self.ctx, "link", {}))
             first.start()
             started.wait(5)
@@ -379,7 +379,7 @@ class TestRoute(HubBase):
     def test_post_needs_a_device_and_our_origin(self):
         self.assertEqual(
             self.srv.request("POST", "/v1/app/hooks/link", body={})[0], 401)
-        with patch("quiver.webapp.pages.doctor._run_init", return_value=None) as ran:
+        with patch("swe.webapp.pages.doctor._run_init", return_value=None) as ran:
             status, data = self.srv.request(
                 "POST", "/v1/app/hooks/replace", body={},
                 headers={**self.auth(), "Origin": "https://evil.example"})

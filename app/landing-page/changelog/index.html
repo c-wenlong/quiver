@@ -1264,7 +1264,7 @@ to <code>app/mac/</code> and the iPhone app from <code>remote/ios/</code> to <co
 roadmap is now <code>app/ios/ROADMAP.md</code>). Build with
 <code>app/mac/script/build-app.sh</code> and install with
 <code>app/mac/script/install-app.sh</code>. The web app stays in
-<code>src/quiver/webapp/</code>, inside the Python package. An app installed
+<code>src/swe/webapp/</code>, inside the Python package. An app installed
 before this change can't rebuild itself from Settings › Updates once
 the checkout has the new layout; run <code>app/mac/script/install-app.sh</code>
 once.</p>
@@ -1668,7 +1668,7 @@ rollout's tail decoded as non-paginated (<code>response_item</code> rows indexed
 over the real <code>item_completed</code> turns) and the span's first prompt
 overwrote the stored session title, sometimes with an injected turn
 like a <code>&lt;local-command-caveat&gt;</code> block. <code>SearchIndexer.beginFile</code> now
-primes appends the way <code>src/quiver/sessions/search_writer.py</code> does:
+primes appends the way <code>src/swe/sessions/search_writer.py</code> does:
 the head's first <code>session_meta</code> restores the <code>history_mode</code>, and only
 an explicit title record may rename the session. Appends are also
 gated to claude/codex/pi, Python's <code>APPENDABLE</code> set — any other
@@ -3222,7 +3222,7 @@ the first 1.x release patched for
 <a href="https://github.com/advisories/GHSA-84m7-p3x7-pcfv">GHSA-84m7-p3x7-pcfv</a>
 (CVE-2026-59951): a stateful Streamable HTTP server never reclaimed
 sessions, so a client could grow its memory without bound. Quiver's
-session server (<code>python -m quiver.mcp_server</code>) runs over stdio, which
+session server (<code>python -m swe.mcp_server</code>) runs over stdio, which
 the advisory lists as unaffected, so there was no live exposure; the
 floor only keeps a fresh install off the vulnerable range.</li>
 </ul>
@@ -4046,7 +4046,7 @@ utilization ties. Existing outage caching keeps the last successful reading
 visible when Antigravity is closed.</p>
 </li>
 <li><p><strong>Security: SSRF / LFI fix in <code>swe mcp &lt;tool&gt; status</code> health check.</strong>
-<code>src/quiver/mcp/cli.py::check_server_health</code> now validates that any
+<code>src/swe/mcp/cli.py::check_server_health</code> now validates that any
 URL it fetches via <code>urllib.request.urlopen</code> strictly starts with
 <code>http://</code> or <code>https://</code> (case-insensitive) before issuing the
 HEAD request. Without this guard, an attacker who can write a
@@ -4057,7 +4057,7 @@ both <code>http</code> server types (direct URL field) and <code>wrapped</code> 
 types (URL inside <code>args</code>). (PR #2.)</p>
 </li>
 <li><p><strong>Security: Bandit B324 / FIPS-compliant <code>hashlib.md5</code> in Kimi
-parser.</strong> <code>src/quiver/sessions/parsers.py::parse_kimi::load_hash_map</code>
+parser.</strong> <code>src/swe/sessions/parsers.py::parse_kimi::load_hash_map</code>
 now passes <code>usedforsecurity=False</code> to the single
 <code>hashlib.md5(p.encode())</code> call — the hash is used purely to build
 a stable map-key from a path string, never for authentication or
@@ -4067,7 +4067,7 @@ security-related use) and is required for FIPS-mode Python builds.
 <code>requires-python = &quot;&gt;=3.10&quot;</code> covers it natively. (PR #17.)</p>
 </li>
 <li><p><strong>Performance: memoize <code>os.path.realpath</code> in the session
-aggregator's <code>cwd</code> filter loop.</strong> <code>src/quiver/sessions/aggregator.py::get_all_sessions</code>
+aggregator's <code>cwd</code> filter loop.</strong> <code>src/swe/sessions/aggregator.py::get_all_sessions</code>
 used to issue an <code>os.path.realpath</code> syscall on every session's
 path when filtering by <code>cwd</code> — O(N) disk stats for what is
 functionally O(U) unique paths (most sessions share a project
@@ -4083,10 +4083,10 @@ entry to compute the file kind, multiplying latency in deeply
 nested agent session trees. <code>os.scandir()</code> returns DirEntry
 objects whose <code>is_dir()</code> / <code>is_file()</code> / <code>stat()</code> reuse cached
 metadata from the directory iteration itself, collapsing the N+
-syscalls into one. Touched files: <code>src/quiver/sessions/parsers.py</code>
-(parse_cursor, parse_antigravity), <code>src/quiver/sessions/engines/jsonl_engine.py</code>
-(5 sites), <code>src/quiver/sessions/engines/json_engine.py</code> (2 sites —
-nested parent+session-dir loops), <code>src/quiver/sessions/models_analytics.py</code>
+syscalls into one. Touched files: <code>src/swe/sessions/parsers.py</code>
+(parse_cursor, parse_antigravity), <code>src/swe/sessions/engines/jsonl_engine.py</code>
+(5 sites), <code>src/swe/sessions/engines/json_engine.py</code> (2 sites —
+nested parent+session-dir loops), <code>src/swe/sessions/models_analytics.py</code>
 (3 sites — claude + freebuff paths). Every site is wrapped in
 <code>with os.scandir(...) as &lt;var&gt;_it:</code> so the directory FD is
 released on scope exit (caught and fixed during triage — bare

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.skills.symlinks import (
+from swe.skills.symlinks import (
     SkillsSymlinkHint,
     apply_skills_symlink_hints,
     skills_symlink_hints,
@@ -16,7 +16,7 @@ class SkillsSymlinksTest(unittest.TestCase):
         # No harness binary resolves unless a test says so: one on the
         # developer's PATH is install evidence and would add hints.
         self.on_path: set[str] = set()
-        which = patch("quiver.init.layout.shutil.which",
+        which = patch("swe.init.layout.shutil.which",
                       side_effect=lambda cmd: f"/bin/{cmd}" if cmd in self.on_path else None)
         which.start()
         self.addCleanup(which.stop)

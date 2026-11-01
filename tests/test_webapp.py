@@ -7,8 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from quiver.webapp import static
-from quiver.webapp.api import WebApp
+from swe.webapp import static
+from swe.webapp.api import WebApp
 
 from tests.test_remote_hub import HubBase
 
@@ -71,7 +71,7 @@ class TestWebAppRoutes(HubBase):
         self.assertFalse((self.srv.home / ".quiver/data/ledger").exists())
 
 
-APP_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/app.js"
+APP_JS = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/app.js"
 
 
 MANAGE_JS = APP_JS.with_name("manage.js")
@@ -96,7 +96,7 @@ class TestPriceDownload(unittest.TestCase):
         import threading
         from unittest.mock import patch
 
-        from quiver.webapp import api
+        from swe.webapp import api
 
         release = threading.Event()
         calls = []
@@ -129,7 +129,7 @@ class TestPriceDownload(unittest.TestCase):
     def test_without_downloads_the_disk_copy_still_reloads_hourly(self):
         from unittest.mock import patch
 
-        from quiver.webapp import api
+        from swe.webapp import api
 
         app = WebApp(None, download_prices=False)
         app._store = object()
@@ -145,7 +145,7 @@ class TestPriceDownload(unittest.TestCase):
     def test_a_pricing_write_beats_an_older_download(self):
         from unittest.mock import patch
 
-        from quiver.webapp import api
+        from swe.webapp import api
 
         app = WebApp(None, download_prices=True)
         gen = app._prices_gen
@@ -161,7 +161,7 @@ class TestSessionUsage(unittest.TestCase):
     def test_reused_until_the_next_scan_or_prices(self):
         from unittest.mock import patch
 
-        from quiver.webapp import api
+        from swe.webapp import api
 
         app = WebApp(None, download_prices=False)
         app._store, app._catalog, app._scanned_at = object(), object(), 1.0
@@ -180,7 +180,7 @@ class TestSessionUsage(unittest.TestCase):
         # read must group again.
         from unittest.mock import patch
 
-        from quiver.webapp import api
+        from swe.webapp import api
 
         app = WebApp(None, download_prices=False)
         app._store, app._catalog, app._scanned_at = object(), object(), 1.0

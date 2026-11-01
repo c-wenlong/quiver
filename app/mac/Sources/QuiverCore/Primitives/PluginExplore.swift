@@ -345,7 +345,7 @@ public struct PluginExploreIndex: Sendable, Equatable {
 /// each is noise nobody can act on from here, so the page says it in one
 /// quiet line. Quiver never edits a harness's settings to drop them.
 public struct CatalogProblems: Sendable, Equatable {
-    /// swe's words for it (`_read_manifest` in src/quiver/plugins/catalog.py,
+    /// swe's words for it (`_read_manifest` in src/swe/plugins/catalog.py,
     /// pinned by `test_registered_marketplace_missing_on_disk`).
     static let missingManifest = "no marketplace manifest on disk"
 

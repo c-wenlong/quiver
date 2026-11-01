@@ -14,11 +14,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quiver import paths
-from quiver.github import gh, repos
-from quiver.webapp.pages import PageError
-from quiver.github import shared as G
-from quiver.webapp.pages import repositories as R
+from swe import paths
+from swe.github import gh, repos
+from swe.webapp.pages import PageError
+from swe.github import shared as G
+from swe.webapp.pages import repositories as R
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp import app_js_function
@@ -282,7 +282,7 @@ class TestCache(_Base):
 class TestDashboard(_Base):
     def test_no_pins_reports_the_probe_and_fetches_nothing(self):
         with patch.object(gh, "probe_env", return_value=OK_ENV), \
-                patch("quiver.github.cli._fetch_board") as board:
+                patch("swe.github.cli._fetch_board") as board:
             body = R.get(self.ctx, {})
         board.assert_not_called()
         self.assertEqual(body["github"], {"status": "ok", "login": "octo", "error": None})
@@ -292,7 +292,7 @@ class TestDashboard(_Base):
         _pin(self.home, "o/a")
         env = gh.GhEnv(installed=True, authenticated=False)
         with patch.object(gh, "probe_env", return_value=env), \
-                patch("quiver.github.cli._fetch_board") as board:
+                patch("swe.github.cli._fetch_board") as board:
             body = R.get(self.ctx, {})
         board.assert_not_called()
         self.assertEqual(body["github"]["status"], "auth-required")
@@ -301,7 +301,7 @@ class TestDashboard(_Base):
     def test_boards_per_pin_are_cached(self):
         _pin(self.home, "o/a", "o/b")
         with patch.object(gh, "probe_env", return_value=OK_ENV) as probe, \
-                patch("quiver.github.cli._fetch_board", side_effect=_board) as board:
+                patch("swe.github.cli._fetch_board", side_effect=_board) as board:
             body = R.get(self.ctx, {})
             self.assertEqual(sorted(body["boards"]), ["o/a", "o/b"])
             self.assertEqual(body["boards"]["o/a"]["surfaces"]["pull_requests"]["status"], "ok")
@@ -316,7 +316,7 @@ class TestDashboard(_Base):
     def test_a_failed_surface_is_kept_only_briefly(self):
         _pin(self.home, "o/a")
         with patch.object(gh, "probe_env", return_value=OK_ENV), \
-                patch("quiver.github.cli._fetch_board",
+                patch("swe.github.cli._fetch_board",
                       side_effect=lambda n: _board(n, failed=("runs",))) as board:
             R.get(self.ctx, {})
             self.clock.t += G.FAIL_TTL + 1
@@ -346,13 +346,13 @@ class TestFocus(_Base):
             seen["issues"] = (name, state, limit)
             return {"repo": name, "status": "ok", "issues": []}
         ok = lambda key: (lambda name, *_a: {"repo": name, "status": "ok", key: []})
-        with patch("quiver.github.cli._fetch_prs", side_effect=prs), \
-                patch("quiver.github.cli._fetch_issues", side_effect=issues), \
-                patch("quiver.github.cli._fetch_runs", side_effect=ok("runs")), \
-                patch("quiver.github.cli._fetch_pages", side_effect=lambda n: {"repo": n, "status": "ok", "pages": None}), \
-                patch("quiver.github.cli._fetch_releases", side_effect=ok("releases")), \
-                patch("quiver.github.cli._fetch_tags", side_effect=ok("tags")), \
-                patch("quiver.github.cli._fetch_branches", side_effect=ok("branches")), \
+        with patch("swe.github.cli._fetch_prs", side_effect=prs), \
+                patch("swe.github.cli._fetch_issues", side_effect=issues), \
+                patch("swe.github.cli._fetch_runs", side_effect=ok("runs")), \
+                patch("swe.github.cli._fetch_pages", side_effect=lambda n: {"repo": n, "status": "ok", "pages": None}), \
+                patch("swe.github.cli._fetch_releases", side_effect=ok("releases")), \
+                patch("swe.github.cli._fetch_tags", side_effect=ok("tags")), \
+                patch("swe.github.cli._fetch_branches", side_effect=ok("branches")), \
                 patch.object(gh, "probe_env") as probe:
             body = R.get(self.ctx, {"repo": "owner/repo"})
         probe.assert_not_called()  # every reply ok proves gh works
@@ -365,7 +365,7 @@ class TestFocus(_Base):
 
     def test_one_surface_at_a_wider_window(self):
         _pin(self.home, "o/a")
-        with patch("quiver.github.cli._fetch_tags",
+        with patch("swe.github.cli._fetch_tags",
                    side_effect=lambda n, lim: {"repo": n, "status": "ok", "tags": [{}] * 3}) as tags:
             body = R.get(self.ctx, {"repo": "o/a", "surface": "tags", "limit": "999"})
         tags.assert_called_once_with("o/a", R.MAX_LIMIT)
@@ -606,7 +606,7 @@ class TestPin(_Base):
         return [r["name"] for r in G.pinned(self.home)]
 
     def test_search_reads_the_hubs_catalog_without_gh(self):
-        from quiver.github import catalog
+        from swe.github import catalog
 
         fake = FakeGh(self)
         catalog.write([{"full_name": "o/quiver", "owner": "o", "description": "arrows", "stars": 4}],
@@ -894,7 +894,7 @@ class TestPrWorktree(_Base):
         # checkout must not start until the first has finished.
         # The one mirror lock table lives in manage; a differently
         # cased name is the same mirror.
-        from quiver.github import manage
+        from swe.github import manage
         lock = manage._mirror_lock(manage.mirror_path("O/A", self.home))
         lock.acquire()
         done = []
@@ -912,7 +912,7 @@ class TestPrWorktree(_Base):
         # Two PRs of one repo share the mirror's FETCH_HEAD: a second
         # call must not fetch while the first is between its fetch and
         # its checkout, whoever the caller is.
-        from quiver.github import manage
+        from swe.github import manage
         R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})  # mirror exists
         in_fetch, release = threading.Event(), threading.Event()
         fetches = []
@@ -946,9 +946,9 @@ class TestPrWorktree(_Base):
                  "display_name": "Claude Code", "tracked": True,
                  "launch_model": True, "launch_effort": True,
                  "launch_yolo": True}]
-        with patch("quiver.remote.catalog.launchable_harnesses",
+        with patch("swe.remote.catalog.launchable_harnesses",
                    return_value=rows), \
-             patch("quiver.remote.catalog.recent_models",
+             patch("swe.remote.catalog.recent_models",
                    return_value={"claude": ["opus", "sonnet"]}) as recent:
             body = R.get(self.ctx, {"harnesses": "1"})
         # Models come from the hub's own home, not the process's.
@@ -1068,7 +1068,7 @@ class TestBundle(unittest.TestCase):
     def test_both_pages_register_from_the_served_bundle(self):
         """Each script runs in its own scope in /pages.js: GhUI has to
         reach inbox.js and repositories.js as a global."""
-        from quiver.webapp import pages
+        from swe.webapp import pages
         stubs = (
             "const registered = [];\n"
             "global.registerPage = (id) => registered.push(id);\n"
@@ -1101,7 +1101,7 @@ class TestRoute(HubBase):
         _pin(self.srv.home, "o/a")
         self.assertEqual(self.srv.request("GET", "/v1/app/repositories")[0], 401)
         with patch.object(gh, "probe_env", return_value=OK_ENV), \
-                patch("quiver.github.cli._fetch_board", side_effect=_board):
+                patch("swe.github.cli._fetch_board", side_effect=_board):
             status, data = self.srv.request("GET", "/v1/app/repositories", headers=self.auth())
         self.assertEqual(status, 200, data)
         body = json.loads(data)

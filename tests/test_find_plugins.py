@@ -18,12 +18,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.find.plugins import (
+from swe.find.plugins import (
     count_components,
     discover_plugins,
     filter_plugins,
 )
-from quiver.harness import registry
+from swe.harness import registry
 
 
 class _NoRegistry:
@@ -340,7 +340,7 @@ class MalformedRecordTest(_NoRegistry, unittest.TestCase):
     def test_a_github_marketplace_is_not_read_as_a_folder(self):
         """Its source word ("github") used to be tested as a directory
         relative to the cwd."""
-        from quiver.find.plugins import _marketplace_sources
+        from swe.find.plugins import _marketplace_sources
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -363,7 +363,7 @@ class MalformedRecordTest(_NoRegistry, unittest.TestCase):
 
 class ScopeTest(unittest.TestCase):
     def _mixed(self):
-        from quiver.find.plugins import Plugin
+        from swe.find.plugins import Plugin
         return [
             Plugin("claude", "on", "dv", enabled=True),
             Plugin("claude", "off", "dv", enabled=False),
@@ -387,7 +387,7 @@ class ScopeTest(unittest.TestCase):
         self.assertEqual(hidden, 0)
 
     def test_ref_joins_name_and_marketplace(self):
-        from quiver.find.plugins import Plugin
+        from swe.find.plugins import Plugin
         self.assertEqual(Plugin("h", "n", "mk").ref, "n@mk")
         self.assertEqual(Plugin("h", "n", "").ref, "n")
 
@@ -408,7 +408,7 @@ class MarketplaceGroupingTest(_NoRegistry, unittest.TestCase):
         from contextlib import redirect_stdout
         from unittest import mock
 
-        from quiver.find import commands as fc
+        from swe.find import commands as fc
 
         with mock.patch.object(Path, "home", staticmethod(lambda: home)):
             buf = io.StringIO()

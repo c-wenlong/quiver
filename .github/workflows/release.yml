@@ -106,7 +106,7 @@ jobs:
         # the wheel forgot to package.
         run: |
           python3 -m venv /tmp/relcheck
-          /tmp/relcheck/bin/pip install dist/quiver-*.whl
+          /tmp/relcheck/bin/pip install dist/swe-*.whl
           test_home="$(mktemp -d)"
           cd /tmp
           HOME="$test_home" /tmp/relcheck/bin/swe --help
@@ -206,8 +206,8 @@ jobs:
             echo "have_cert=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          keychain="$RUNNER_TEMP/quiver-signing.keychain-db"
-          p12="$RUNNER_TEMP/quiver-cert.p12"
+          keychain="$RUNNER_TEMP/swe-signing.keychain-db"
+          p12="$RUNNER_TEMP/swe-cert.p12"
           # The secret is the base64 text of the exported .p12.
           printf '%s' "$MACOS_CERTIFICATE" | base64 --decode -o "$p12"
           # A throwaway keychain keeps the release private key out of the
@@ -370,7 +370,7 @@ jobs:
         if: always() && steps.cert.outputs.have_cert == 'true'
         run: |
           security default-keychain -s login.keychain
-          security delete-keychain "$RUNNER_TEMP/quiver-signing.keychain-db" || true
+          security delete-keychain "$RUNNER_TEMP/swe-signing.keychain-db" || true
 
   nix:
     # Not on PRs: the derivation's checkPhase runs the same unittest suite
@@ -435,7 +435,7 @@ jobs:
         # packaged module or broken entry point fails the tag build.
         run: |
           python3 -m venv /tmp/relcheck
-          /tmp/relcheck/bin/pip install dist/quiver-*.whl
+          /tmp/relcheck/bin/pip install dist/swe-*.whl
           test_home="$(mktemp -d)"
           cd /tmp
           HOME="$test_home" /tmp/relcheck/bin/swe --help
@@ -445,7 +445,7 @@ jobs:
           HOME="$test_home" /tmp/relcheck/bin/swe report --help
 
       - name: Exercise macOS-sensitive paths
-        # Runs against the installed wheel: `import quiver` resolves to
+        # Runs against the installed wheel: `import swe` resolves to
         # site-packages because the src/ layout keeps the package out of
         # the checkout root's import path.
         run: |

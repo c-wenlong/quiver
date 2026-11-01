@@ -21,8 +21,8 @@ SRC = Path(__file__).resolve().parent.parent / "src"
 # so PATH, which holds only the fake claude, is the whole machine. PATH
 # leaves out /usr/bin too: a Linux box can have a harness installed there.
 BOOT = (
-    "import sys; import quiver.harness.discover as d; d.EXTRA_BIN_DIRS = []; "
-    "from quiver.cli import main; sys.argv = ['swe'] + sys.argv[1:]; "
+    "import sys; import swe.harness.discover as d; d.EXTRA_BIN_DIRS = []; "
+    "from swe.cli import main; sys.argv = ['swe'] + sys.argv[1:]; "
     "sys.exit(main())"
 )
 

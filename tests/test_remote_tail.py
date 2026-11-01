@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.remote import tail
-from quiver.sessions.models import Session
+from swe.remote import tail
+from swe.sessions.models import Session
 
 from tests._tempdir import temp_dir
 
@@ -483,7 +483,7 @@ class TestSnapshotSource(unittest.TestCase):
                 ]
 
         def _tr_msg(role, text):
-            from quiver.reports.transcripts import NormalizedMessage
+            from swe.reports.transcripts import NormalizedMessage
             return NormalizedMessage(role=role, text=text, kind="message")
 
         with patch.object(tail._tr, "read_transcript",
@@ -499,7 +499,7 @@ class TestSnapshotSource(unittest.TestCase):
 
 class _Transcript:
     def __init__(self, texts, sources=()):
-        from quiver.reports.transcripts import NormalizedMessage
+        from swe.reports.transcripts import NormalizedMessage
         self.messages = [NormalizedMessage(role="assistant", text=t, kind="message") for t in texts]
         self.source_paths = list(sources)
 
@@ -609,7 +609,7 @@ class TestSlidingWindowDiff(unittest.TestCase):
 class TestDevinChainTail(unittest.TestCase):
     def test_tail_walk_matches_the_full_chain_end(self):
         import sqlite3
-        from quiver.reports import transcripts as tr
+        from swe.reports import transcripts as tr
         conn = sqlite3.connect(":memory:")
         conn.executescript(
             "CREATE TABLE message_nodes(row_id INTEGER PRIMARY KEY, session_id TEXT, node_id INTEGER,"
@@ -628,7 +628,7 @@ class TestDevinChainTail(unittest.TestCase):
 class TestDevinBoundedRead(unittest.TestCase):
     def test_result_keeps_its_tool_name_after_its_call_leaves_the_window(self):
         import sqlite3
-        from quiver.reports import transcripts as tr
+        from swe.reports import transcripts as tr
         tmp = temp_dir(self)
         db = tmp / "sessions.db"
         conn = sqlite3.connect(db)
@@ -1313,7 +1313,7 @@ class TestTailManager(unittest.TestCase):
         sess = Session(timestamp=0, agent="a", path="/p",
                        session_id="sid9", tool_name="claude")
         real_expand = tail.expand_user
-        with patch("quiver.remote.tail.expand_user",
+        with patch("swe.remote.tail.expand_user",
                    side_effect=lambda p: (
                        self.tmp / "claude-home" / "projects"
                    ) if p == "~/.claude/projects" else real_expand(p)):
@@ -1513,7 +1513,7 @@ class TestTailManager(unittest.TestCase):
         sess = _session_for()
         sess.tool_name = "opencode"
         sess.session_id = "s"
-        with patch("quiver.remote.tail.expand_user",
+        with patch("swe.remote.tail.expand_user",
                    return_value=self.tmp / "missing.db"):
             # db missing → falls back to the snapshot reader
             self.assertIsInstance(
@@ -1522,7 +1522,7 @@ class TestTailManager(unittest.TestCase):
         db = self.tmp / "oc.db"
         import sqlite3 as _sq
         _sq.connect(db).close()
-        with patch("quiver.remote.tail.expand_user", return_value=db):
+        with patch("swe.remote.tail.expand_user", return_value=db):
             src = tail.make_source(sess)
         self.assertIsInstance(src, tail.OpencodeSource)
         self.assertEqual((src.db_path, src.session_id), (db, "s"))
@@ -1685,7 +1685,7 @@ class TestSweepStale(unittest.TestCase):
     """``sweep_stale``: old journal + cursor pairs go, live ones stay."""
 
     def setUp(self):
-        from quiver.remote.journal import Journal
+        from swe.remote.journal import Journal
 
         self.tmp = temp_dir(self)
         self.journal = Journal(self.tmp)
@@ -1820,7 +1820,7 @@ class TestApprovalWatcher(unittest.TestCase):
                 if ev["type"].startswith("approval.")]
 
     def test_prompt_appears_emits_requested(self):
-        from quiver.remote import supervise
+        from swe.remote import supervise
         pane = "Do you want to proceed?\n1. Yes\n2. No\nesc to cancel"
         self._poll(pane, meta={"mode": "tmux", "tmux": "qv-k1"})
         evs = self._approval_events()
@@ -1856,7 +1856,7 @@ class TestApprovalWatcher(unittest.TestCase):
         self.assertEqual(len(self._approval_events()), 1)
 
     def test_prompt_disappears_emits_resolved(self):
-        from quiver.remote import supervise
+        from swe.remote import supervise
         pane = "Do you want to proceed?\n1. Yes\n2. No"
         self._poll(pane, meta={"mode": "tmux"})
         rid = self._approval_events()[0]["data"]["request_id"]
@@ -1868,7 +1868,7 @@ class TestApprovalWatcher(unittest.TestCase):
         self.assertIsNone(supervise.pending_approval("k1"))
 
     def test_detach_resolves_outstanding(self):
-        from quiver.remote import supervise
+        from swe.remote import supervise
         pane = "Do you want to proceed?\n1. Yes\n2. No"
         self._poll(pane, meta={"mode": "tmux"})
         rid = self._approval_events()[0]["data"]["request_id"]
@@ -1903,7 +1903,7 @@ class TestApprovalWatcher(unittest.TestCase):
         # A menu answered locally then replaced by another one must not
         # keep the old request_id — a delayed reply for prompt A must
         # never answer prompt B.
-        from quiver.remote import supervise
+        from swe.remote import supervise
         meta = {"mode": "tmux"}
         self._poll("Do you want to run ls?\n1. Yes\n2. No", meta=meta)
         evs = self._approval_events()

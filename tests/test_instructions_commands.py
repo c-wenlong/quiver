@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.instructions.commands import cmd_instructions
+from swe.instructions.commands import cmd_instructions
 
 
 class InstructionsCommandsTest(unittest.TestCase):
@@ -164,7 +164,7 @@ class InstructionsCommandsTest(unittest.TestCase):
                 return build(home, check=check, expected=expected)
             return wrapped
 
-        from quiver.instructions import commands, compiler
+        from swe.instructions import commands, compiler
         with patch.object(commands.compiler, "build", racing(compiler.build)):
             code, _, errors = self.run_command(["init"])
         self.assertEqual(code, 1)
@@ -185,7 +185,7 @@ class InstructionsCommandsTest(unittest.TestCase):
             on_result(False)
             raise KeyboardInterrupt
 
-        with patch("quiver.instructions.commands.watcher.watch", side_effect=fake_watch):
+        with patch("swe.instructions.commands.watcher.watch", side_effect=fake_watch):
             code, output, errors = self.run_command(["watch"])
         self.assertEqual(code, 0)
         self.assertIn("missing chapter", errors)
@@ -194,15 +194,15 @@ class InstructionsCommandsTest(unittest.TestCase):
         self.assertIn("Stopped", output)
 
     def test_os_error_and_build_interrupt(self):
-        with patch("quiver.instructions.commands.compiler.build", side_effect=OSError("denied")):
+        with patch("swe.instructions.commands.compiler.build", side_effect=OSError("denied")):
             code, _, errors = self.run_command(["build"])
         self.assertEqual(code, 1)
         self.assertIn("denied", errors)
-        with patch("quiver.instructions.commands.compiler.build", side_effect=KeyboardInterrupt):
+        with patch("swe.instructions.commands.compiler.build", side_effect=KeyboardInterrupt):
             self.assertEqual(self.run_command(["build"])[0], 130)
 
     def test_top_level_dispatch_and_help(self):
-        from quiver.cli import main
+        from swe.cli import main
 
         for args in (["swe", "instructions", "build"], ["swe", "instructions", "--help"]):
             with patch("sys.argv", args), contextlib.redirect_stdout(io.StringIO()):

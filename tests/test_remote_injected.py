@@ -3,7 +3,7 @@
 import json
 import unittest
 
-from quiver.remote import injected, protocol, tail
+from swe.remote import injected, protocol, tail
 
 
 def _m(kind, text):

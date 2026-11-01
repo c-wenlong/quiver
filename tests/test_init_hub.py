@@ -10,8 +10,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver.init import commands as init_commands
-from quiver.init.hub import (HubError, check_target, clone_hub, public_url,
+from swe.init import commands as init_commands
+from swe.init.hub import (HubError, check_target, clone_hub, public_url,
                               register_marketplaces)
 
 GIT = shutil.which("git")
@@ -328,7 +328,7 @@ class RegisterMarketplacesTest(unittest.TestCase):
 class RegisterOutputTest(unittest.TestCase):
     def _print(self, results):
         buf = io.StringIO()
-        with mock.patch("quiver.init.hub.register_marketplaces", return_value=results), \
+        with mock.patch("swe.init.hub.register_marketplaces", return_value=results), \
              redirect_stdout(buf):
             init_commands._register_hub_marketplaces(Path("/nowhere"))
         return buf.getvalue()
@@ -348,7 +348,7 @@ class RegisterOutputTest(unittest.TestCase):
 @unittest.skipUnless(GIT, "git not installed")
 class CmdInitHubTest(unittest.TestCase):
     def setUp(self):
-        patcher = mock.patch("quiver.init.hub.register_marketplaces", return_value=[])
+        patcher = mock.patch("swe.init.hub.register_marketplaces", return_value=[])
         self.register = patcher.start()
         self.addCleanup(patcher.stop)
 

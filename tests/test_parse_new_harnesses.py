@@ -41,10 +41,10 @@ class ParseCopilotTest(unittest.TestCase):
             conn.close()
 
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(db) if p.endswith("session-store.db") else p,
             ):
-                from quiver.sessions.parsers import parse_copilot
+                from swe.sessions.parsers import parse_copilot
 
                 sessions = parse_copilot()
             self.assertEqual(len(sessions), 1)
@@ -96,10 +96,10 @@ class ParseDevinTest(unittest.TestCase):
             conn.commit()
             conn.close()
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(db) if p.endswith("devin/cli/sessions.db") else p,
             ):
-                from quiver.sessions.parsers import parse_devin
+                from swe.sessions.parsers import parse_devin
 
                 return {s.session_id: s for s in parse_devin()}
 
@@ -201,10 +201,10 @@ class ParseContinueTest(unittest.TestCase):
             )
 
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(base) if p.endswith("sessions") else p,
             ):
-                from quiver.sessions.parsers import parse_continue
+                from swe.sessions.parsers import parse_continue
 
                 sessions = parse_continue()
             self.assertEqual(len(sessions), 1)
@@ -260,10 +260,10 @@ class ParseCrushTest(unittest.TestCase):
             )
 
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(projects) if p.endswith("projects.json") else p,
             ):
-                from quiver.sessions.parsers import parse_crush
+                from swe.sessions.parsers import parse_crush
 
                 sessions = parse_crush()
             self.assertEqual(len(sessions), 1)
@@ -295,10 +295,10 @@ class ParseGrokTest(unittest.TestCase):
             )
 
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(base) if p.endswith("sessions") else p,
             ):
-                from quiver.sessions.parsers import parse_grok
+                from swe.sessions.parsers import parse_grok
 
                 sessions = parse_grok()
             self.assertEqual(len(sessions), 1)
@@ -335,8 +335,8 @@ class ParseClineTest(unittest.TestCase):
                     return str(base / "data" / "sessions")
                 return p
 
-            with mock.patch("quiver.sessions.parsers.os.path.expanduser", side_effect=expand):
-                from quiver.sessions.parsers import parse_cline
+            with mock.patch("swe.sessions.parsers.os.path.expanduser", side_effect=expand):
+                from swe.sessions.parsers import parse_cline
 
                 sessions = parse_cline()
             self.assertEqual(len(sessions), 1)
@@ -380,8 +380,8 @@ class ParseClineTest(unittest.TestCase):
                     return str(base / "data" / "state" / "taskHistory.json")
                 return p
 
-            with mock.patch("quiver.sessions.parsers.os.path.expanduser", side_effect=expand):
-                from quiver.sessions.parsers import parse_cline
+            with mock.patch("swe.sessions.parsers.os.path.expanduser", side_effect=expand):
+                from swe.sessions.parsers import parse_cline
 
                 sessions = parse_cline()
             self.assertEqual(len(sessions), 1)
@@ -400,9 +400,9 @@ class ParseOpenCodeTest(unittest.TestCase):
             return p
 
         with mock.patch(
-            "quiver.sessions.parsers.os.path.expanduser", side_effect=expand
+            "swe.sessions.parsers.os.path.expanduser", side_effect=expand
         ):
-            from quiver.sessions.parsers import parse_opencode
+            from swe.sessions.parsers import parse_opencode
 
             return parse_opencode()
 
@@ -524,9 +524,9 @@ class ParseKiloTest(unittest.TestCase):
                 return p
 
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser", side_effect=expand
+                "swe.sessions.parsers.os.path.expanduser", side_effect=expand
             ):
-                from quiver.sessions.parsers import parse_kilo
+                from swe.sessions.parsers import parse_kilo
 
                 sessions = parse_kilo()
             self.assertEqual(len(sessions), 2)
@@ -539,10 +539,10 @@ class ParseKiloTest(unittest.TestCase):
 
     def test_missing_db_returns_empty(self):
         with mock.patch(
-            "quiver.sessions.parsers.os.path.expanduser",
+            "swe.sessions.parsers.os.path.expanduser",
             side_effect=lambda p: "/nonexistent/kilo.db" if "kilo" in p else p,
         ):
-            from quiver.sessions.parsers import parse_kilo
+            from swe.sessions.parsers import parse_kilo
 
             self.assertEqual(parse_kilo(), [])
 
@@ -595,10 +595,10 @@ class ParseForgeTest(unittest.TestCase):
             conn.close()
 
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(db) if p.endswith(".forge.db") else ("/Users/test" if p == "~" else p),
             ):
-                from quiver.sessions.parsers import parse_forge
+                from swe.sessions.parsers import parse_forge
 
                 sessions = parse_forge()
             self.assertEqual(len(sessions), 1)
@@ -609,7 +609,7 @@ class ParseForgeTest(unittest.TestCase):
 
 class TrackedCountsTest(unittest.TestCase):
     def test_session_counts_includes_zero_for_tracked(self):
-        from quiver.sessions.usage import session_counts_100d, tracked_tool_names
+        from swe.sessions.usage import session_counts_100d, tracked_tool_names
 
         tracked = tracked_tool_names()
         self.assertIn("copilot", tracked)
@@ -634,10 +634,10 @@ class ParseCrushEdgeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             missing = Path(tmp) / "nope.json"
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=self._expand(missing),
             ):
-                from quiver.sessions.parsers import parse_crush
+                from swe.sessions.parsers import parse_crush
                 self.assertEqual(parse_crush(), [])
 
     def test_non_list_projects_returns_empty(self):
@@ -645,10 +645,10 @@ class ParseCrushEdgeTest(unittest.TestCase):
             projects = Path(tmp) / "projects.json"
             projects.write_text(json.dumps({"projects": "junk"}))
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=self._expand(projects),
             ):
-                from quiver.sessions.parsers import parse_crush
+                from swe.sessions.parsers import parse_crush
                 self.assertEqual(parse_crush(), [])
 
     def test_project_without_db_falls_back_to_last_accessed(self):
@@ -661,10 +661,10 @@ class ParseCrushEdgeTest(unittest.TestCase):
                 "not a dict",
             ]}))
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=self._expand(projects),
             ):
-                from quiver.sessions.parsers import parse_crush
+                from swe.sessions.parsers import parse_crush
                 sessions = parse_crush()
             self.assertEqual(len(sessions), 1)
             self.assertEqual(sessions[0].path, "/w")
@@ -675,10 +675,10 @@ class CodexThreadStoreTest(unittest.TestCase):
     def test_no_store_returns_empty_map(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(Path(tmp) / ".codex" / p[7:]) if p.startswith("~/.codex") else p,
             ):
-                from quiver.sessions.parsers import _codex_thread_store
+                from swe.sessions.parsers import _codex_thread_store
                 self.assertEqual(_codex_thread_store(), {})
 
     def test_store_schema_without_threads_returns_empty(self):
@@ -689,10 +689,10 @@ class CodexThreadStoreTest(unittest.TestCase):
             conn.commit()
             conn.close()
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(Path(tmp) / p[9:]) if p.startswith("~/.codex/") else p,
             ):
-                from quiver.sessions.parsers import _codex_thread_store
+                from swe.sessions.parsers import _codex_thread_store
                 self.assertEqual(_codex_thread_store(), {})
 
     def test_reads_names_and_previews(self):
@@ -706,10 +706,10 @@ class CodexThreadStoreTest(unittest.TestCase):
             conn.commit()
             conn.close()
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(Path(tmp) / p[9:]) if p.startswith("~/.codex/") else p,
             ):
-                from quiver.sessions.parsers import _codex_thread_store
+                from swe.sessions.parsers import _codex_thread_store
                 store = _codex_thread_store()
             self.assertEqual(store, {"abc": ("My Title", "first msg")})
 
@@ -718,10 +718,10 @@ class CursorMetaTest(unittest.TestCase):
     def test_missing_chats_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(Path(tmp) / "chats") if "chats" in p else p,
             ):
-                from quiver.sessions.parsers import _cursor_meta
+                from swe.sessions.parsers import _cursor_meta
                 self.assertEqual(_cursor_meta("s1"), {})
 
     def test_reads_meta_json(self):
@@ -730,10 +730,10 @@ class CursorMetaTest(unittest.TestCase):
             meta.parent.mkdir(parents=True)
             meta.write_text(json.dumps({"cwd": "/w", "title": "T"}))
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(Path(tmp) / "chats") if "chats" in p else p,
             ):
-                from quiver.sessions.parsers import _cursor_meta
+                from swe.sessions.parsers import _cursor_meta
                 self.assertEqual(_cursor_meta("s1"), {"cwd": "/w", "title": "T"})
                 self.assertEqual(_cursor_meta("other"), {})
                 self.assertEqual(_cursor_meta(""), {})
@@ -757,10 +757,10 @@ class ParseFreebuffEnrichTest(unittest.TestCase):
                 }}
             }))
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(base) + "/" if "manicode" in p else p,
             ):
-                from quiver.sessions.parsers import parse_freebuff
+                from swe.sessions.parsers import parse_freebuff
                 sessions = parse_freebuff()
             self.assertEqual(len(sessions), 1)
             self.assertEqual(sessions[0].path, "/real/work")
@@ -788,8 +788,8 @@ class ParseGeminiEnrichTest(unittest.TestCase):
                 return p
 
             with mock.patch(
-                "quiver.sessions.parsers.os.path.expanduser", side_effect=expand):
-                from quiver.sessions.parsers import parse_gemini
+                "swe.sessions.parsers.os.path.expanduser", side_effect=expand):
+                from swe.sessions.parsers import parse_gemini
                 sessions = parse_gemini()
             self.assertEqual(len(sessions), 1)
             self.assertEqual(sessions[0].title, "gemini prompt")

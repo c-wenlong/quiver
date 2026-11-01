@@ -1,9 +1,9 @@
-"""Tests for ``quiver.mcp.codex_io`` — the pure TOML engine.
+"""Tests for ``swe.mcp.codex_io`` — the pure TOML engine.
 
 Covers the byte-level splitter/parser/renderer, ``apply_merges`` for combining
 a pre/post region around a new ``[mcp_servers*]`` block, and the
 ``load_codex_servers`` / ``save_codex_servers`` thin slice helpers used by the
-per-tool IO dispatch in ``quiver.mcp.cli``.
+per-tool IO dispatch in ``swe.mcp.cli``.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ import unittest
 
 import tomllib
 
-from quiver.configuration import CorruptConfigurationError
-from quiver.mcp.codex_io import (
+from swe.configuration import CorruptConfigurationError
+from swe.mcp.codex_io import (
     apply_merges,
     load_codex_servers,
     parse_codex_mcp_region,
@@ -467,7 +467,7 @@ class CodexCorruptRegionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p = pathlib.Path(td) / "codex.toml"
             p.write_text(self.CORRUPT)
-            from quiver.mcp.cli import get_tool_loader
+            from swe.mcp.cli import get_tool_loader
 
             loader = get_tool_loader("codex")
             self.assertIsNotNone(loader)

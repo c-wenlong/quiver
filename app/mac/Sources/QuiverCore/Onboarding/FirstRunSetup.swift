@@ -261,7 +261,7 @@ public final class FirstRunSetupModel {
     }
 
     /// What swe setup says beside its hub prompt (`FORK_NOTE` in
-    /// src/quiver/init/hub.py); the web Setup page says the same.
+    /// src/swe/init/hub.py); the web Setup page says the same.
     public static let hubForkNote =
         "Fork a hub repo first (or use it as a template for a private copy), then paste your fork's URL."
 

@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.remote import pairing
+from swe.remote import pairing
 
 from tests._tempdir import temp_dir
 

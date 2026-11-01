@@ -453,7 +453,7 @@ public struct PluginAction: Sendable, Hashable, Identifiable {
     public var isEdit: Bool { harness == "codex" && (verb == .enable || verb == .disable) }
 
     /// What swe will run, or the edit it will make, as swe words it
-    /// (src/quiver/plugins/actions.py).
+    /// (src/swe/plugins/actions.py).
     public var command: String {
         switch (harness, verb) {
         case ("codex", .install): "codex plugin add \(ref)"

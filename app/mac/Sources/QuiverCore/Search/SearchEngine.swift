@@ -2,7 +2,7 @@ import Foundation
 import os
 
 /// One session's best matching message, plus the snippet to show. Mirrors
-/// `SearchHit` in `src/quiver/sessions/search_index.py`, so `swe session
+/// `SearchHit` in `src/swe/sessions/search_index.py`, so `swe session
 /// --search` and the app answer the same query the same way.
 public struct SearchHit: Equatable, Sendable {
     /// The `sessions` row id — the join key inside the index, useless outside.
@@ -57,7 +57,7 @@ public struct SearchHit: Equatable, Sendable {
 
 /// The read side of the FTS5 transcript index `SearchStore` writes, adapted
 /// from Orca's `session-search-retrieval.ts`/`session-search-snippet.ts` and
-/// kept in step with `src/quiver/sessions/search_index.py`.
+/// kept in step with `src/swe/sessions/search_index.py`.
 ///
 /// The connection opens lazily, read-only (`file:...?mode=ro`), and every
 /// read is a single short statement: no transaction or statement cursor is

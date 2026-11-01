@@ -1,7 +1,7 @@
 import Foundation
 
 /// Edit-ish tool calls rendered as a diff, ported from `toolDiff()` in
-/// `src/quiver/webapp/static/pages/chat.js` so both clients show the same lines.
+/// `src/swe/webapp/static/pages/chat.js` so both clients show the same lines.
 struct DiffLine: Hashable {
     enum Kind { case context, added, removed, meta }
     let kind: Kind

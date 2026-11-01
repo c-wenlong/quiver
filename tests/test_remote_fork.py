@@ -8,11 +8,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import agent as agent_mod
-from quiver.remote import catalog as catalog_mod
-from quiver.remote import fork as fork_mod
-from quiver.remote import protocol, supervise
-from quiver.sessions.models import Session
+from swe.remote import agent as agent_mod
+from swe.remote import catalog as catalog_mod
+from swe.remote import fork as fork_mod
+from swe.remote import protocol, supervise
+from swe.sessions.models import Session
 
 from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server
@@ -55,7 +55,7 @@ class _Hub:
 
 class TestForkCommandLines(unittest.TestCase):
     def test_each_supported_harness(self):
-        with patch("quiver.remote.fork.launch_tool_name",
+        with patch("swe.remote.fork.launch_tool_name",
                    side_effect=lambda t: t):
             cases = {
                 "claude": (_session("abc"), "new-uuid",
@@ -125,7 +125,7 @@ class TestForkRoute(unittest.TestCase):
 
     def _fork(self, key, body=None):
         with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
-             patch("quiver.remote.fork.shutil.which",
+             patch("swe.remote.fork.shutil.which",
                    return_value="/x/claude"):
             return self.srv.request(
                 "POST", f"/v1/sessions/{key}/fork", body or {})
@@ -378,7 +378,7 @@ class TestOverlappingForks(unittest.TestCase):
             st_birthtime=now + 1, st_mtime=now + 1, st_ctime=now + 1)
         rows = [("claude:n1", _session("n1", path=self.proj), "done"),
                 ("claude:x9", _session("x9", path=self.proj), "done")]
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=fresh):
             adopted = supervise.adopt_pending(self.home, rows)
         self.assertEqual(sorted(adopted), ["claude:n1", "claude:x9"])
@@ -396,7 +396,7 @@ class TestOverlappingForks(unittest.TestCase):
             "tmux": "qv-a", "tool_name": "codex", "cwd": self.proj,
             "launched_at": time.time()}))
         with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \
-             patch("quiver.remote.fork.shutil.which", return_value="/x/c"), \
+             patch("swe.remote.fork.shutil.which", return_value="/x/c"), \
              patch.object(fork_mod, "start") as start:
             status, body = srv.request(
                 "POST", f"/v1/sessions/codex:{CODEX_ID}/fork", {})
@@ -423,7 +423,7 @@ class TestForkAdoption(unittest.TestCase):
         fresh.stat.return_value = MagicMock(
             st_birthtime=time.time() + 1, st_mtime=time.time() + 1,
             st_ctime=time.time() + 1)
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=fresh):
             return supervise.adopt_pending(self.home, rows)
 

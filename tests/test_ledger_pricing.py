@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.ledger import pricing
-from quiver.ledger.pricing import PricingCatalog, forms, load_catalog, rates_from_entry
+from swe.ledger import pricing
+from swe.ledger.pricing import PricingCatalog, forms, load_catalog, rates_from_entry
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -76,8 +76,8 @@ class TestResolve(unittest.TestCase):
     def test_provider_qualified_names_resolve_like_the_bare_ones(self):
         """OpenCode rows are logged ``provider/model``, with any slash of
         the model's own after the first one."""
-        from quiver.ledger.pricing import base_name, is_free
-        from quiver.webapp.pages import _brands
+        from swe.ledger.pricing import base_name, is_free
+        from swe.webapp.pages import _brands
 
         for qualified, bare in (("github-copilot/gpt-5.5", "gpt-5.5"), ("anthropic/claude-opus-5", "claude-opus-5"),
                                 ("zai-coding-plan/claude-opus-5", "claude-opus-5")):
@@ -105,7 +105,7 @@ class TestLoading(unittest.TestCase):
             self.skipTest("no app/mac/ in this checkout")
         for name in ("pricing.json", "pricing-supplement.json"):
             self.assertEqual((app / name).read_bytes(),
-                             (REPO / "src" / "quiver" / "ledger" / name).read_bytes(), name)
+                             (REPO / "src" / "swe" / "ledger" / name).read_bytes(), name)
 
     def test_offline_falls_back_to_the_snapshot_and_overrides_win(self):
         home = Path(tempfile.mkdtemp())
@@ -164,7 +164,7 @@ class TestLoading(unittest.TestCase):
         import ssl
         import urllib.error
 
-        from quiver.remote import agent as agent_mod
+        from swe.remote import agent as agent_mod
 
         home = Path(tempfile.mkdtemp())
         listing = {f"model-{i}": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06}
@@ -190,7 +190,7 @@ class TestLoading(unittest.TestCase):
             return Resp()
 
         with patch.object(agent_mod, "_fallback_ctx", None), \
-             patch("quiver.harness.rate_limits._verified_context", return_value=bundle), \
+             patch("swe.harness.rate_limits._verified_context", return_value=bundle), \
              patch.object(pricing.urllib.request, "urlopen", side_effect=urlopen):
             cat = load_catalog(home)
         self.assertEqual(calls, [None, bundle])

@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.sessions.parsers import parse_copilot
+from swe.sessions.parsers import parse_copilot
 
 
 _SCHEMA = """
@@ -75,7 +75,7 @@ class CopilotTitleSourceTest(unittest.TestCase):
                 return state
             return p
 
-        with mock.patch("quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
+        with mock.patch("swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
             return {s.session_id: s for s in parse_copilot()}
 
     # -- cases -----------------------------------------------------------

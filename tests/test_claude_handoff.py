@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.parsers import (
+from swe.sessions.parsers import (
     _claude_handed_off,
     _claude_transcript_paths,
     parse_claude,
@@ -74,7 +74,7 @@ class ClaudeHandoffTest(unittest.TestCase):
                 return REAL_EXPANDUSER(path)
 
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
+                "swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
             ):
                 sessions = parse_claude()
         return {s.session_id: s for s in sessions}

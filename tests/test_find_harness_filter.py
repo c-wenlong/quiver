@@ -2,7 +2,7 @@
 
 Every `swe find` view enumerates harnesses somehow, and every one of them
 should agree on which are worth showing by default — that agreement is
-``quiver.find.roots.harness_filter``, built on top of the same
+``swe.find.roots.harness_filter``, built on top of the same
 ``harness.json`` state ``swe list`` already reads (see
 tests/test_registry_state.py for the accessor this pins).
 
@@ -24,9 +24,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.find.plugins import discover_plugins
-from quiver.find.roots import agents_roots, harness_footer_text, skills_roots
-from quiver.harness import registry
+from swe.find.plugins import discover_plugins
+from swe.find.roots import agents_roots, harness_footer_text, skills_roots
+from swe.harness import registry
 
 
 class _RegistrySandbox(unittest.TestCase):
@@ -228,7 +228,7 @@ class InlineHelpDocumentsFlagsTest(unittest.TestCase):
         import contextlib
         import io
 
-        from quiver.find.commands import print_find_help
+        from swe.find.commands import print_find_help
 
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):

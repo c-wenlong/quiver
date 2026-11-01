@@ -8,7 +8,7 @@ import unittest
 
 # The MCP subsystem is invoked as a module so the test exercises the installed
 # package exactly the way `swe mcp ...` does at runtime.
-MCP_MODULE = "quiver.mcp"
+MCP_MODULE = "swe.mcp"
 PROJECT_SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
 
 
@@ -276,7 +276,7 @@ class McpSyncCodexPeerTest(unittest.TestCase):
 
     After the refactor, ``swe mcp sync <source> codex`` (and the reverse)
     go through the same generic loop that already powered json-to-json
-    sync. Codex is treated as a TOML-region file via ``quiver.mcp.codex_io``.
+    sync. Codex is treated as a TOML-region file via ``swe.mcp.codex_io``.
     """
 
     CODEX_PRESET = (

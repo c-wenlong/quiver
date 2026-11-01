@@ -15,8 +15,8 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
-from quiver import cli
-from quiver.configuration import ConfigurationError
+from swe import cli
+from swe.configuration import ConfigurationError
 
 
 def _run(argv):
@@ -64,7 +64,7 @@ class CorruptRegistryThroughRealCommandsTest(unittest.TestCase):
             env = os.environ.copy()
             env["HOME"] = tmp
             env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(PROJECT_SRC), env.get("PYTHONPATH")]))
-            return subprocess.run([sys.executable, "-m", "quiver.cli", *args],
+            return subprocess.run([sys.executable, "-m", "swe.cli", *args],
                                   env=env, capture_output=True, text=True)
 
     def test_list_json_keeps_stdout_empty(self):

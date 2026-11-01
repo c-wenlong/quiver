@@ -16,9 +16,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.harness import archive as archive_mod
-from quiver.harness import registry
-from quiver.harness import stars as stars_mod
+from swe.harness import archive as archive_mod
+from swe.harness import registry
+from swe.harness import stars as stars_mod
 
 
 class RegistryStateTest(unittest.TestCase):
@@ -184,7 +184,7 @@ class RegistryStateTest(unittest.TestCase):
 
 
 class StarsWrapperTest(unittest.TestCase):
-    """`quiver.harness.stars` as a compatibility shim over the registry."""
+    """`swe.harness.stars` as a compatibility shim over the registry."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -232,7 +232,7 @@ class StarsWrapperTest(unittest.TestCase):
 
 
 class ArchiveWrapperTest(unittest.TestCase):
-    """`quiver.harness.archive` as a compatibility shim over the registry."""
+    """`swe.harness.archive` as a compatibility shim over the registry."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

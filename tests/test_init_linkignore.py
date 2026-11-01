@@ -13,8 +13,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver.init import commands as init_commands
-from quiver.init.layout import (
+from swe.init import commands as init_commands
+from swe.init.layout import (
     LinkIgnoreError,
     is_linkignored,
     link_states,

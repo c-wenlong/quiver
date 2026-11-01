@@ -5,8 +5,8 @@ import sys
 import unittest
 from pathlib import Path
 
-from quiver.harness import doctor_fix
-from quiver.harness.doctor import _mcp_local_problem
+from swe.harness import doctor_fix
+from swe.harness.doctor import _mcp_local_problem
 
 try:  # `unittest discover -s tests` puts tests/ itself on sys.path
     from _tempdir import temp_dir

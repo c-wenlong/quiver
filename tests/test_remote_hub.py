@@ -12,11 +12,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import protocol
-from quiver.remote import tail
-from quiver.remote.hub import APPROVAL_TTL_S, HubState, make_server
-from quiver.remote import catalog as catalog_mod, hub as hub_mod, pairing
-from quiver.sessions.models import Session
+from swe.remote import protocol
+from swe.remote import tail
+from swe.remote.hub import APPROVAL_TTL_S, HubState, make_server
+from swe.remote import catalog as catalog_mod, hub as hub_mod, pairing
+from swe.sessions.models import Session
 
 from tests._tempdir import temp_dir
 
@@ -209,7 +209,7 @@ class _AttachedServer(_Server):
     def __init__(self, **kw):
         super().__init__(sessions=[_session()],
                          statuses=lambda ss: ["done"])
-        from quiver.remote import supervise
+        from swe.remote import supervise
         supervise.mark(self.home, "claude:s1", {
             "mode": "headless", "tool_name": "claude",
             "session_id": "s1", "cwd": "/tmp/proj", "attached_at": 0,
@@ -249,7 +249,7 @@ class TestHubWriteRoutes(unittest.TestCase):
                     json.loads(data)["error"]["code"], "bad_command"
                 )
     def test_message_success(self):
-        from quiver.remote import inject
+        from swe.remote import inject
         q = self.srv.state.bus.subscribe("claude:s1")
         with patch.object(
             inject.ClaudeHeadlessInjector, "_run",
@@ -297,7 +297,7 @@ class TestHubWriteRoutes(unittest.TestCase):
     def test_message_send_failure_lands_in_result(self):
         # The POST itself still answers 202; the injector's failure lands
         # as a command.result event on the session key.
-        from quiver.remote import inject
+        from swe.remote import inject
         q = self.srv.state.bus.subscribe("claude:s1")
         with patch.object(
             inject.ClaudeHeadlessInjector, "_run",
@@ -390,7 +390,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.addCleanup(srv.stop)
         cred = srv.pair()
         with patch("shutil.which", return_value="/x/claude"), \
-             patch("quiver.remote.supervise._stop_local_writers"):
+             patch("swe.remote.supervise._stop_local_writers"):
             status, data = srv.request(
                 "POST", "/v1/sessions/claude:hx/control",
                 body={"op": "attach", "mode": "headless"},
@@ -512,7 +512,7 @@ class TestHubWriteRoutes(unittest.TestCase):
     def test_multipart_keeps_trailing_dash_newline_bytes(self):
         # The old parser rstripped "\r\n-" from the tail, corrupting
         # content that legitimately ended in dash or newline bytes.
-        from quiver.remote import attachments as att
+        from swe.remote import attachments as att
 
         boundary = "KEEPBYTES"
         content = b"log tail ends with dash-\r\n"
@@ -683,7 +683,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         cred = srv.pair()
         broken = type("Page", (), {"get": staticmethod(
             lambda ctx, args: {}["missing"])})
-        with patch("quiver.webapp.pages.load", return_value=broken), \
+        with patch("swe.webapp.pages.load", return_value=broken), \
                 patch("traceback.print_exc"):
             status, data = srv.request(
                 "GET", "/v1/app/skills",
@@ -818,7 +818,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertNotIn(key, srv.state._approval_at)
 
     def test_advertise_url_never_wildcard(self):
-        from quiver.remote import catalog, hub
+        from swe.remote import catalog, hub
         with patch.object(
             catalog, "tailscale_ip", return_value="100.64.1.2"
         ):
@@ -927,15 +927,15 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(status, 404)
 
     def _launch(self, body, installed=True, tracked=True):
-        with patch("quiver.remote.catalog.launch_command",
+        with patch("swe.remote.catalog.launch_command",
                    return_value="claude" if installed else None), \
-             patch("quiver.remote.catalog.launchable_harnesses",
+             patch("swe.remote.catalog.launchable_harnesses",
                    return_value=[]), \
-             patch("quiver.remote.catalog.untracked",
+             patch("swe.remote.catalog.untracked",
                    return_value=[] if tracked else [body.get("harness")]), \
-             patch("quiver.remote.catalog.known_session_ids",
+             patch("swe.remote.catalog.known_session_ids",
                    return_value=["old"]), \
-             patch("quiver.remote.supervise.tmux_bin",
+             patch("swe.remote.supervise.tmux_bin",
                    return_value="/usr/bin/tmux"):
             status, data = self.srv.request(
                 "POST", "/v1/sessions", body=body, headers=self.hdr)
@@ -959,7 +959,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         # launch_new is mocked: without it this route could spawn a real
         # claude process wherever tmux happens to be installed.
         with patch(
-            "quiver.remote.supervise.launch_new",
+            "swe.remote.supervise.launch_new",
             return_value=(True, "launched", "qv-t"),
         ) as launch:
             status, body = self._launch(
@@ -982,13 +982,13 @@ class TestHubWriteRoutes(unittest.TestCase):
         # launch_new's prime can end while the catalog loop sleeps out
         # its 10 s tick; the wake makes adoption look for the transcript
         # at once instead.
-        with patch("quiver.remote.supervise.launch_new",
+        with patch("swe.remote.supervise.launch_new",
                    return_value=(True, "launched", "qv-t")):
             self._launch({"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
         self.assertTrue(self.srv.state._catalog_wake.is_set())
 
     def test_failed_launch_leaves_the_catalog_loop_asleep(self):
-        with patch("quiver.remote.supervise.launch_new",
+        with patch("swe.remote.supervise.launch_new",
                    return_value=(False, "nope", None)):
             self._launch({"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
         self.assertFalse(self.srv.state._catalog_wake.is_set())
@@ -999,7 +999,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         # stay invisible for the rest of its TTL. Invalidating (not
         # use_cache=False) rewrites the cache, so the read after
         # adoption still sees the session.
-        from quiver.remote import catalog as catalog_mod, supervise
+        from swe.remote import catalog as catalog_mod, supervise
 
         home = temp_dir(self)
         folder = supervise._pending_dir(home)
@@ -1007,21 +1007,21 @@ class TestHubWriteRoutes(unittest.TestCase):
         (folder / "qv-x.json").write_text(
             json.dumps({"launched_at": time.time()}))
         cat = catalog_mod.Catalog(home)
-        with patch("quiver.sessions.aggregator.invalidate_cache") as inv, \
-             patch("quiver.sessions.aggregator.get_all_sessions",
+        with patch("swe.sessions.aggregator.invalidate_cache") as inv, \
+             patch("swe.sessions.aggregator.get_all_sessions",
                    return_value=[]) as get:
             cat.refresh()
         inv.assert_called_once_with()
         get.assert_called_once_with(limit=None, use_cache=True)
         (folder / "qv-x.json").unlink()
-        with patch("quiver.sessions.aggregator.invalidate_cache") as inv, \
-             patch("quiver.sessions.aggregator.get_all_sessions",
+        with patch("swe.sessions.aggregator.invalidate_cache") as inv, \
+             patch("swe.sessions.aggregator.get_all_sessions",
                    return_value=[]):
             cat.refresh()
         inv.assert_not_called()
 
     def test_launch_started_waits_for_catalog_row(self):
-        with patch("quiver.remote.supervise.launch_new",
+        with patch("swe.remote.supervise.launch_new",
                    return_value=(True, "launched", "qv-t")):
             _, body = self._launch(
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
@@ -1035,7 +1035,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         # launch_new runs after the 202, so its failure lands on the
         # launch the phone is polling.
         with patch(
-            "quiver.remote.supervise.launch_new",
+            "swe.remote.supervise.launch_new",
             return_value=(False, "tmux launch failed", None),
         ):
             status, body = self._launch(
@@ -1046,7 +1046,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertIn("tmux", view["note"])
 
     def test_untracked_harness_launch_says_no_chat(self):
-        with patch("quiver.remote.supervise.launch_new",
+        with patch("swe.remote.supervise.launch_new",
                    return_value=(True, "launched", "qv-t")) as launch:
             _, body = self._launch(
                 {"harness": "qwen-code", "cwd": "/tmp", "prompt": "hi"},
@@ -1060,19 +1060,19 @@ class TestHubWriteRoutes(unittest.TestCase):
         state = self.srv.state
         items = [{"name": "kilo", "command": "kilo", "display_name": "Kilo",
                   "tracked": True}]
-        with patch("quiver.remote.catalog.launchable_harnesses",
+        with patch("swe.remote.catalog.launchable_harnesses",
                    return_value=items):
             state._refresh_launchable()
         items[0]["display_name"] = "Kilo Code"
-        with patch("quiver.remote.catalog.launchable_harnesses",
+        with patch("swe.remote.catalog.launchable_harnesses",
                    return_value=items):
             state._refresh_launchable()
-        from quiver.remote import catalog as catalog_mod
+        from swe.remote import catalog as catalog_mod
         row = catalog_mod.load_machines(state.home)[state.machine_id]
         self.assertEqual(row["harness_names"], {"kilo": "Kilo Code"})
 
     def test_missing_binary_is_422_before_launch(self):
-        with patch("quiver.remote.supervise.launch_new") as launch:
+        with patch("swe.remote.supervise.launch_new") as launch:
             status, body = self._launch(
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi"},
                 installed=False)
@@ -1082,7 +1082,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(self.srv.state.launches, {})
 
     def test_launch_validation(self):
-        with patch("quiver.remote.supervise.launch_new") as launch:
+        with patch("swe.remote.supervise.launch_new") as launch:
             cases = [
                 ({"harness": "Not A Name", "cwd": "/tmp", "prompt": "hi"},
                  "bad_command"),
@@ -1101,7 +1101,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(self.srv.state.launches, {})
 
     def test_launch_carries_model_and_effort(self):
-        with patch("quiver.remote.supervise.launch_new",
+        with patch("swe.remote.supervise.launch_new",
                    return_value=(True, "launched", "qv-t")) as launch:
             status, body = self._launch(
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi",
@@ -1116,7 +1116,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(view["effort"], "high")
 
     def test_launch_carries_yolo(self):
-        with patch("quiver.remote.supervise.launch_new",
+        with patch("swe.remote.supervise.launch_new",
                    return_value=(True, "launched", "qv-t")) as launch:
             status, body = self._launch(
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi",
@@ -1127,7 +1127,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertIs(view["yolo"], True)
 
     def test_launch_refuses_yolo_the_harness_cannot_take(self):
-        with patch("quiver.remote.supervise.launch_new") as launch:
+        with patch("swe.remote.supervise.launch_new") as launch:
             status, body = self._launch(
                 {"harness": "gemini", "cwd": "/tmp", "prompt": "hi",
                  "yolo": True})
@@ -1135,7 +1135,7 @@ class TestHubWriteRoutes(unittest.TestCase):
                          (409, "unsupported_launch_option"))
         launch.assert_not_called()
         self.assertEqual(self.srv.state.launches, {})
-        with patch("quiver.remote.supervise.launch_new") as launch:
+        with patch("swe.remote.supervise.launch_new") as launch:
             status, body = self._launch(
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi",
                  "yolo": "yes"})
@@ -1144,7 +1144,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         launch.assert_not_called()
 
     def test_launch_refuses_a_pick_the_harness_cannot_take(self):
-        with patch("quiver.remote.supervise.launch_new") as launch:
+        with patch("swe.remote.supervise.launch_new") as launch:
             status, body = self._launch(
                 {"harness": "gemini", "cwd": "/tmp", "prompt": "hi",
                  "model": "opus"})
@@ -1154,7 +1154,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(self.srv.state.launches, {})
 
     def test_launch_rejects_a_bad_model_shape(self):
-        with patch("quiver.remote.supervise.launch_new") as launch:
+        with patch("swe.remote.supervise.launch_new") as launch:
             for bad in ({"model": 3}, {"model": ["opus"]},
                         {"model": "two words"}, {"effort": {"x": 1}}):
                 status, body = self._launch(
@@ -1176,9 +1176,9 @@ class TestHubWriteRoutes(unittest.TestCase):
     def test_attach_carries_model_and_effort(self):
         # The pick's channel check runs on the resolved attach mode.
         srv, hdr = self._attach_srv()
-        with patch("quiver.remote.supervise.attach",
+        with patch("swe.remote.supervise.attach",
                    return_value=(True, "attached")) as att, \
-             patch("quiver.remote.supervise.resolve_mode",
+             patch("swe.remote.supervise.resolve_mode",
                    return_value="headless"):
             status, body = srv.request(
                 "POST", "/v1/sessions/claude:ao/control",
@@ -1190,8 +1190,8 @@ class TestHubWriteRoutes(unittest.TestCase):
 
     def test_attach_refuses_a_pick_the_channel_cannot_take(self):
         srv, hdr = self._attach_srv()
-        with patch("quiver.remote.supervise.attach") as att, \
-             patch("quiver.remote.supervise.resolve_mode",
+        with patch("swe.remote.supervise.attach") as att, \
+             patch("swe.remote.supervise.resolve_mode",
                    return_value="headless"):
             status, body = srv.request(
                 "POST", "/v1/sessions/claude:ao/control",
@@ -1204,8 +1204,8 @@ class TestHubWriteRoutes(unittest.TestCase):
 
     def test_attach_rejects_a_bad_model_shape(self):
         srv, hdr = self._attach_srv()
-        with patch("quiver.remote.supervise.attach") as att, \
-             patch("quiver.remote.supervise.resolve_mode",
+        with patch("swe.remote.supervise.attach") as att, \
+             patch("swe.remote.supervise.resolve_mode",
                    return_value="headless"):
             status, body = srv.request(
                 "POST", "/v1/sessions/claude:ao/control",
@@ -1233,9 +1233,9 @@ class TestHubWriteRoutes(unittest.TestCase):
         # The tailer skips history when the session already has a
         # journal, so session.launched must not land there first.
         lid = self.srv.state.new_launch("m", "claude", "/tmp")
-        with patch("quiver.remote.supervise.adopt_pending",
+        with patch("swe.remote.supervise.adopt_pending",
                    return_value=["claude:new"]), \
-             patch("quiver.remote.supervise.meta_for",
+             patch("swe.remote.supervise.meta_for",
                    return_value={"launch_id": lid}):
             self.srv.state._adopt_launches()
         self.assertEqual(self.srv.state.journal.last_seq("claude:new"), 0)
@@ -1554,7 +1554,7 @@ class TestInboxCutoff(unittest.TestCase):
     NOW = 1_800_000_000.0
 
     def _catalog(self, rows):
-        from quiver.remote.catalog import Catalog
+        from swe.remote.catalog import Catalog
         home = temp_dir(self)
         sessions = [_session(sid=sid, ts=ts) for sid, ts, _st in rows]
         cat = Catalog(home, machine_id="mbp",
@@ -1567,7 +1567,7 @@ class TestInboxCutoff(unittest.TestCase):
         return sorted(i["key"] for i in items)
 
     def test_cutoff_drops_old_followups_errors_interrupts(self):
-        from quiver.remote.catalog import INBOX_MAX_AGE_S
+        from swe.remote.catalog import INBOX_MAX_AGE_S
         fresh = self.NOW - INBOX_MAX_AGE_S + 60
         stale = self.NOW - INBOX_MAX_AGE_S - 60
         cat = self._catalog([
@@ -1603,7 +1603,7 @@ class TestInboxCutoff(unittest.TestCase):
         )
 
     def test_done_today_is_opt_in(self):
-        from quiver.remote.catalog import _local_midnight
+        from swe.remote.catalog import _local_midnight
         midnight = _local_midnight(self.NOW)
         cat = self._catalog([
             ("today", midnight + 1, "done"),
@@ -1665,7 +1665,7 @@ class TestInboxDismiss(unittest.TestCase):
             self.assertEqual(json.loads(data)["error"]["code"], "bad_dismiss")
 
     def test_dismiss_is_per_device_and_persists(self):
-        from quiver.remote import dismissals
+        from swe.remote import dismissals
         phone, tablet = self.srv.pair(), self.srv.pair()
         self.assertEqual(self.inbox_keys(phone), ["claude:f1"])
         status, data = self.dismiss(
@@ -1693,7 +1693,7 @@ class TestInboxDismiss(unittest.TestCase):
         self.assertEqual(self.inbox_keys(cred), ["claude:f1"])
 
     def test_store_prunes_by_dismissal_time(self):
-        from quiver.remote import dismissals
+        from swe.remote import dismissals
         home = self.srv.home
         now = time.time()
         dismissals.dismiss(home, "d1", "claude:old", 5.0,
@@ -1706,7 +1706,7 @@ class TestInboxDismiss(unittest.TestCase):
 
     def test_write_prunes_every_device(self):
         # An idle (or revoked) device's expired rows go on any write.
-        from quiver.remote import dismissals
+        from swe.remote import dismissals
         home = self.srv.home
         now = time.time()
         dismissals.dismiss(home, "idle", "k", 5.0,
@@ -1716,7 +1716,7 @@ class TestInboxDismiss(unittest.TestCase):
         self.assertEqual(list(raw["devices"]), ["busy"])
 
     def test_stale_retry_keeps_newer_dismissal(self):
-        from quiver.remote import dismissals
+        from swe.remote import dismissals
         home = self.srv.home
         dismissals.dismiss(home, "d1", "k", 20.0)
         dismissals.dismiss(home, "d1", "k", 10.0)
@@ -1743,13 +1743,13 @@ class TestSendQueue(unittest.TestCase):
         )
 
     def _injector(self):
-        from quiver.remote import inject
+        from swe.remote import inject
         fake = MagicMock()
         fake.send.return_value = inject.InjectResult(True, "sent")
         return fake
 
     def test_message_202_then_result_event(self):
-        from quiver.remote import inject
+        from swe.remote import inject
         fake = self._injector()
         q = self.srv.state.bus.subscribe(self.key)
         with patch.object(inject, "injector_for", return_value=fake):
@@ -1772,7 +1772,7 @@ class TestSendQueue(unittest.TestCase):
         self.assertEqual(evs[-1]["type"], "command.result")
 
     def test_send_wakes_the_session_tailer(self):
-        from quiver.remote import inject
+        from swe.remote import inject
         fake = self._injector()
         mgr = self.srv.state.tail_manager
         self.assertFalse(mgr.is_hot(self.key))
@@ -1788,8 +1788,8 @@ class TestSendQueue(unittest.TestCase):
         self.assertTrue(mgr.wait(0))
 
     def test_queue_waits_for_idle(self):
-        from quiver.remote import hub as hub_mod
-        from quiver.remote import inject
+        from swe.remote import hub as hub_mod
+        from swe.remote import inject
         fake = self._injector()
         polled = threading.Event()
         flip = threading.Event()
@@ -1815,8 +1815,8 @@ class TestSendQueue(unittest.TestCase):
         self.assertEqual(fake.send.call_args[0][2], "done")
 
     def test_queue_timeout_reports_failure(self):
-        from quiver.remote import hub as hub_mod
-        from quiver.remote import inject
+        from swe.remote import hub as hub_mod
+        from swe.remote import inject
         fake = self._injector()
         self.live = ["active"]
         q = self.srv.state.bus.subscribe(self.key)
@@ -1831,7 +1831,7 @@ class TestSendQueue(unittest.TestCase):
         fake.send.assert_not_called()
 
     def test_steer_sends_immediately_while_active(self):
-        from quiver.remote import inject
+        from swe.remote import inject
         fake = self._injector()
         self.live = ["active"]
         q = self.srv.state.bus.subscribe(self.key)
@@ -1848,8 +1848,8 @@ class TestSendQueue(unittest.TestCase):
         # Job 2 submitted while its key still read idle must not inject
         # into the turn job 1 just started: the wait uses a fresh read
         # taken when the job runs, not the submit-time one.
-        from quiver.remote import hub as hub_mod
-        from quiver.remote import inject
+        from swe.remote import hub as hub_mod
+        from swe.remote import inject
         fake = self._injector()
         job1_in_send = threading.Event()
         release_job1 = threading.Event()
@@ -1892,7 +1892,7 @@ class TestSendQueue(unittest.TestCase):
         self.assertEqual(sent[1][2], "done")
 
     def test_sends_run_fifo_per_key(self):
-        from quiver.remote import inject
+        from swe.remote import inject
         fake = self._injector()
         q = self.srv.state.bus.subscribe(self.key)
         with patch.object(inject, "injector_for", return_value=fake):
@@ -1906,8 +1906,8 @@ class TestSendQueue(unittest.TestCase):
     def test_steer_bypasses_a_waiting_queue_job(self):
         # Steers get their own queue key: one queue job parked on an
         # active session must not hold a steer back.
-        from quiver.remote import hub as hub_mod
-        from quiver.remote import inject
+        from swe.remote import hub as hub_mod
+        from swe.remote import inject
         fake = self._injector()
         self.live = ["active"]
         q = self.srv.state.bus.subscribe(self.key)
@@ -1937,8 +1937,8 @@ class TestSendQueue(unittest.TestCase):
     def test_job_refetches_session_during_wait(self):
         # The Session captured at submit can go stale mid-wait — each
         # poll and the final send must see the catalog's current one.
-        from quiver.remote import hub as hub_mod
-        from quiver.remote import inject
+        from swe.remote import hub as hub_mod
+        from swe.remote import inject
         fake = self._injector()
         newer = _session(sid="s1")
         flip = threading.Event()
@@ -1970,8 +1970,8 @@ class TestSendQueue(unittest.TestCase):
     def test_close_cancels_queued_and_stop_fails_running(self):
         # Restart semantics: queued jobs are cancelled outright; a job
         # already in its wait loop exits on _stop with the same note.
-        from quiver.remote import hub as hub_mod
-        from quiver.remote import inject
+        from swe.remote import hub as hub_mod
+        from swe.remote import inject
         fake = self._injector()
         calls = [0]
         job_started = threading.Event()
@@ -2011,8 +2011,8 @@ class TestSendQueue(unittest.TestCase):
         fake.send.assert_not_called()
 
     def test_send_backlog_cap_429s(self):
-        from quiver.remote import hub as hub_mod
-        from quiver.remote import inject
+        from swe.remote import hub as hub_mod
+        from swe.remote import inject
         fake = self._injector()
         self.live = ["active"]
         with patch.object(inject, "injector_for", return_value=fake), \
@@ -2027,7 +2027,7 @@ class TestSendQueue(unittest.TestCase):
         )
 
     def test_injector_exception_fails_job_not_worker(self):
-        from quiver.remote import inject
+        from swe.remote import inject
         fake = self._injector()
         fake.send.side_effect = [
             RuntimeError("boom"), inject.InjectResult(True, "sent")
@@ -2054,8 +2054,8 @@ class TestQueuedSends(unittest.TestCase):
         self.key = "claude:s1"
         self.live = ["active"]
         self.srv.state.status_of = lambda sessions: list(self.live)
-        from quiver.remote import hub as hub_mod
-        from quiver.remote import inject
+        from swe.remote import hub as hub_mod
+        from swe.remote import inject
         self.fake = MagicMock()
         self.fake.send.return_value = inject.InjectResult(True, "sent")
         for p in (
@@ -2097,7 +2097,7 @@ class TestQueuedSends(unittest.TestCase):
             self.events.get(timeout=0.4)
 
     def test_list_shows_waiting_send_then_drops_it_once_delivered(self):
-        from quiver.remote import attachments
+        from swe.remote import attachments
         staged, err = attachments.stage(
             self.srv.home, self.key, "shot.png", b"\x89PNG\r\n\x1a\n"
         )
@@ -2169,7 +2169,7 @@ class TestQueuedSends(unittest.TestCase):
         self.fake.send.assert_called_once()
 
     def test_steer_queues_behind_earlier_steers(self):
-        from quiver.remote import inject
+        from swe.remote import inject
         first_in = threading.Event()
         release = threading.Event()
 
@@ -2194,7 +2194,7 @@ class TestQueuedSends(unittest.TestCase):
         )
 
     def test_steer_degrades_like_a_normal_steer(self):
-        from quiver.remote import inject
+        from swe.remote import inject
         self.fake.send.return_value = inject.InjectResult(
             True, "sent (steer queued: headless runs are atomic)",
             degraded=True,
@@ -2326,7 +2326,7 @@ class TestQueuedSends(unittest.TestCase):
 
     def test_edit_after_job_claims_is_409_and_old_text_goes(self):
         # The job wins: it claimed the send and is injecting.
-        from quiver.remote import inject
+        from swe.remote import inject
         in_send = threading.Event()
         release = threading.Event()
 
@@ -2391,7 +2391,7 @@ class TestQueuedSends(unittest.TestCase):
             )
 
     def test_removed_and_steered_sends_free_their_backlog_slots(self):
-        from quiver.remote import hub as hub_mod
+        from swe.remote import hub as hub_mod
         with patch.object(hub_mod, "MAX_SEND_BACKLOG", 4):
             for i in range(4):
                 self.assertEqual(self._send(f"m{i}", f"q-{i}")[0], 202)
@@ -2425,7 +2425,7 @@ class TestQueuedSends(unittest.TestCase):
     def test_cancel_as_job_starts_injecting_reports_once(self):
         # The job wins the race: it has claimed the send and is inside
         # the injector, so the cancel is refused and one result lands.
-        from quiver.remote import inject
+        from swe.remote import inject
         in_send = threading.Event()
         release = threading.Event()
 
@@ -2487,7 +2487,7 @@ class TestWaitingRegistry(unittest.TestCase):
     """sendq.Waiting: a send leaves ``waiting`` exactly once."""
 
     def test_edit_that_succeeds_is_always_what_gets_sent(self):
-        from quiver.remote import sendq
+        from swe.remote import sendq
         for _ in range(50):
             reg = sendq.Waiting()
             send = sendq.QueuedSend("c1", "old", [], {"cmd": {"text": "old"}})
@@ -2524,7 +2524,7 @@ class TestWaitingRegistry(unittest.TestCase):
                 self.assertEqual(out["sent"], "old")
 
     def test_claim_is_exclusive_under_contention(self):
-        from quiver.remote import sendq
+        from swe.remote import sendq
         for _ in range(50):
             reg = sendq.Waiting()
             send = sendq.QueuedSend("c1", "hi", [], {})
@@ -2560,7 +2560,7 @@ class TestWaitingRegistry(unittest.TestCase):
             self.assertEqual(reg.take("k", "c1", "removed")[1], send.state)
 
     def test_gone_memory_is_bounded_and_reuse_clears_it(self):
-        from quiver.remote import sendq
+        from swe.remote import sendq
         reg = sendq.Waiting()
         with patch.object(sendq, "GONE_MEMORY", 3):
             for i in range(5):
@@ -3284,7 +3284,7 @@ class TestDeviceList(unittest.TestCase):
 
 class TestServeEntry(unittest.TestCase):
     def test_serve_keyboard_interrupt_returns_0(self):
-        from quiver.remote import hub as hub_mod
+        from swe.remote import hub as hub_mod
 
         state = MagicMock()
         server = MagicMock()
@@ -3300,7 +3300,7 @@ class TestServeEntry(unittest.TestCase):
         # SIGTERM must reach state.stop(), not kill the process outright —
         # otherwise accepted sends drop without their command.result.
         import signal
-        from quiver.remote import hub as hub_mod
+        from swe.remote import hub as hub_mod
 
         state = MagicMock()
         server = MagicMock()
@@ -3342,7 +3342,7 @@ class TestServeEntry(unittest.TestCase):
         # stop() wakes the loop as well; setting only _stop left it to sit
         # out the whole refresh interval.
         state.tail_manager.sync = lambda rows, **kw: state.stop()
-        with patch("quiver.remote.supervise.reap_kept"):
+        with patch("swe.remote.supervise.reap_kept"):
             state._catalog_loop()
         self.assertTrue(state.tail_manager.is_hot("claude:a"))
         self.assertFalse(state.tail_manager.is_hot("claude:b"))
@@ -3494,8 +3494,8 @@ class TestServeEntry(unittest.TestCase):
                 state._stop.set()
 
         state.tail_manager.sync = sync
-        with patch("quiver.remote.supervise.reap_kept"), \
-             patch("quiver.remote.pairing.prune_requests",
+        with patch("swe.remote.supervise.reap_kept"), \
+             patch("swe.remote.pairing.prune_requests",
                    wraps=pairing.prune_requests) as prune:
             state._catalog_loop()
         self.assertEqual(prune.call_count, 2)
@@ -3797,7 +3797,7 @@ class TestSSE(_ShortHeartbeat, HubBase):
             conn.close()
 
     def test_revoked_device_drops_stream(self):
-        from quiver.remote import hub as hub_mod
+        from swe.remote import hub as hub_mod
         cred = self.srv.pair()
         auth = {"Authorization": f"Bearer {cred['credential']}"}
         conn = http.client.HTTPConnection(
@@ -3827,7 +3827,7 @@ class TestSSE(_ShortHeartbeat, HubBase):
 
 class TestServerHardening(HubBase):
     def test_stalled_request_times_out_and_hub_survives(self):
-        from quiver.remote import hub as hub_mod
+        from swe.remote import hub as hub_mod
         with patch.object(hub_mod, "_REQ_TIMEOUT_S", 0.5):
             sock = socket.create_connection(
                 ("127.0.0.1", self.srv.port), timeout=5
@@ -3855,7 +3855,7 @@ class TestServerHardening(HubBase):
         self.assertEqual(status, 200)
 
     def test_worker_pool_is_bounded(self):
-        from quiver.remote import hub as hub_mod
+        from swe.remote import hub as hub_mod
         self.assertIsInstance(self.srv.server, hub_mod._BoundedHTTPServer)
         # Exhaust every slot; the next connection is refused at the
         # socket instead of spawning an unbounded thread.
@@ -3948,7 +3948,7 @@ class TestKeepAliveAfterRefusal(HubBase):
                                     status, code)
 
     def test_unread_upload_is_drained(self):
-        from quiver.remote import attachments
+        from swe.remote import attachments
         with patch.object(attachments, "MAX_BYTES", 8):
             self._assert_reused(
                 "POST", "/v1/sessions/claude:s1/attachments?name=a.txt",
@@ -4017,7 +4017,7 @@ class TestKeepAliveAfterRefusal(HubBase):
         ).encode()
 
     def test_body_over_the_drain_cap_closes_the_connection(self):
-        from quiver.remote import hub as hub_mod
+        from swe.remote import hub as hub_mod
         body = json.dumps({"text": "x" * 2000}).encode()
         follow = b"GET /v1/status HTTP/1.1\r\nHost: x\r\n\r\n"
         with patch.object(hub_mod, "_DRAIN_MAX", 64):
@@ -4028,7 +4028,7 @@ class TestKeepAliveAfterRefusal(HubBase):
         self._assert_closed_cleanly(reply, 409)
 
     def test_slow_body_closes_instead_of_holding_the_thread(self):
-        from quiver.remote import hub as hub_mod
+        from swe.remote import hub as hub_mod
         with patch.object(hub_mod, "_DRAIN_S", 0.3):
             started = time.monotonic()
             # 400 bytes declared, 10 sent: the drain can't finish.
@@ -4334,7 +4334,7 @@ class TestAgentSecurity(HubBase):
 
 class TestStartNotify(unittest.TestCase):
     def test_start_spawns_notifier_when_enabled(self):
-        from quiver.remote import hub as hub_mod, notify
+        from swe.remote import hub as hub_mod, notify
 
         home = temp_dir(self)
         state = HubState(home)
@@ -4353,7 +4353,7 @@ class TestStartNotify(unittest.TestCase):
                 state.stop()
 
     def test_start_skips_notifier_when_disabled(self):
-        from quiver.remote import notify
+        from swe.remote import notify
 
         home = temp_dir(self)
         state = HubState(home)
@@ -4369,7 +4369,7 @@ class TestStartNotify(unittest.TestCase):
     def test_start_skips_notifier_on_partial_config(self):
         # enabled but no url/topic: no thread, and no undrained queue
         # left on the bus either.
-        from quiver.remote import notify
+        from swe.remote import notify
 
         home = temp_dir(self)
         state = HubState(home)
@@ -4389,7 +4389,7 @@ class TestStartNotify(unittest.TestCase):
         # Notifications off must not strand the legacy ntfy-actions
         # device row: copies already sent to a topic still authenticate
         # as a paired device until the row is revoked.
-        from quiver.remote import notify, pairing
+        from swe.remote import notify, pairing
 
         home = temp_dir(self)
         device_id = "deadbeef02"

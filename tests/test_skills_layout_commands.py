@@ -7,13 +7,13 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.skills.layout_commands import (
+from swe.skills.layout_commands import (
     _parse_flags,
     cmd_skills_link,
     cmd_skills_move,
     cmd_skills_unlink,
 )
-from quiver.skills.link_ops import SkillLayoutError
+from swe.skills.link_ops import SkillLayoutError
 
 ALL_FLAGS = {"--from", "--to", "--force", "--mkdir", "--json"}
 
@@ -85,7 +85,7 @@ class SkillsLinkTest(unittest.TestCase):
 
     def test_layout_error_is_reported(self):
         with patch(
-            "quiver.skills.layout_commands.link_skill_root",
+            "swe.skills.layout_commands.link_skill_root",
             side_effect=SkillLayoutError("already linked"),
         ):
             code, out = _run(cmd_skills_link, ["shared"])
@@ -94,7 +94,7 @@ class SkillsLinkTest(unittest.TestCase):
 
     def test_success(self):
         with patch(
-            "quiver.skills.layout_commands.link_skill_root",
+            "swe.skills.layout_commands.link_skill_root",
             return_value=("codex", Path("/x/shared"), Path("/y/codex")),
         ) as link:
             code, out = _run(cmd_skills_link, ["codex", "shared", "--force"])
@@ -114,7 +114,7 @@ class SkillsLinkTest(unittest.TestCase):
 
     def test_json_output(self):
         with patch(
-            "quiver.skills.layout_commands.link_skill_root",
+            "swe.skills.layout_commands.link_skill_root",
             return_value=("codex", Path("/x/shared"), Path("/y/codex")),
         ):
             code, out = _run(cmd_skills_link, ["codex", "--json"])
@@ -141,7 +141,7 @@ class SkillsUnlinkTest(unittest.TestCase):
 
     def test_layout_error_is_reported(self):
         with patch(
-            "quiver.skills.layout_commands.unlink_skill_root",
+            "swe.skills.layout_commands.unlink_skill_root",
             side_effect=SkillLayoutError("not a link"),
         ):
             code, out = _run(cmd_skills_unlink, ["codex"])
@@ -150,7 +150,7 @@ class SkillsUnlinkTest(unittest.TestCase):
 
     def test_success_with_mkdir_mentions_directory(self):
         with patch(
-            "quiver.skills.layout_commands.unlink_skill_root",
+            "swe.skills.layout_commands.unlink_skill_root",
             return_value=("codex", Path("/y/codex")),
         ) as unlink:
             code, out = _run(cmd_skills_unlink, ["codex", "--mkdir"])
@@ -160,7 +160,7 @@ class SkillsUnlinkTest(unittest.TestCase):
 
     def test_success_without_mkdir(self):
         with patch(
-            "quiver.skills.layout_commands.unlink_skill_root",
+            "swe.skills.layout_commands.unlink_skill_root",
             return_value=("codex", Path("/y/codex")),
         ):
             code, out = _run(cmd_skills_unlink, ["codex"])
@@ -179,7 +179,7 @@ class SkillsUnlinkTest(unittest.TestCase):
 
     def test_json_output(self):
         with patch(
-            "quiver.skills.layout_commands.unlink_skill_root",
+            "swe.skills.layout_commands.unlink_skill_root",
             return_value=("codex", Path("/y/codex")),
         ):
             code, out = _run(cmd_skills_unlink, ["codex", "--json", "--mkdir"])
@@ -206,7 +206,7 @@ class SkillsMoveTest(unittest.TestCase):
 
     def test_layout_error_is_reported(self):
         with patch(
-            "quiver.skills.layout_commands.move_skill",
+            "swe.skills.layout_commands.move_skill",
             side_effect=SkillLayoutError("no such skill"),
         ):
             code, out = _run(
@@ -217,7 +217,7 @@ class SkillsMoveTest(unittest.TestCase):
 
     def test_success(self):
         with patch(
-            "quiver.skills.layout_commands.move_skill",
+            "swe.skills.layout_commands.move_skill",
             return_value=(Path("/a"), Path("/b")),
         ) as move:
             code, out = _run(
@@ -237,7 +237,7 @@ class SkillsMoveTest(unittest.TestCase):
 
     def test_json_output(self):
         with patch(
-            "quiver.skills.layout_commands.move_skill",
+            "swe.skills.layout_commands.move_skill",
             return_value=(Path("/a"), Path("/b")),
         ):
             code, out = _run(

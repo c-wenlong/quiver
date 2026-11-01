@@ -29,8 +29,8 @@ class AddJsonTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_add(self, *argv):
-        from quiver.harness.commands import cmd_add
-        from quiver.harness import registry as reg
+        from swe.harness.commands import cmd_add
+        from swe.harness import registry as reg
 
         harness_file = self.home / "harness.json"
         out, err = io.StringIO(), io.StringIO()
@@ -67,8 +67,8 @@ class AddJsonTest(unittest.TestCase):
         self.assertEqual(row["tags"], ["a", "b"])
 
     def test_add_harness_cleans_lists_handed_in(self):
-        from quiver.harness import registry as reg
-        from quiver.harness.commands import add_harness
+        from swe.harness import registry as reg
+        from swe.harness.commands import add_harness
 
         with mock.patch.object(reg, "HARNESS_FILE", self.home / "harness.json"), \
              mock.patch.dict(os.environ, {"HOME": str(self.home), "PATH": str(self.bin)}):

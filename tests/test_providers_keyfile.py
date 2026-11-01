@@ -1,4 +1,4 @@
-"""quiver.providers.keyfile: the Mac app's APIKeysFile and APIKeysStore."""
+"""swe.providers.keyfile: the Mac app's APIKeysFile and APIKeysStore."""
 
 import os
 import tempfile
@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.providers import keyfile
-from quiver.providers.keyfile import KeyFileError, KeysFile
+from swe.providers import keyfile
+from swe.providers.keyfile import KeyFileError, KeysFile
 
 
 class TestParse(unittest.TestCase):

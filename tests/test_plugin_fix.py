@@ -14,7 +14,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from quiver.find.plugin_drift import Finding, FixError, apply_fix, plugin_drift
+from swe.find.plugin_drift import Finding, FixError, apply_fix, plugin_drift
 
 try:  # `unittest discover -s tests` puts tests/ itself on sys.path
     from test_json_output import SRC, decode
@@ -34,7 +34,7 @@ def run_swe(home: Path, *args: str, path: str | None = None,
         "PYTHONPATH": str(SRC),
         "NO_COLOR": "1",
     })
-    return subprocess.run([sys.executable, "-m", "quiver.cli", *args],
+    return subprocess.run([sys.executable, "-m", "swe.cli", *args],
                           capture_output=True, text=True, env=env, timeout=60)
 
 
@@ -159,7 +159,7 @@ class ApplyFixTest(_FakeHome, unittest.TestCase):
         dup = Finding("claude", "mk", "tool", "stale", "d", "claude plugin update tool@mk",
                       argv=(("claude", "plugin", "update", "tool@mk"),))
         run = Recorder()
-        with unittest.mock.patch("quiver.find.plugin_drift.plugin_drift", return_value=[dup, dup]):
+        with unittest.mock.patch("swe.find.plugin_drift.plugin_drift", return_value=[dup, dup]):
             with self.assertRaisesRegex(FixError, "2 findings share id"):
                 apply_fix(self.home, dup.id, run=run)
         self.assertEqual(run.calls, [])
@@ -247,7 +247,7 @@ class LinkedManifestCliTest(_FakeHome, unittest.TestCase):
         self.assertIn("rm ", result.stdout)
 
     def test_hub_shows_the_link_before_a_stale_copy(self):
-        from quiver.skills.inventory import hub_plugins
+        from swe.skills.inventory import hub_plugins
 
         (self.plugin / "agents" / "helper.md").write_text("changed\n")
         self.assertEqual(self.kinds(), [("codex", "linked-manifest"), ("codex", "stale")])
@@ -259,9 +259,9 @@ class LinkedManifestCliTest(_FakeHome, unittest.TestCase):
 
 class KindLabelsTest(unittest.TestCase):
     def test_every_kind_reads_as_words_in_both_listings(self):
-        from quiver.find.commands import DRIFT_WORD
-        from quiver.find.plugin_drift import KINDS
-        from quiver.skills.commands import _HUB_STATES
+        from swe.find.commands import DRIFT_WORD
+        from swe.find.plugin_drift import KINDS
+        from swe.skills.commands import _HUB_STATES
 
         for kind in KINDS:
             self.assertIn(kind, DRIFT_WORD)

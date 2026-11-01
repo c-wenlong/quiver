@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.webapp import pages
+from swe.webapp import pages
 
 from tests.test_remote_hub import HubBase
 
@@ -283,7 +283,7 @@ class TestStylesheets(unittest.TestCase):
 
 class TestLedgerAccess(HubBase):
     def test_pages_share_the_ledger(self):
-        from quiver.webapp.api import WebApp
+        from swe.webapp.api import WebApp
         app = WebApp(self.srv.home, download_prices=False)
         self.addCleanup(app.close)
         with app.ledger() as (store, catalog, scan_ok):
