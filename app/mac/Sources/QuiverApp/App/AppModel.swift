@@ -233,25 +233,6 @@ final class AppModel {
         didSet { UserDefaults.standard.set(terminal.rawValue, forKey: "terminalApp") }
     }
 
-    /// The Dock icon, light unless changed in Settings.
-    var appIcon: AppIconStyle {
-        didSet {
-            UserDefaults.standard.set(appIcon.rawValue, forKey: "appIcon")
-            applyAppIcon()
-        }
-    }
-
-    /// Shows the chosen icon in the Dock and the app switcher. The light one
-    /// is the bundle's own, so it needs nothing set.
-    func applyAppIcon() {
-        guard appIcon != .light,
-              let url = Bundle.main.url(forResource: appIcon.resourceName, withExtension: "icns") else {
-            NSApp.applicationIconImage = nil
-            return
-        }
-        NSApp.applicationIconImage = NSImage(contentsOf: url)
-    }
-
     /// The first-run setup window: open at launch on a Mac with no shared
     /// AGENTS.md that hasn't finished or skipped it, or from Settings.
     var showsFirstRunSetup = false
@@ -324,9 +305,7 @@ final class AppModel {
         let policy: NSApplication.ActivationPolicy = dockIconShown ? .regular : .accessory
         guard NSApp.activationPolicy() != policy else { return }
         NSApp.setActivationPolicy(policy)
-        // A new Dock icon starts from the bundle's; the switch also sends
-        // the open window behind other apps, so bring it back.
-        if policy == .regular { applyAppIcon() }
+        // The switch sends the open window behind other apps, so bring it back.
         NSApp.activate()
     }
 
@@ -511,7 +490,6 @@ final class AppModel {
         hub = Self.localHub(swe: client)
         terminal = UserDefaults.standard.string(forKey: "terminalApp")
             .flatMap(TerminalApp.init(rawValue:)) ?? .terminal
-        appIcon = AppIconStyle(saved: UserDefaults.standard.string(forKey: "appIcon"))
         appearance = AppearanceMode(saved: UserDefaults.standard.string(forKey: AppearanceMode.defaultsKey))
         showsInDock = UserDefaults.standard.object(forKey: DockPresence.defaultsKey) == nil
             || UserDefaults.standard.bool(forKey: DockPresence.defaultsKey)

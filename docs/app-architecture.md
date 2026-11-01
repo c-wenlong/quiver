@@ -42,7 +42,7 @@ single environment object. It owns the `SweClient`, the page models that must
 outlive their page (`accounts`, `others`, `skills`, `mcp`, `plugins`,
 `pluginCatalog`, `sessions`, `limits`, `serviceStatus`, `apiKeys`,
 `overview`, `providers`, `apps`, `popup`, `widgetSelection`, `menuBar`), and
-the UserDefaults-backed settings (`swePath`, `terminal`, `appIcon`,
+the UserDefaults-backed settings (`swePath`, `terminal`,
 `appearance`, Dock presence, `lastSection`, `codeEditor`, `navReselects`,
 `pluginsTab`). `start()` kicks off the watchers: model restores, the
 skills/catalog cross-feed, sessions, limit refresh loops, widget snapshot
