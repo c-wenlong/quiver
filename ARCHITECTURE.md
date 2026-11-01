@@ -433,10 +433,12 @@ data in for `cmd_doctor`.
 Fixing is separate from finding. `harness/doctor_fix.py` holds one runner
 per finding `action` and the order a batch runs them in; `swe doctor
 --fix` and the web Doctor page's Run both call it. Batch actions only add or relink (`setup`,
-`discover`, `init`) and run in that order, re-reading the report after
-each step, since a missing hub hides every link check. Click actions
-(`install`, and the drops that delete entries a synced settings file may
-still want elsewhere) run only for one named finding. Plain `swe doctor`
+`discover`, `init`, `plugin-fix`) and run in that order, re-reading the
+report after each step, since a missing hub hides every link check; the
+order repeats (at most three passes) while a step reveals more. Click actions
+(`install`, `plugin-reinstall`, and the drops that delete entries or
+links a synced file may still want elsewhere: `undeclare`,
+`marketplace-drop`, `dangling-link`) run only for one named finding. Plain `swe doctor`
 never writes.
 
 The principle behind all four, made explicit once capabilities-first

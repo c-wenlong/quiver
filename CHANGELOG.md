@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Doctor folds in plugin drift and broken hub links.** `swe doctor`
+  now lists `swe find plugins`' drift as `plugins.<kind>` findings. An
+  unregistered marketplace folder or an uninstalled plugin gets the
+  `plugin-fix` action, which `--fix` and Fix all run (it only adds, via
+  `plugin_drift.apply_fix`); a stale Codex copy gets `plugin-reinstall`,
+  a click per finding since it removes the copy first; a disabled plugin
+  or a linked manifest keeps its command. A broken top-level symlink in
+  `~/.quiver` or its skills folder gets `dangling-link`, a click that
+  copies the link to `~/.quiver/backups` and removes it, and refuses
+  anything that is no longer a broken link directly in those folders.
+  A marketplace `--fix` registers shows its uninstalled plugins to the
+  next pass, which installs them. Part of
+  [#529](https://github.com/c-wenlong/quiver/issues/529).
 - **Live reply text on iPhone, web and Mac.** The chat draws a reply
   word by word while a Codex app-server, opencode serve or headless
   Claude session writes it: `message.delta` text grows a bubble at the
