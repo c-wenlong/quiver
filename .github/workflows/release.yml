@@ -508,29 +508,27 @@ jobs:
             echo "::notice::No published GitHub release for $RELEASE_TAG yet. Publish the release, then re-run this workflow to attach the artifacts."
           fi
 
-  bump-homebrew-tap:
-    # Points c-wenlong/homebrew-quiver at this release: the `quiver` cask
-    # at the DMG, the `swe` formula at the wheel. Runs only when the
-    # upload above put a signed DMG on a published release, so an unsigned
-    # scaffold run or a tag with no release yet never moves the tap.
+  homebrew-tap-gate:
+    # Decides whether this run may move c-wenlong/homebrew-quiver. Kept
+    # out of the bump job's concurrency group on purpose: a re-run for an
+    # older tag stops here instead of queueing, where it would replace
+    # (and so cancel) the newest release's pending bump.
+    #
+    # The tap follows only a signed DMG on a published release (the
+    # `attached` output), and only the latest release.
     #
     # Required secret: HOMEBREW_TAP_TOKEN, a fine-grained token with
     # Contents read/write on c-wenlong/homebrew-quiver only. Without it
-    # the job leaves a notice and does nothing.
-    name: Bump the Homebrew tap
+    # this leaves a notice and the tap stays as it is.
+    name: Check whether the Homebrew tap should follow
     needs: attach-to-release
     if: needs.attach-to-release.outputs.attached == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # One tap bump at a time across every release run, so the latest-
-    # release check below and the push happen without another run in
-    # between. bump_tap.py also refuses to move the tap to an older
-    # version, in case a run gets through anyway.
-    concurrency:
-      group: homebrew-tap
-      cancel-in-progress: false
+    timeout-minutes: 5
     permissions:
       contents: read
+    outputs:
+      go: ${{ steps.gate.outputs.go }}
 
     steps:
       - name: Check the token and that this is the latest release
@@ -556,8 +554,25 @@ jobs:
           fi
           echo "go=true" >> "$GITHUB_OUTPUT"
 
+  bump-homebrew-tap:
+    # Points the tap at this release: the `quiver` cask at the DMG, the
+    # `swe` formula at the wheel.
+    name: Bump the Homebrew tap
+    needs: homebrew-tap-gate
+    if: needs.homebrew-tap-gate.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One tap bump at a time, so two pushes never race. Only latest-
+    # release runs get here, and bump_tap.py refuses to move the tap to
+    # an older version, so the tap ends on the newest whatever the order.
+    concurrency:
+      group: homebrew-tap
+      cancel-in-progress: false
+    permissions:
+      contents: read
+
+    steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: steps.gate.outputs.go == 'true'
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
           sparse-checkout: scripts/bump_tap.py
@@ -566,7 +581,6 @@ jobs:
       - name: Hash the uploaded DMG and wheel
         # Hashes what the release now serves, the bytes `brew` will fetch,
         # rather than the copies this run uploaded.
-        if: steps.gate.outputs.go == 'true'
         id: sha
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -581,7 +595,6 @@ jobs:
           echo "wheel=$(sha256sum "$dir/quiver-$version-py3-none-any.whl" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Push the bump to the tap
-        if: steps.gate.outputs.go == 'true'
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           DMG_SHA: ${{ steps.sha.outputs.dmg }}
