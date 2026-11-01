@@ -53,7 +53,7 @@ struct SpendSection: View {
     /// Where the figures come from, and what the cost leaves out.
     @ViewBuilder private var footnote: some View {
         let unpriced = overview.totals?.unpricedTokens ?? 0
-        let source = overview.machine.map { "From the logs on \(UsageMachineInfo(id: nil, name: $0, online: nil).displayName)" }
+        let source = OverviewFormat.source(overview)
         if source != nil || unpriced > 0 {
             VStack(alignment: .leading, spacing: 2) {
                 if let source { Text(source) }

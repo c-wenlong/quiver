@@ -23,6 +23,38 @@ struct PeriodChips: View {
     }
 }
 
+/// The overview's machine filter (#525): All, then each machine with its
+/// share of the period's tokens, shown once a satellite reports. A
+/// satellite's figures are its daily totals, so its page has no top models.
+struct MachineChips: View {
+    var machines: [OverviewResponse.Machine]
+    /// nil: every machine.
+    var selection: String?
+    var select: (String?) -> Void
+
+    var body: some View {
+        let total = machines.reduce(0) { $0 + ($1.tokens ?? 0) }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                FilterChip(title: "All machines", count: nil, selected: selection == nil) { select(nil) }
+                    .accessibilityAddTraits(selection == nil ? .isSelected : [])
+                ForEach(machines) { machine in
+                    FilterChip(title: Self.title(machine, total: total), count: nil,
+                               selected: selection == machine.id) { select(machine.id) }
+                        .accessibilityAddTraits(selection == machine.id ? .isSelected : [])
+                }
+            }
+        }
+    }
+
+    /// "MacBook 25%": the machine's share of every machine's tokens.
+    static func title(_ machine: OverviewResponse.Machine, total: Int) -> String {
+        let name = machine.name ?? machine.id
+        guard total > 0, let tokens = machine.tokens else { return name }
+        return "\(name) \(Int((Double(tokens) / Double(total) * 100).rounded()))%"
+    }
+}
+
 /// Active days, tokens a day and the busiest day, then the period's top
 /// five models with the harnesses that ran them and their share.
 struct QuickFiguresCard: View {

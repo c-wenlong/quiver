@@ -11,6 +11,12 @@ final class UsageModel {
     private(set) var overviewErrors: [UsagePeriod: String] = [:]
     private(set) var loadedAt: Date?
     var period: UsagePeriod = .week
+    /// One machine's id, or nil for every machine added up (#525). The
+    /// cached periods are for one filter, so changing it drops them.
+    private(set) var machine: String?
+    /// The machines the last overview listed, kept so the chips stay put
+    /// while another filter loads.
+    private(set) var machines: [OverviewResponse.Machine] = []
 
     /// Reopening the tab within this long shows what's there.
     static let freshFor: TimeInterval = 60
@@ -55,15 +61,31 @@ final class UsageModel {
         }
     }
 
+    /// Picks a machine (nil: all of them) and reloads the period on screen.
+    func selectMachine(_ id: String?, app: AppModel) async {
+        guard id != machine else { return }
+        machine = id
+        overviews = [:]
+        overviewErrors = [:]
+        await loadPeriod(app: app, period, force: true)
+    }
+
     func loadPeriod(app: AppModel, _ period: UsagePeriod, force: Bool = false) async {
         guard force || overviews[period] == nil, let client = app.client else { return }
         // The hub asked, not whichever is on screen when it answers.
         let hubId = app.hub?.id
+        let machine = machine
         do {
-            let overview = try await client.overview(period: period)
+            let overview = try await client.overview(period: period, machine: machine)
+            // A filter changed while this ran: its answer is for the old one.
+            guard machine == self.machine else { return }
             overviews[period] = overview
             overviewErrors[period] = nil
-            if period == .today, let hubId { app.publishSpend(overview.totals?.costUsd, hubId: hubId) }
+            if let listed = overview.machines { machines = listed }
+            // The widget's spend is the whole account's, every machine.
+            if period == .today, machine == nil, let hubId {
+                app.publishSpend(overview.totals?.costUsd, hubId: hubId)
+            }
         } catch is CancellationError {
         } catch {
             overviewErrors[period] = message(error, app: app, client: client)

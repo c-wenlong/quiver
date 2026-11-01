@@ -175,6 +175,28 @@ final class UsageDecodingTests: XCTestCase {
         XCTAssertEqual(body.heatmap?.days?.first?.future, true)
     }
 
+    func testOverviewMachinesDecodeAndWordTheSource() throws {
+        let json = #"""
+        {"machine": "Home", "machine_filter": "all", "machines": [
+          {"id": "hub", "name": "Home", "hub": true, "tokens": 300, "cost_usd": 1.0, "reported_at": null},
+          {"id": "mbp", "name": "MacBook", "hub": false, "tokens": 100, "cost_usd": 2.0, "reported_at": 5}]}
+        """#
+        let all = try UsageFixtures.decode(json, as: OverviewResponse.self)
+        XCTAssertEqual(all.machines?.map(\.id), ["hub", "mbp"])
+        XCTAssertEqual(all.machines?.last?.costUsd, 2.0)
+        XCTAssertEqual(OverviewFormat.source(all), "From the logs on 2 machines")
+        let one = try UsageFixtures.decode(json.replacingOccurrences(of: "\"all\"", with: "\"mbp\""),
+                                           as: OverviewResponse.self)
+        XCTAssertEqual(OverviewFormat.source(one), "From the daily totals MacBook reports")
+        let machines = try XCTUnwrap(all.machines)
+        XCTAssertEqual(MachineChips.title(machines[1], total: 400), "MacBook 25%")
+        XCTAssertEqual(MachineChips.title(machines[1], total: 0), "MacBook")
+        // An older hub sends no machines: the hub's own line, as before.
+        let old = try UsageFixtures.decode(#"{"machine": "Home"}"#, as: OverviewResponse.self)
+        XCTAssertNil(old.machines)
+        XCTAssertEqual(OverviewFormat.source(old)?.hasPrefix("From the logs on"), true)
+    }
+
     func testEmptyBodiesDecode() throws {
         let overview = try UsageFixtures.decode("{}", as: OverviewResponse.self)
         XCTAssertNil(overview.totals)
