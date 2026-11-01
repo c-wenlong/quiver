@@ -26,8 +26,27 @@ struct ServiceStatusNotifierTests {
         return [ServiceStatus(service: service, report: report, checkedAt: Date(), problem: nil, isStale: false)]
     }
 
-    private func notifier(_ posts: Posts, defaults: UserDefaults = TestDefaults()) -> ServiceStatusNotifier {
-        ServiceStatusNotifier(quiver: scratch.url, defaults: defaults) { posts.alerts += $0 }
+    private func notifier(_ posts: Posts, defaults: UserDefaults = TestDefaults(),
+                          allowed: @escaping @Sendable () -> Bool = { true }) -> ServiceStatusNotifier {
+        ServiceStatusNotifier(quiver: scratch.url, defaults: defaults, authorized: { allowed() }) {
+            posts.alerts += $0
+        }
+    }
+
+    final class Allowed: @unchecked Sendable { var value = false }
+
+    /// Banners blocked when the incident starts: no banner, and none for
+    /// its recovery after they are allowed again.
+    @Test func blockedBannersOweNoRecovery() async throws {
+        let posts = Posts()
+        let allowed = Allowed()
+        let notifier = notifier(posts, allowed: { allowed.value })
+        notifier.bannersEnabled = true
+        await notifier.observe(try claude(.operational))
+        await notifier.observe(try claude(.minor, incident: "a"))
+        allowed.value = true
+        await notifier.observe(try claude(.operational))
+        #expect(posts.alerts.isEmpty)
     }
 
     @Test func offByDefault() async throws {

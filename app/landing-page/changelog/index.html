@@ -110,6 +110,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Mac: service status banners.</strong> With &quot;Notify about service status&quot;
+on (Settings › Notifications, off by default), the Mac banners when a
+model provider or agent platform starts an incident on its status
+page, and once more when it is back to normal. Each incident banners
+once: the same incident on the next poll, after a relaunch or after it
+flaps is quiet, and scheduled maintenance never banners. The first
+poll only records what is already open. A click opens Service status.
+Part of <a href="https://github.com/c-wenlong/quiver/issues/528">#528</a>.</p>
+</li>
 <li><p><strong>Live reply text on iPhone, web and Mac.</strong> The chat draws a reply
 word by word while a Codex app-server, opencode serve or headless
 Claude session writes it: <code>message.delta</code> text grows a bubble at the

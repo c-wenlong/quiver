@@ -23,11 +23,18 @@ final class ServiceStatusNotifier {
     @ObservationIgnored private var state: ServiceStatusAlertState
     /// Sends the alerts; `postToSystem` in the app, a capture in tests.
     @ObservationIgnored private let post: ([ServiceStatusAlert]) async -> Void
+    /// Whether macOS will show a banner (asking the first time); a test
+    /// answers it directly.
+    @ObservationIgnored private let authorized: () async -> Bool
 
     init(quiver: URL, defaults: UserDefaults = .standard,
+         authorized: (() async -> Bool)? = nil,
          post: (([ServiceStatusAlert]) async -> Void)? = nil) {
         self.defaults = defaults
         self.post = post ?? { alerts in await Self.postToSystem(alerts) }
+        self.authorized = authorized ?? {
+            (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) == true
+        }
         bannersEnabled = defaults.object(forKey: Self.defaultsKey) as? Bool ?? false
         stateFile = quiver.appending(path: "cache/service-status-notified.json")
         state = (try? Data(contentsOf: stateFile))
@@ -46,16 +53,19 @@ final class ServiceStatusNotifier {
     }
 
     /// One poll's statuses: advance the state, banner what changed, save.
+    /// With banners blocked in System Settings the poll records silently,
+    /// as with the switch off: an incident that couldn't banner must not
+    /// owe a "back to normal" banner later.
     func observe(_ statuses: [ServiceStatus]) async {
+        let notify = bannersEnabled ? await authorized() : false
         let before = state
-        let alerts = ServiceStatusAlerts.step(&state, statuses: statuses, notify: bannersEnabled)
+        let alerts = ServiceStatusAlerts.step(&state, statuses: statuses, notify: notify)
         if state != before { save() }
         if !alerts.isEmpty { await post(alerts) }
     }
 
     private static func postToSystem(_ alerts: [ServiceStatusAlert]) async {
         let center = UNUserNotificationCenter.current()
-        guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else { return }
         for alert in alerts {
             let content = UNMutableNotificationContent()
             content.title = ServiceStatusAlerts.title(alert)
