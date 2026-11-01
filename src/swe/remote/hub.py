@@ -3664,7 +3664,7 @@ class _Handler(BaseHTTPRequestHandler):
     # -- static ------------------------------------------------------------
 
     def _serve_static(self, path: str, query: str = "") -> None:
-        """The web app (``quiver/webapp/static``) at the root: ``/`` is its
+        """The web app (``swe/webapp/static``) at the root: ``/`` is its
         page and each asset a flat name beside it (``/app.js``,
         ``/harness-claude.svg``). Every non-API path lands here, and only
         a flat name of a known type is served, so no request can climb
@@ -3817,7 +3817,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send_json(200, sshkeys.view(self._state.home, device_id))
 
-    # -- web app page plugins (quiver/webapp/pages) ------------------------
+    # -- web app page plugins (swe/webapp/pages) ---------------------------
 
     def _page_context(self, device_id: str | None):
         return webapp_pages.PageContext(

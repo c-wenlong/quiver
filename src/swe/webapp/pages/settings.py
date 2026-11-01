@@ -287,7 +287,7 @@ def _mint(ctx) -> dict:
         # Error correction M, as the Mac app's CIQRCodeGenerator draws it.
         "qr": {
             "web": _qr.svg(url, "M", label="Pairing QR code for the browser"),
-            "app": _qr.svg(deep_link, "M", label="Pairing QR code for the Quiver app"),
+            "app": _qr.svg(deep_link, "M", label="Pairing QR code for the SWE app"),
         },
     }
 

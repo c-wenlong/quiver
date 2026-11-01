@@ -97,7 +97,7 @@ def cmd_harness(args):
 def _setup_help():
     print(
         f"""
-  {c('bold', 'swe setup')} — Onboarding wizard for new quiver installs
+  {c('bold', 'swe setup')} — Onboarding wizard for new swe installs
 
   {c('cyan', 'swe setup')}              Run the complete interactive setup wizard
   {c('cyan', 'swe setup --quick')}      Configure only missing or actionable stages

@@ -2379,7 +2379,7 @@ MCP_HELP = {
     "remove": f"""\
   {c('cyan', 'swe mcp remove <name> --from=<place>[,<place>…]')}   Remove a server
 
-  Places are harness names, the hub (quiver/hub/mcp.json), or
+  Places are harness names, the hub (~/.swe/mcp.json), or
   {c('cyan', 'all')} (the hub plus every harness whose config names the server).
   Places that don't have the server are reported absent; removing
   nothing exits 1.

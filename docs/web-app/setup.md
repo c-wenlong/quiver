@@ -1,7 +1,7 @@
 # Setup: first-run setup for the hub machine
 
 A port of the Mac app's first-run setup sheet (`FirstRunSetupSheet`,
-`QuiverCore/Onboarding/FirstRunSetup.swift`) for the machine the hub runs
+`SWECore/Onboarding/FirstRunSetup.swift`) for the machine the hub runs
 on. Page id `setup`, at `#/setup`; it is not in the sidebar. While the hub
 machine has no shared `~/.swe/AGENTS.md`, opening a bare `/` goes
 here once per browser (remembered under `quiver.setup.offered`), and

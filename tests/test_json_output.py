@@ -6,7 +6,7 @@ app decodes the whole stream, so a stray header line or ANSI escape breaks
 every page that depends on it.
 
 These run the real CLI in a subprocess against a throwaway HOME, because
-quiver resolves ~/.swe once at import time. An in-process test would
+swe resolves ~/.swe once at import time. An in-process test would
 read the developer's own registry.
 """
 

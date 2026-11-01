@@ -455,8 +455,14 @@ class TestClientMeta(unittest.TestCase):
         self.assertEqual(meta["client"], "Edge 125.0.2535.51")
 
     def test_cfnetwork_app_gets_darwin_os(self):
-        # Quiver Remote's URLSession UA: product token + Darwin, no
+        # SWE Remote's URLSession UA: product token + Darwin, no
         # platform name. The product picks the iOS table.
+        meta = pairing.client_meta(
+            "SWERemote/1.0 CFNetwork/3826.500.131 Darwin/25.0.0"
+        )
+        self.assertEqual(meta["client"], "SWERemote 1.0")
+        self.assertEqual(meta["os"], "iOS 26")
+        # The pre-rename app's product token maps the same way.
         meta = pairing.client_meta(
             "QuiverRemote/1.0 CFNetwork/3826.500.131 Darwin/25.0.0"
         )
@@ -465,11 +471,11 @@ class TestClientMeta(unittest.TestCase):
 
     def test_mac_app_product_gets_macos(self):
         # The Mac app's URLSession UA shares Darwin but its product is
-        # Quiver/x, not QuiverRemote — it must not get an iOS version.
+        # SWE/x, not SWERemote — it must not get an iOS version.
         meta = pairing.client_meta(
-            "Quiver/1.0 CFNetwork/3826.500.131 Darwin/25.0.0"
+            "SWE/1.0 CFNetwork/3826.500.131 Darwin/25.0.0"
         )
-        self.assertEqual(meta["client"], "Quiver 1.0")
+        self.assertEqual(meta["client"], "SWE 1.0")
         self.assertEqual(meta["os"], "macOS 26")
 
     def test_oversized_header_is_bounded(self):
@@ -491,7 +497,7 @@ class TestClientMeta(unittest.TestCase):
     def test_clean_device_meta(self):
         out = pairing.clean_device_meta({
             "kind": " IPHONE!! ", "model": "iPhone16,2",
-            "os": "iOS 18.5", "client": "Quiver Remote 1.0",
+            "os": "iOS 18.5", "client": "SWE Remote 1.0",
             "bogus": "drop me", "os2": "drop me too",
             "node_name": "not a client field",
         })
@@ -499,7 +505,7 @@ class TestClientMeta(unittest.TestCase):
             out,
             {
                 "kind": "iphone", "model": "iPhone16,2",
-                "os": "iOS 18.5", "client": "Quiver Remote 1.0",
+                "os": "iOS 18.5", "client": "SWE Remote 1.0",
             },
         )
 
@@ -547,7 +553,7 @@ class TestDeviceMetadata(unittest.TestCase):
     def test_approve_mints_meta_and_node_name(self):
         r = pairing.request_pair(
             self.tmp, dict(_PEER), "phone",
-            meta={"kind": "iphone", "client": "Quiver Remote 1.0",
+            meta={"kind": "iphone", "client": "SWE Remote 1.0",
                   "os": "iOS 18.5", "model": "iPhone16,2",
                   "node_name": "ignored"},
         )
@@ -556,7 +562,7 @@ class TestDeviceMetadata(unittest.TestCase):
         row = pairing.load_devices(self.tmp)[res["device_id"]]
         self.assertEqual(row["kind"], "iphone")
         self.assertEqual(row["model"], "iPhone16,2")
-        self.assertEqual(row["client"], "Quiver Remote 1.0")
+        self.assertEqual(row["client"], "SWE Remote 1.0")
         # node_name comes from the resolved peer, never the client body.
         self.assertEqual(row["node_name"], _PEER["node_name"])
 

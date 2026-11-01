@@ -58,7 +58,7 @@ class RewriteLinksTests(unittest.TestCase):
             out = self.rewrite("[license](LICENSE)", root=root)
         self.assertEqual(
             out,
-            "[license](https://github.com/c-wenlong/quiver/blob/main/LICENSE)")
+            "[license](https://github.com/c-wenlong/swe/blob/main/LICENSE)")
 
     def test_a_repo_directory_links_to_github_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -67,7 +67,7 @@ class RewriteLinksTests(unittest.TestCase):
             out = self.rewrite("[docs](docs)", root=root)
         self.assertEqual(
             out,
-            "[docs](https://github.com/c-wenlong/quiver/tree/main/docs)")
+            "[docs](https://github.com/c-wenlong/swe/tree/main/docs)")
 
     def test_an_image_links_to_raw_github(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -78,7 +78,7 @@ class RewriteLinksTests(unittest.TestCase):
                 "![shot](../docs/img/shot.png)", src="docs/guide.md", root=root)
         self.assertEqual(
             out,
-            "![shot](https://raw.githubusercontent.com/c-wenlong/quiver/main/"
+            "![shot](https://raw.githubusercontent.com/c-wenlong/swe/main/"
             "docs/img/shot.png)")
 
     def test_absolute_and_anchor_links_pass_through(self):
@@ -103,7 +103,7 @@ class RewriteLinksTests(unittest.TestCase):
             out = self.rewrite('<a href="LICENSE">x</a>', root=root)
         self.assertEqual(
             out,
-            '<a href="https://github.com/c-wenlong/quiver/blob/main/LICENSE">'
+            '<a href="https://github.com/c-wenlong/swe/blob/main/LICENSE">'
             "x</a>")
 
 

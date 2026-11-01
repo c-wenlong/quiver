@@ -325,7 +325,7 @@ def _home_scan_findings(
                     and not entry.is_symlink()
                     and entry.name not in _HOME_SCAN_SKIP
                     # .config is scanned per-child below; .agents is
-                    # quiver's own pre-0.2.7 shared root, not a harness.
+                    # swe's own pre-0.2.7 shared root, not a harness.
                     and entry.name not in (".config", ".agents")
                     and slug.match(name)
                     and entry.name not in owned):

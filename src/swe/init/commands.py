@@ -70,7 +70,7 @@ def _backup(path: Path, home: Path) -> Path:
 
 
 def _safe_to_replace(path: Path, home: Path) -> bool:
-    """init deletes only real content inside $HOME that is not quiver's own.
+    """init deletes only real content inside $HOME that is not swe's own.
 
     A registry-declared target can point anywhere — a capability of
     ``~/.swe/config/harness.json`` resolving into the data plane, or one
@@ -388,12 +388,12 @@ def run_init(home: Path, *, check_only: bool = False, force: bool = False,
     scaffold.extend(move_secrets(home, apply=not check_only))
 
     instructions, skills = plan(home, patterns)
-    # An uninstalled harness the registry does not know is noise: quiver can
+    # An uninstalled harness the registry does not know is noise: swe can
     # link it, but this machine never asked. A registered one still shows as
     # skipped, since that tells you something you set up is missing.
     registry = load_registry(home)
 
-    # A skills root no registry entry claims is a harness quiver has never
+    # A skills root no registry entry claims is a harness swe has never
     # been asked about: offer to manage it (register + link instructions) or
     # archive it so it is never asked again.
     new = new_harnesses(skills, registry)

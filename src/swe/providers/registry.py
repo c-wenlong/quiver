@@ -1,7 +1,7 @@
 """Provider registry load/save and alias resolution.
 
 Mirrors ``swe.harness.registry`` so the on-disk shape and ergonomics
-match the rest of quiver. The registry lives at
+match the rest of swe. The registry lives at
 ``~/.swe/config/providers.json`` and is seeded with the built-in
 ``DEFAULT_PROVIDERS`` catalog on first run.
 

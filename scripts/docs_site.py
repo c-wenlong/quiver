@@ -17,9 +17,9 @@ import re
 import sys
 from pathlib import Path
 
-GITHUB = "https://github.com/c-wenlong/quiver/blob/main/"
-GITHUB_TREE = "https://github.com/c-wenlong/quiver/tree/main/"
-RAW = "https://raw.githubusercontent.com/c-wenlong/quiver/main/"
+GITHUB = "https://github.com/c-wenlong/swe/blob/main/"
+GITHUB_TREE = "https://github.com/c-wenlong/swe/tree/main/"
+RAW = "https://raw.githubusercontent.com/c-wenlong/swe/main/"
 
 # Markdown source -> the directory under app/landing-page/ that serves it.
 SOURCES = {
@@ -246,7 +246,7 @@ def _nav() -> str:
         <a href="../changelog/">Changelog</a>
       </div>
       <div class="right">
-        <a class="plain" href="https://github.com/c-wenlong/quiver"><svg class="i"><use href="#gh"/></svg>GitHub</a>
+        <a class="plain" href="https://github.com/c-wenlong/swe"><svg class="i"><use href="#gh"/></svg>GitHub</a>
         <a class="btn light sm" href="../#install"><span>Install</span></a>
       </div>
     </nav>
@@ -266,7 +266,7 @@ def _footer() -> str:
     <a href="../overview/">Docs</a>
     <a href="../changelog/">Changelog</a>
     <a href="../contributing/">Contributing</a>
-    <a href="https://github.com/c-wenlong/quiver">GitHub</a>
+    <a href="https://github.com/c-wenlong/swe">GitHub</a>
   </div>
 </footer>"""
 

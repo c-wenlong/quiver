@@ -1,4 +1,4 @@
-# quiver tests
+# swe tests
 
 Run the whole suite from the repo root, with the package installed
 (`pip install -e ".[test]"`), against a throwaway `HOME`:

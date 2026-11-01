@@ -512,7 +512,7 @@ def _sync_request(body: dict, needs_fingerprint: bool) -> dict:
     if not isinstance(name, str) or not name or len(name) > NAME_MAX:
         raise PageError(422, "bad_server", "server must be a server name")
     if not isinstance(source, str) or not source or len(source) > NAME_MAX:
-        raise PageError(422, "bad_source", "source must be a harness name or quiver")
+        raise PageError(422, "bad_source", "source must be a harness name or swe")
 
     def names(key: str) -> list[str]:
         value = body.get(key, [])
@@ -831,7 +831,7 @@ def _plan_reply(plan: dict, report: dict, error: str | None) -> dict:
 
 
 # ---------------------------------------------------------------- redaction
-# A port of QuiverCore's McpRedaction and SecretText.maskingKeys: the parts
+# A port of SWECore's McpRedaction and SecretText.maskingKeys: the parts
 # of a command line or URL that may hold a secret, hidden as "…".
 
 _SECRET_FLAG_ENDINGS = ("token", "key", "secret", "password", "passwd", "credential",
@@ -1039,7 +1039,7 @@ def redact_url(url: str) -> str:
 
 
 # ---------------------------------------------------------------- folders
-# A port of QuiverCore's McpServerRepo: the server checkouts in the managed
+# A port of SWECore's McpServerRepo: the server checkouts in the managed
 # folder, which inventory servers run from each, and each one's git state.
 
 SERVER_MARKERS = (".git", "package.json", "pyproject.toml", "go.mod", "Cargo.toml",

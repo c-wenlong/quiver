@@ -3,7 +3,7 @@
 Subscription plans that model providers sell with an API key: coding plans,
 token plans, agent plans and the like. Settings › Providers › Inference lists
 each one in `InferenceCatalog.all`
-(`app/mac/Sources/QuiverCore/Providers/InferencePlans.swift`). This page is where
+(`app/mac/Sources/SWECore/Providers/InferencePlans.swift`). This page is where
 those values came from. Researched 2026-10-19 from each vendor's own docs;
 plans change monthly, so recheck before relying on a price or a model id.
 

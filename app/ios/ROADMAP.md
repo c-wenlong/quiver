@@ -1,4 +1,4 @@
-# Quiver Remote roadmap
+# SWE Remote roadmap
 
 The phone client for remote control: watch every agent session on your
 machines, unblock the ones waiting on you, and steer the ones you
@@ -16,7 +16,7 @@ work each one needs.
 | Client | Native SwiftUI on iPhone (`app/ios/`), decided 2026-10-23. The hub's web app at `/` is the client for browsers and other devices; it took the standalone PWA's `#pair=` and `#approve` fragments and the PWA is gone. See "SwiftUI or PWA" below. |
 | Signing | A paid Apple Developer team, so profiles last a year and APNs, TestFlight, widgets and Live Activities are all available |
 | Push | ntfy stays the push path until the APNs work under "Features" lands |
-| Shared code | Protocol DTOs only. Decoding stays on the hub; most of QuiverCore is AppKit-bound. |
+| Shared code | Protocol DTOs only. Decoding stays on the hub; most of SWECore is AppKit-bound. |
 
 ## SwiftUI or PWA
 
@@ -128,7 +128,7 @@ are server changes in `src/quiver/remote/`.
 
 ### P9. Machine
 - [ ] Per-machine strip: name, online state, satellite version
-- [ ] CPU, GPU and temperatures from QuiverCore's Compute samplers
+- [ ] CPU, GPU and temperatures from SWECore's Compute samplers
 - [ ] Hub: carry those samples from the satellite
 
 ### P10. Settings

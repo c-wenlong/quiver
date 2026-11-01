@@ -263,7 +263,7 @@ class TestRerun(_Home, unittest.TestCase):
     """A second apply must not make uninstalled harnesses look installed.
 
     The first run creates ~/.swe/skills; the second used to symlink it
-    into every harness skills root quiver knows, making ~/.augment,
+    into every harness skills root swe knows, making ~/.augment,
     ~/.pi, ~/.kiro and the rest, which swe init then registered and
     linked AGENTS.md into. Only claude and codex are installed here.
     """

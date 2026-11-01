@@ -1,7 +1,7 @@
 """Regression cover for the 0.2.7 root merge.
 
 Two roots (``~/.swe`` for harness-facing assets, ``~/.config/swe`` for
-quiver's own state) became one. These tests pin the resulting layout, prove the
+swe's own state) became one. These tests pin the resulting layout, prove the
 migration moves everything without losing or clobbering data, and check the
 things most likely to rot: a path constant escaping the root, a cache landing
 in the versioned half, or a second run undoing the first.
@@ -550,7 +550,7 @@ class MoveSecretsTest(unittest.TestCase):
             self.assertEqual(move_secrets(home), [])
 
     def test_the_app_seals_secrets_with_the_same_text(self):
-        source = (Path(__file__).resolve().parents[1] / "app" / "mac" / "Sources" / "QuiverCore"
+        source = (Path(__file__).resolve().parents[1] / "app" / "mac" / "Sources" / "SWECore"
                   / "APIKeys" / "APIKeys.swift")
         if not source.is_file():
             self.skipTest("app sources are not in this tree (the Nix build ships src/ and tests/)")

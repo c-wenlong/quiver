@@ -239,7 +239,7 @@ _HUB_STATES = {
 
 
 def cmd_skills_hub(args) -> int:
-    """What the quiver hub (~/.swe/plugins) offers, and where it landed."""
+    """What the swe hub (~/.swe/plugins) offers, and where it landed."""
     from swe.skills.help_text import print_skills_hub_help
     from swe.skills.inventory import hub_plugins
 

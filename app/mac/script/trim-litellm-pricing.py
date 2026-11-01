@@ -5,7 +5,7 @@ Usage:
     curl -sSfo /tmp/litellm.json \
       https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
     python3 -I app/mac/script/trim-litellm-pricing.py /tmp/litellm.json \
-      > app/mac/Sources/QuiverCore/Resources/pricing.json
+      > app/mac/Sources/SWECore/Resources/pricing.json
 
 Keeps chat and responses models of the families Claude Code, Codex, OpenCode
 and Devin use, under their bare name or a provider prefix those tools log,

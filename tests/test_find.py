@@ -323,7 +323,7 @@ class ScopeTest(unittest.TestCase):
                 with redirect_stdout(buf):
                     code = find_commands.cmd_find(["--root", "amd"])
             self.assertEqual(code, 0)
-            self.assertIn("Managed by quiver", buf.getvalue())
+            self.assertIn("Managed by swe", buf.getvalue())
 
     def test_short_flag_works_too(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -333,7 +333,7 @@ class ScopeTest(unittest.TestCase):
                 with redirect_stdout(buf):
                     code = find_commands.cmd_find(["amd", "-r"])
             self.assertEqual(code, 0)
-            self.assertIn("Managed by quiver", buf.getvalue())
+            self.assertIn("Managed by swe", buf.getvalue())
 
 
 class ScopeClassificationTest(unittest.TestCase):
@@ -384,7 +384,7 @@ class ScopeClassificationTest(unittest.TestCase):
         self.assertEqual(scope_of(Path("/elsewhere/AGENTS.md"), home), "local")
 
     def test_a_synced_root_is_global_however_deep(self):
-        # ~/.astrbot/data/skills is two levels down but quiver linked it, so it
+        # ~/.astrbot/data/skills is two levels down but swe linked it, so it
         # loads everywhere. Link state has to beat the path rule.
         from swe.find.tree import Node, node_scope
 

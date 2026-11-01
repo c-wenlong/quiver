@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `provider_names`). The launch sends only the slug. The menu hides on
   a machine whose agent is too old or has no keyed provider for that
   harness. Part of [#526](https://github.com/c-wenlong/quiver/issues/526).
+- **Doctor: Fix all on the Mac and web pages.** The findings card gets
+  a Fix all (N) button whenever some finding has a batch fix. It runs
+  `swe doctor --fix`'s ordered batch (setup, discover, init, plugin
+  installs) behind a confirm on the web, then shows what it fixed, which
+  fixes failed and how many findings are left for a person. Installs and
+  the fixes that delete or overwrite never run in it and keep their own
+  Run. The web route is `POST /v1/app/doctor/fix-all`, one at a time
+  with the row Runs; the Mac runs `swe doctor --fix --json` behind the
+  registry gate. The Mac app now also has Run for `undeclare`,
+  `marketplace-drop`, `plugin-fix`, `plugin-reinstall`, `dangling-link`
+  and `mcp-sync`, through `swe doctor --fix=<check> --message=<text>
+  --action=<a>`. A test fails when the Python runners, the web page's
+  wording or the Mac's action list drift apart. Closes
+  [#529](https://github.com/c-wenlong/swe/issues/529).
 - **Launch a harness on a provider from the keys file.** `POST
   /v1/sessions` takes `provider: "<slug>"` and `swe use` takes
   `--provider=<slug>`: the launching machine starts the harness with
@@ -26,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Machine rows list `providers_at_launch` (slugs whose key is set) and
   `provider_names`; the hub forwards only the slug to a satellite.
   A missing key or an undeclared slug is a 422. Part of
-  [#526](https://github.com/c-wenlong/quiver/issues/526).
+  [#526](https://github.com/c-wenlong/swe/issues/526).
 - **Hub: service status pushes.** `swe remote notify
   --service-status=on` (the `service_status` flag in `notify.json`, off
   by default) starts a five-minute check of every tracked status page
@@ -39,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.swe/cache/web-service-status-notified.json` keeps a restart
   from repeating a push. The rule is `status/alerts.py`, a port of the
   Mac's `ServiceStatusAlerts`. Closes
-  [#528](https://github.com/c-wenlong/quiver/issues/528).
+  [#528](https://github.com/c-wenlong/swe/issues/528).
 - **Mac: service status banners.** With "Notify about service status"
   on (Settings › Notifications, off by default), the Mac banners when a
   model provider or agent platform starts an incident on its status
@@ -48,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flaps is quiet, two incidents opening at once are two banners, and
   scheduled maintenance never banners. Each page's first reading only
   records what is already open. A click opens Service status.
-  Part of [#528](https://github.com/c-wenlong/quiver/issues/528).
+  Part of [#528](https://github.com/c-wenlong/swe/issues/528).
 - **Launch providers declared per harness.** `harness.json` gains
   `capabilities.provider`: for each provider slug a harness takes at
   launch, the variables it reads for the key (filled from named
@@ -58,7 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DeepSeek, Kimi, MiniMax and OpenRouter through their
   Anthropic-compatible endpoints), each tried on a real install with
   fake keys. No launch uses it yet. Part of
-  [#526](https://github.com/c-wenlong/quiver/issues/526).
+  [#526](https://github.com/c-wenlong/swe/issues/526).
 - **Doctor folds in `swe mcp doctor`.** `swe doctor` now warns about
   each MCP server a harness config holds that fails a local check (a
   stdio binary missing, an empty env value, a bad URL scheme) as
@@ -72,11 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is an error. The hub copy must name only stored secrets and have a
   command or url. A config the readers cannot parse is one
   `mcp.unchecked` warning. Batches never run it, since it overwrites.
-  Part of [#529](https://github.com/c-wenlong/quiver/issues/529).
+  Part of [#529](https://github.com/c-wenlong/swe/issues/529).
 - **iPhone: home screen widget.** Small and medium widgets show the
   hub's sessions waiting on you (approvals and replies), sessions still
   working, and today's spend
-  ([#1442](https://github.com/c-wenlong/quiver/issues/1442)). The
+  ([#1442](https://github.com/c-wenlong/swe/issues/1442)). The
   widget fetches sessions, the inbox and today's overview about every
   15 minutes, and redraws when the app's refresh changes the snapshot
   it keeps in the App Group. When the hub can't be reached it draws
@@ -95,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anything that is no longer a broken link directly in those folders.
   A marketplace `--fix` registers shows its uninstalled plugins to the
   next pass, which installs them. Part of
-  [#529](https://github.com/c-wenlong/quiver/issues/529).
+  [#529](https://github.com/c-wenlong/swe/issues/529).
 - **Live reply text on iPhone, web and Mac.** The chat draws a reply
   word by word while a Codex app-server, opencode serve or headless
   Claude session writes it: `message.delta` text grows a bubble at the
@@ -109,7 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session goes idle, or when the stream reconnects. The rules live in
   `ReplyStreams.swift` (the Mac's and iPhone's copies are identical)
   and its port in `pages/chat.js`. Closes
-  [#1444](https://github.com/c-wenlong/quiver/issues/1444).
+  [#1444](https://github.com/c-wenlong/swe/issues/1444).
 - **`swe doctor --fix`.** Runs every safe local fix doctor found, in
   order (setup, then discover, then init), reads the report again after
   each step, and prints what it fixed and what is left.
@@ -123,7 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fix, as a Run button does. A failed fix is reported and the rest still
   run. Plain `swe doctor` still writes nothing. The runners moved to
   `harness/doctor_fix.py`, which the web Doctor page now calls too. Part
-  of [#529](https://github.com/c-wenlong/quiver/issues/529).
+  of [#529](https://github.com/c-wenlong/swe/issues/529).
 - **Unread dots on session rows: iPhone, web and Mac.** A session row
   shows a small dot when the agent said something since you last opened
   that chat on this device, from the hub's per-device `unread` flag.
@@ -134,10 +148,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holds its reads while the tab is hidden. The Mac shows dots on local
   rows the hub lists and on Other machines rows, reading as its own
   paired device; the iPhone's app icon badge stays the Inbox count.
-  Closes [#1439](https://github.com/c-wenlong/quiver/issues/1439).
+  Closes [#1439](https://github.com/c-wenlong/swe/issues/1439).
 - **iPhone: share into a session.** A share extension ("Quiver" in the
   share sheet) sends text, links, images and files from any app to a
-  session ([#1441](https://github.com/c-wenlong/quiver/issues/1441)).
+  session ([#1441](https://github.com/c-wenlong/swe/issues/1441)).
   The sheet lists the active hub's attached sessions, most recent
   first, with a hub picker when the phone has more than one, and an
   optional message. Text and links go in the message; images go up as
@@ -147,14 +161,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hubs from the App Group and shared Keychain group, and says so
   instead of sending when the phone isn't paired or the hub can't be
   reached.
-- **Homebrew tap.** `brew install --cask c-wenlong/quiver/quiver`
-  installs the Mac app and `brew install c-wenlong/quiver/swe` the CLI,
-  from [c-wenlong/homebrew-quiver](https://github.com/c-wenlong/homebrew-quiver).
+- **Homebrew tap.** `brew install --cask c-wenlong/swe/swe`
+  installs the Mac app and `brew install c-wenlong/swe/swe` the CLI,
+  from [c-wenlong/homebrew-swe](https://github.com/c-wenlong/homebrew-swe).
   The release workflow's new `bump-homebrew-tap` job points both at each
   release's DMG and wheel with fresh SHA-256s (`scripts/bump_tap.py`),
   once the signed DMG is on the latest published release. It needs a
   `HOMEBREW_TAP_TOKEN` secret and skips with a notice without one.
-  ([#1445](https://github.com/c-wenlong/quiver/issues/1445))
+  ([#1445](https://github.com/c-wenlong/swe/issues/1445))
 - **Hub: live reply text (`message.delta`) for API channels.** Codex
   app-server, opencode serve and headless Claude sessions now send
   `message.delta` events while a reply is written: `{id, kind, text,
@@ -166,13 +180,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaces the streamed text. Satellites coalesce their own and relay
   them only to a hub that advertises `message_delta`. tmux sessions
   stay record-by-record. Part of
-  [#1444](https://github.com/c-wenlong/quiver/issues/1444).
+  [#1444](https://github.com/c-wenlong/swe/issues/1444).
 - **iPhone: the paired hubs move to an App Group and a shared Keychain
   group.** The hub list now lives in `group.com.quiver.remote` and each
   hub's credential in the `<team>.com.quiver.remote.shared` Keychain
   group, so an app extension can read them. Groundwork for the share
-  sheet ([#1441](https://github.com/c-wenlong/quiver/issues/1441)) and
-  the widget ([#1442](https://github.com/c-wenlong/quiver/issues/1442)).
+  sheet ([#1441](https://github.com/c-wenlong/swe/issues/1441)) and
+  the widget ([#1442](https://github.com/c-wenlong/swe/issues/1442)).
   Existing pairings move on first launch: each credential is copied
   into the shared group and the old item dropped only after the copy
   is stored, and a copy that fails keeps reading the old item.
@@ -189,7 +203,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   start read. Satellite sessions work the same, stored on the hub. Each
   write prunes cursors for sessions the hub no longer lists and for
   revoked devices. Part of
-  [#1439](https://github.com/c-wenlong/quiver/issues/1439); the client
+  [#1439](https://github.com/c-wenlong/swe/issues/1439); the client
   dots follow.
 - **Mac: the AGENTS.md page edits instruction chapters.** When the shared
   file is chapter-managed (`~/.quiver/AGENTS_MD/index.txt` exists), the
@@ -216,7 +230,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hub, and a strip in the title bar names the machine. The list holds the
   hub this Mac's satellite agent reports to and hubs added by address in
   Settings › Integrations › Remote › Other hubs; the last pick is
-  remembered ([#681](https://github.com/c-wenlong/quiver/issues/681)).
+  remembered ([#681](https://github.com/c-wenlong/swe/issues/681)).
 
 - **iPhone and web: a machine strip on the Sessions page.** One chip
   per machine the hub lists, with an online dot, its name, "N working
@@ -225,14 +239,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   strip hides when the hub has one machine, and orders machines like
   the Mac's "Other machines" group (online first, then name). No new
   hub route
-  ([#1443](https://github.com/c-wenlong/quiver/issues/1443)).
+  ([#1443](https://github.com/c-wenlong/swe/issues/1443)).
 
 - **iPhone, web and Mac: thinking cards say how long the model
   thought.** A thinking card reads "Thought for 12s" or "Thought for
   1m 5s" from the hub's `duration_s`, and plain "Thought" when the hub
   sent none. One formatting rule per client (`ThoughtLabel.text` on
   iOS and the Mac, `Fmt.thought` on the web)
-  ([#1440](https://github.com/c-wenlong/quiver/issues/1440)).
+  ([#1440](https://github.com/c-wenlong/swe/issues/1440)).
 
 - **Remote approvals show and answer unnumbered menus too.** A
   tmux-mode prompt whose options are an arrow-select list ("❭ Option
@@ -259,7 +273,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Code and Codex time it from the record before the thinking record to
   the thinking record; opencode from its own reasoning `time` span.
   Other harnesses, and records with no usable timestamps, leave it out
-  ([#1440](https://github.com/c-wenlong/quiver/issues/1440)).
+  ([#1440](https://github.com/c-wenlong/swe/issues/1440)).
 
 - **Mac: Settings › Remote can keep this Mac's agent running.** On a Mac
   paired as a satellite of another machine's hub, a "Keep this Mac's
@@ -267,7 +281,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through `swe remote agent --install` / `--uninstall`, and says whether
   it is running. The switch is hidden on the Mac that hosts the hub and
   on a Mac that was never paired
-  ([#1438](https://github.com/c-wenlong/quiver/issues/1438)).
+  ([#1438](https://github.com/c-wenlong/swe/issues/1438)).
 
 - **`swe remote agent --install` keeps a satellite running.** Like
   `swe remote serve --install`, it runs `swe remote agent` as a
@@ -282,7 +296,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent runs. `--uninstall` removes it and
   `--status [--json]` shows it. `install-app.sh` now restarts the agent
   on a new bundle as it does the hub
-  ([#1438](https://github.com/c-wenlong/quiver/issues/1438)).
+  ([#1438](https://github.com/c-wenlong/swe/issues/1438)).
 
 - **`swe init`: the hub's MCP servers in extra accounts.** A fourth
   switch, `accounts.sync.mcp`, off by default (`swe config set
@@ -299,7 +313,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes is recorded in `data/account-mcp.json`, and switching off then
   running `swe init` removes only those, and only while the account has
   not edited them. Closes
-  [#888](https://github.com/c-wenlong/quiver/issues/888).
+  [#888](https://github.com/c-wenlong/swe/issues/888).
 
 - **Hub: switch the model of an opencode session attached through
   `opencode serve`.** The `model` control op on a `serve` session
@@ -309,7 +323,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rows now list `serve` in `model_modes`, so the iPhone's Model menu
   shows on them with no app change. This closes model switching on
   every API channel
-  ([#643](https://github.com/c-wenlong/quiver/issues/643)).
+  ([#643](https://github.com/c-wenlong/swe/issues/643)).
 
 - **Hub: switch the model of a headless Claude Code session.** The
   `model` control op on a `headless` session records the pick on the
@@ -317,7 +331,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it as `--model`, so the switch applies from the next turn. Claude Code
   rows now list `headless` in `model_modes`, so the iPhone's Model menu
   shows on them with no app change
-  ([#643](https://github.com/c-wenlong/quiver/issues/643)).
+  ([#643](https://github.com/c-wenlong/swe/issues/643)).
 
 - **Hub: switch the model of a Codex session attached through the
   app-server.** The `model` control op on an `appserver` session
@@ -325,7 +339,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `turn/start` carries it as its model override, so the switch applies
   from the next turn. Codex rows now list `appserver` in `model_modes`,
   so the iPhone's Model menu shows on them with no app change
-  ([#643](https://github.com/c-wenlong/quiver/issues/643)).
+  ([#643](https://github.com/c-wenlong/swe/issues/643)).
 
 - **Mac: Sessions lists other machines' sessions.** Below this Mac's
   Pinned and day groups, an "Other machines" group shows the hub's rows
@@ -338,7 +352,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   come from the `/v1/sessions` read the page already makes, so filters
   and search leave them alone, and the group hides when no other machine
   reports a session or the hub is down
-  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+  ([#970](https://github.com/c-wenlong/swe/issues/970)).
 
 - **iPhone app: Tasks gets the scope menu and five-row groups** the Mac
   and web already have (#941, #942). A menu above the filter chips
@@ -351,7 +365,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   five rows, then "Show N more" / "Show less". A failed repo's error
   sits under its own group header, and a scope the next refresh drops
   falls back to All tasks
-  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+  ([#970](https://github.com/c-wenlong/swe/issues/970)).
 
 - **Mac: `app/mac/script/setup-machine.sh` sets up a new dev Mac.** It
   checks that full Xcode is selected (printing the `sudo xcode-select -s`
@@ -362,7 +376,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checkout's dev build for the installed app. Every step can run again, and
   `--dry-run` prints the plan without changing anything. `install-app.sh`
   now runs under `caffeinate -i`, so the Mac can't idle to sleep during a
-  build driven over SSH ([#1214](https://github.com/c-wenlong/quiver/issues/1214)).
+  build driven over SSH ([#1214](https://github.com/c-wenlong/swe/issues/1214)).
 
 - **Mac app: Shared content switches on Accounts.** Once you have an
   extra Claude or Codex account, the Accounts page shows Instructions,
@@ -372,7 +386,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   off. Anything an account already has in that place is named under the
   switches and left alone. A newly added account is synced at once when
   any switch is on. Part of
-  [#888](https://github.com/c-wenlong/quiver/issues/888).
+  [#888](https://github.com/c-wenlong/swe/issues/888).
 
 - **Mac app: pin, rename and fork sessions.** The Sessions list still
   comes from `swe session --json` (tokens, cost, filters); when this
@@ -384,7 +398,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the row's title (and is searchable), and a rename made on another
   device shows in an open chat live. Rows the hub doesn't list, and
   every row while the hub is down, keep the list as it was
-  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+  ([#970](https://github.com/c-wenlong/swe/issues/970)).
 
 - **`swe init`: shared instructions, skills and hooks in extra accounts.**
   Three switches in config.json, all off by default:
@@ -401,7 +415,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previews both directions and `--json` adds `account_sync` and
   `accounts`. `swe init --accounts` runs only this pass (with `--check`
   and `--json`), never touching the default harness homes. Part of
-  [#888](https://github.com/c-wenlong/quiver/issues/888).
+  [#888](https://github.com/c-wenlong/swe/issues/888).
 
 - **Remote hub: optional owner auto-approve for pair requests.** Off by
   default. `swe remote devices --auto-approve=on|off` (or the new switch
@@ -416,7 +430,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   poll collects its credential. Every approval, by code over HTTP or
   automatic, writes one `pair:` line to the hub's log, and device rows
   record `approved_via` (`code` or `owner_auto`). Part of
-  [#522](https://github.com/c-wenlong/quiver/issues/522).
+  [#522](https://github.com/c-wenlong/swe/issues/522).
 
 - **Remote hub: Notion databases as a task source.** A `notion` section
   in `config.json` names an integration token by `${NAME}` reference,
@@ -441,7 +455,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their detail reads "Notion · <database>", and the link-out says
   "Open in Notion". Link and unlink work as for Linear; starting an
   agent stays GitHub-only. Part of
-  [#847](https://github.com/c-wenlong/quiver/issues/847).
+  [#847](https://github.com/c-wenlong/swe/issues/847).
 - **Remote iPhone app: photo and file attachments in the chat
   composer.** A paperclip left of the prompt box offers Photos and
   Files. Each pick uploads at once to the hub's
@@ -458,7 +472,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   held in the queued tray keeps its files (the row shows a paperclip
   count), and a retry or an edit on an older hub resends the same refs.
   Detaching clears the chips, since the hub drops the staged files.
-  Part of [#516](https://github.com/c-wenlong/quiver/issues/516).
+  Part of [#516](https://github.com/c-wenlong/swe/issues/516).
 - **Web app: Setup can start from your hub repo.** While `~/.quiver` on
   the hub machine has no hub yet, step 2 shows "Start from your hub
   repo": a URL field, the note "Fork a hub repo first (or use it as a
@@ -470,7 +484,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a clone or setup already running a 409 `busy`, and a URL git can't
   reach or a timeout shows under the field. The URL is only ever kept
   or shown without its credentials
-  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+  ([#696](https://github.com/c-wenlong/swe/issues/696)).
 
 - **Web app: photo and file attachments in the chat composer.** A
   paperclip button, dropping files on the composer, or pasting a
@@ -484,7 +498,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message carries the uploaded files' refs in `attachments`, which the
   hub turns into `@path` for the harness. A message still needs text
   (the hub requires it); Enter on an empty box with files says so
-  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+  ([#516](https://github.com/c-wenlong/swe/issues/516)).
 
 - **Mac app: the session's model in the chat header and Sessions
   list.** A session's chat header reads `harness · folder · model`, and
@@ -500,7 +514,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model), so the header follows a model that first appears with the opening reply or
   changes elsewhere. Nothing shows when the hub doesn't know it. Display
   only: the Mac doesn't switch models. Part of
-  [#643](https://github.com/c-wenlong/quiver/issues/643).
+  [#643](https://github.com/c-wenlong/swe/issues/643).
 
 
 - **iOS app: comment on an issue, and post your Resolve context as a
@@ -509,30 +523,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the resolve, and "Also post as a comment on #<n>", on by default.
   Both post through the hub's `gh` login with `POST /v1/issues/comment`.
   A context comment that fails is a warning; the launch still goes
-  ahead. Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
+  ahead. Part of [#970](https://github.com/c-wenlong/swe/issues/970).
 - **Web app: the Cursor app on the Calendar.** The hub reads each Cursor
   account's `state.vscdb` (the app's own folder and every extra Cursor
   profile's) as the Mac app does, so editor chats show as blocks with
   time and responses, one legend row per account. Devin cloud stays
   Mac-only, since its sessions live in the Mac app's own store. Part of
-  [#970](https://github.com/c-wenlong/quiver/issues/970).
+  [#970](https://github.com/c-wenlong/swe/issues/970).
 - **Web app: comment on an issue, and post your Resolve context as a
   comment.** The issue sheet in Repositories now has the Mac's comment
   box under the thread (Cmd or Ctrl+Return posts), and the Resolve
   panel has "Also post as a comment on #<n>", ticked by default. Both
   post through the hub's `gh` login with `POST /v1/issues/comment`. A
   context comment that fails is a warning; the launch still goes ahead.
-  Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
+  Part of [#970](https://github.com/c-wenlong/swe/issues/970).
 - **Web app: Freebuff on the Calendar.** The hub reads Freebuff's
   `run-state.json` chats under `~/.config/manicode/projects` as the Mac
   app does, so its work shows as blocks with time and responses. Part
-  of [#970](https://github.com/c-wenlong/quiver/issues/970).
+  of [#970](https://github.com/c-wenlong/swe/issues/970).
 - **Web app: Pi and Factory Droid on the Calendar.** The hub now reads
   their session files the way the Mac app does (`~/.pi/agent/sessions`
   and `~/.factory/sessions`), so their work shows as blocks beside the
   ledger harnesses, with time and responses. Accidental sessions stay
   off, judged on the ledger's history as on the Mac. Part of
-  [#970](https://github.com/c-wenlong/quiver/issues/970).
+  [#970](https://github.com/c-wenlong/swe/issues/970).
 - **Hub: `POST /v1/issues/comment` posts an issue comment.** The body
   `{repo, number, body}` goes through the hub's own `gh` login, the way
   the Mac's composer posts through `swe gh issue comment`, with the text
@@ -540,7 +554,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the owner's device can call it, only for a pinned repo, and only up
   to GitHub's 65,536 characters. The web and iPhone issue detail build
   their comment composer and Resolve's "Also post as a comment" on it.
-  Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
+  Part of [#970](https://github.com/c-wenlong/swe/issues/970).
 
 - **`swe mcp gateway`: one copy of each shared MCP server for every
   session.** Each harness session started its own copy of every stdio
@@ -563,13 +577,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Send becomes Save), removed, or sent now into the running turn;
   Remove all asks first. The hub holds the sends, so the tray comes
   back when the chat reopens, with sends queued, edited or removed on
-  another device ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+  another device ([#970](https://github.com/c-wenlong/swe/issues/970)).
 - **Web app: issue detail and Resolve from Repositories.** An issue row
   now opens a sheet with the issue's body and comments (read only, from
   the hub's `GET /v1/issues/<owner>/<repo>/<n>`), Open on GitHub, and
   Resolve with agent: harness, model, your context and the first prompt,
   posted to `POST /v1/issues/resolve`, then the chat opens. Part of
-  [#970](https://github.com/c-wenlong/quiver/issues/970).
+  [#970](https://github.com/c-wenlong/swe/issues/970).
 
 - **iOS app: the overview's top models, quick figures, heatmap and
   daily table, over all seven periods.** The Usage tab's Spend half
@@ -582,7 +596,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table (date, total, input, output, cached, spend), newest ten days
   first, then 30 more a tap. All of it comes from the `GET /v1/app/overview`
   payload the tab already read. Part of
-  [#970](https://github.com/c-wenlong/quiver/issues/970).
+  [#970](https://github.com/c-wenlong/swe/issues/970).
 
 - **iOS app: answer an approval with the pane's own menu rows.** When
   the hub reads the agent's numbered menu ("1. Approve once", "2.
@@ -592,7 +606,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   number goes to the hub as the decision, and the answered card names
   the row it picked. Approvals without menu rows (older hubs,
   non-tmux sessions) keep Allow, Always and Deny. Part of
-  [#970](https://github.com/c-wenlong/quiver/issues/970).
+  [#970](https://github.com/c-wenlong/swe/issues/970).
 
 - **Web app: pin, rename and fork sessions.** Each Sessions row has a
   More actions button (and a right-click menu) with the iPhone's
@@ -603,7 +617,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back; Fork takes a first message and opens the new chat once the hub
   names it. The chat's header has the same menu, and a rename made on
   another device shows there live
-  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+  ([#970](https://github.com/c-wenlong/swe/issues/970)).
 - **Mac app: Needs you on the Inbox page.** Above the GitHub
   notifications, the Inbox now lists the sessions this Mac's hub says
   wait on you, broke or finished today (`GET /v1/inbox?done=1`), in the
@@ -612,7 +626,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for this Mac until the session moves again (`POST /v1/inbox/dismiss`),
   and never offers a pending approval. Nothing extra shows while the
   hub isn't running
-  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+  ([#970](https://github.com/c-wenlong/swe/issues/970)).
 
 - **iOS app: merge, auto-merge and re-run on the pull request
   page.** The detail page has the Mac and web merge controls: a
@@ -626,21 +640,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run failed) and Re-run all jobs. The phone calls the web app's
   routes the hub already serves to paired devices,
   `POST /v1/app/repositories/merge` and `…/rerun`. Part of
-  [#970](https://github.com/c-wenlong/quiver/issues/970).
+  [#970](https://github.com/c-wenlong/swe/issues/970).
 
 - **Web app: Mine and Review requested pull request filters.** The
   Repositories dashboard's Pull requests tab now offers All, Mine and
   Review requested with counts, as the iOS app does, from the flags the
   hub's `GET /v1/pulls` puts on each open PR. A filter hides while the
   hub can't say (a failed `gh pr status`) instead of guessing. Part of
-  [#970](https://github.com/c-wenlong/quiver/issues/970).
+  [#970](https://github.com/c-wenlong/swe/issues/970).
 
 - **Web app: Needs you in the Inbox.** The Inbox page now opens with
   the iOS Inbox's Waiting on you, Errors and Finished today sections
   from the hub's `GET /v1/inbox`, above the GitHub notifications. A row
   opens its session's chat, and Clear (a row or a whole section) posts
   `POST /v1/inbox/dismiss`; a pending approval can't be cleared. Part of
-  [#970](https://github.com/c-wenlong/quiver/issues/970).
+  [#970](https://github.com/c-wenlong/swe/issues/970).
 
 - **Remote: a `limit` notification when a session hits its usage
   limit.** The hub and satellites now raise `notify` kind `limit` when
@@ -651,7 +665,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `resets_at` and `window`. It rings once per limit: old records read
   during backfill and retries into the same limit stay quiet. Other
   harnesses don't raise it yet
-  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+  ([#516](https://github.com/c-wenlong/swe/issues/516)).
 
 - **Web app: the session's model in the chat header and Sessions
   list.** The chat's header shows the model of the transcript's newest
@@ -668,7 +682,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page's rows (`/v1/app/sessions`) now carry the hub's `model` as the
   catalog read it, so the page has no second transcript reader. Display
   only: the web app doesn't switch models. Part of
-  [#643](https://github.com/c-wenlong/quiver/issues/643).
+  [#643](https://github.com/c-wenlong/swe/issues/643).
 
 - **Mac app: approve pair requests in Settings › Remote.** A "Pending
   requests" group under Paired devices lists the phones asking to pair
@@ -677,13 +691,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Approve / Deny. It reads `swe remote devices --requests --json` every
   3 seconds, only while the section is on screen, and an approval
   refreshes the device list. This covers a hub on the same Mac; a hub on
-  another machine is [#681](https://github.com/c-wenlong/quiver/issues/681).
+  another machine is [#681](https://github.com/c-wenlong/swe/issues/681).
   `swe remote devices --approve=<code>` and `--deny=<code>` gain
   `--request-id=<id>`, which holds the code to that one request, as the
   hub's HTTP route already did: a code typed against one row never
   decides another, and five wrong approve codes deny it. The app always
   sends it.
-  Part of [#522](https://github.com/c-wenlong/quiver/issues/522).
+  Part of [#522](https://github.com/c-wenlong/swe/issues/522).
 
 - **Web app: `@` file completion in the chat composer.** Typing `@` at
   the start of the box or after a space opens the composer's menu with
@@ -697,7 +711,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   120 ms after the last keystroke, and a newer query drops an older
   answer. A satellite session's refusal and an older hub's 404 are
   worded in the menu
-  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+  ([#516](https://github.com/c-wenlong/swe/issues/516)).
 
 - **Compute: auto clean orphaned processes, on the Mac and the web app.**
   The Compute settings gain an "Auto clean" switch (Mac: the cleanup
@@ -725,7 +739,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   swe's refusal (a hub already there, a URL git can't reach, a timeout)
   shows under the field, and the card names any plugin marketplace
   that couldn't be registered
-  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+  ([#696](https://github.com/c-wenlong/swe/issues/696)).
 
 - **Remote iPhone app: switch a session's model from the chat.** On a
   session attached through tmux whose harness takes `/model <id>`
@@ -740,7 +754,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the list has refreshed after the hub's next read, so a switch the
   harness refused shows the model that actually ran. Elsewhere (watching
   only, headless, app-server, opencode) the submenu is hidden. Part of
-  [#643](https://github.com/c-wenlong/quiver/issues/643).
+  [#643](https://github.com/c-wenlong/swe/issues/643).
 
 - **Web app: Preview on tool cards that write a page, and link cards
   under replies.** In a session's chat, a tool call that writes or
@@ -758,7 +772,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plain words. A reply that links to web pages gets a card per page
   (host, path, Open in a new tab), up to three. File names with `+` are
   sent as `%2B`
-  ([#634](https://github.com/c-wenlong/quiver/issues/634)).
+  ([#634](https://github.com/c-wenlong/swe/issues/634)).
 
 - **Remote iPhone app: the chat header and the session list show the
   model.** A session's chat header adds the model after its folder, and
@@ -767,7 +781,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   date stamp are dropped, so `anthropic/claude-opus-4-5` and
   `claude-opus-4-5-20251101` both read `claude-opus-4-5`. Nothing shows
   when the hub doesn't know the model or is older than the field. Part
-  of [#643](https://github.com/c-wenlong/quiver/issues/643).
+  of [#643](https://github.com/c-wenlong/swe/issues/643).
 
 - **Remote hub: session rows say which model each session runs.**
   `/v1/sessions` rows, the hub's own and a satellite's, carry `model`,
@@ -780,7 +794,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `stat` per refresh; OpenCode, Kilo and Devin ask their database once
   per session whenever its activity time moves. Junk names (Claude's
   `<synthetic>`, Devin's `compactor`) are skipped for the reply before.
-  Part of [#643](https://github.com/c-wenlong/quiver/issues/643).
+  Part of [#643](https://github.com/c-wenlong/swe/issues/643).
 
 - **`swe setup` asks for your hub repo.** While `~/.quiver` is missing or
   empty, the wizard's first step asks for your hub repo's URL, beside
@@ -795,7 +809,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Under `--json` a refusal goes to stderr and exits 1, and the document
   gains `hub: {can_clone, demo_url, cloned}`. The demo hub link is one
   constant, `DEMO_HUB_URL` in `init/hub.py`, shown only once it is set
-  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+  ([#696](https://github.com/c-wenlong/swe/issues/696)).
 
 - **Remote iPhone app: a Model menu on every launch sheet.** New
   session, Resolve issue, Open PR in session and a task's New agent
@@ -807,7 +821,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recent model only when the new harness lists it, and otherwise
   moves to the new harness's newest. A hub older than `recent_models`
   offers its `last_models` entry alone. Part of
-  [#914](https://github.com/c-wenlong/quiver/issues/914).
+  [#914](https://github.com/c-wenlong/swe/issues/914).
 
 - **Web app: the launch sheets' Model box is now a menu.** New session,
   a task's New agent session and a PR's Open in session list "Harness
@@ -818,7 +832,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   machine switch, except a recent model the new harness never used,
   which re-defaults so a sheet never sends another harness's model. An
   older hub that sends only `last_models` gives a one-item list. Part of
-  [#914](https://github.com/c-wenlong/quiver/issues/914), the same menu
+  [#914](https://github.com/c-wenlong/swe/issues/914), the same menu
   as the Mac app's below.
 
 - **Mac app: the launch sheets pick a model from a menu.** New session,
@@ -830,7 +844,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   typed id survives a harness or machine switch; a picked model the new
   harness hasn't run re-defaults instead of travelling to it. A hub
   without `recent_models` offers its `last_models` entry alone. Part of
-  [#914](https://github.com/c-wenlong/quiver/issues/914).
+  [#914](https://github.com/c-wenlong/swe/issues/914).
 
 - **Remote iPhone app: Preview on tool cards that write a page.** When
   a tool call writes or edits an `.html`, `.htm` or `.svg` file inside
@@ -840,7 +854,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   network and navigation off; an SVG is drawn as an image. The card's
   raw content is still one tap away, and a missing, too-big or
   unsupported file says so in plain words
-  ([#634](https://github.com/c-wenlong/quiver/issues/634)).
+  ([#634](https://github.com/c-wenlong/swe/issues/634)).
 
 - **Syntax highlighting in the chat, on the web app, the remote web
   client and the Mac app.** Fenced code blocks, tool arguments and tool
@@ -867,7 +881,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harness, newest first, read from the usage ledger without internal
   names like Devin's `compactor` or Cursor's `default`, and OpenCode
   names completed to `provider/model`. Part of
-  [#914](https://github.com/c-wenlong/quiver/issues/914); the client
+  [#914](https://github.com/c-wenlong/swe/issues/914); the client
   pickers come next.
 
 - **A "Fan off temperature" for the Compute fan rule.** The popover's
@@ -880,7 +894,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   popover gains the same field as a "Fan off below" dropdown.
 
 - **The web app's chat shows the tmux pane and can detach.** A session
-  Quiver runs under tmux shows its `qv-…` name in the chat's top bar;
+  SWE runs under tmux shows its `qv-…` name in the chat's top bar;
   a click copies `tmux attach -t qv-…`. The bar's Detach button offers
   the phone's three choices: detach when the turn finishes, keep it
   running in tmux, or detach now. A kept session says it is still
@@ -888,7 +902,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   included. `/v1/sessions` rows carry the supervised `mode`, the `tmux`
   name and `kept`, and so do `session.ownership` events. The details
   sheet adds the pane, its attach command and, on a macOS hub, Run in
-  terminal ([#850](https://github.com/c-wenlong/quiver/pull/850)).
+  terminal ([#850](https://github.com/c-wenlong/swe/pull/850)).
 
 - **`swe init --hub=<git url>` brings your hub onto a new machine.** It
   checks the URL with `git ls-remote`, clones it as `~/.quiver` with your
@@ -900,7 +914,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own `plugin marketplace add`, the same fix `swe find plugins` offers.
   That fix now covers a hub marketplace whose plugins all come from
   GitHub or a URL, which drift used to skip
-  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+  ([#696](https://github.com/c-wenlong/swe/issues/696)).
 
 - **Hub route for previewing a page file.** `GET
   /v1/sessions/{key}/preview?path=` returns one `.html`, `.htm` or `.svg`
@@ -931,7 +945,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remote PWA's.
 
 - **Report a bug from the app or the terminal.** The Mac app's Help menu
-  now has Report a Bug, Request a Feature, Copy Diagnostics and Quiver
+  now has Report a Bug, Request a Feature, Copy Diagnostics and SWE
   Documentation, and Settings › General has a Feedback card under Doctor
   with the same actions. `swe bug` (`--feature`, `--print`, `--json`)
   opens the same forms. Each link fills in the Area, version and OS
@@ -1007,7 +1021,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@path/` with the menu still open to pick inside it, and a path with
   spaces is quoted. Sessions on a satellite say file search isn't
   available there. Part of
-  [#970](https://github.com/c-wenlong/quiver/issues/970).
+  [#970](https://github.com/c-wenlong/swe/issues/970).
 
 - **Mac app: Mine and Review requested pull request filters.** The
   Repositories dashboard's and a repo focus page's Pull requests tab
@@ -1016,7 +1030,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it covers the focus page's merged and closed PRs too; Review
   requested reads `swe gh pr status` per repo. A filter hides while
   its flag is unknown instead of guessing
-  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+  ([#970](https://github.com/c-wenlong/swe/issues/970)).
 
 - **Mac app: the Queued tray in the session chat.** A Queue-mode
   send the hub holds until the agent's turn ends now waits in a tray
@@ -1026,10 +1040,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Remove all clears the tray after a confirm. It moves to the
   transcript once it goes out, and reopening the chat shows what the
   hub still holds (`GET`/`POST /v1/sessions/{key}/queue`). Part of
-  [#970](https://github.com/c-wenlong/quiver/issues/970).
+  [#970](https://github.com/c-wenlong/swe/issues/970).
 
 ### Changed
 
+- **The Mac app is SWE.app now** (SWE Wraps Everything — the product
+  takes the `swe` command's name and Quiver is decommissioned). The
+  bundle is `SWE.app` with bundle id `com.cwenlong.swe`, its Swift
+  modules are `SWECore`/`SWEApp`/`SWEWidgets`/`SWEWidgetsUI`/`SWEFanHelper`,
+  the DMG is `SWE-<version>.dmg`, and its launchd jobs, keychain
+  service and fan helper moved to `com.cwenlong.swe.*` names. On
+  install, the old Quiver.app is quit and removed, its `~/.quiver` data
+  root moves to `~/.swe` (with a `~/.quiver` symlink left behind), its
+  LaunchAgents are renamed onto the new labels, its keychain items move
+  to the new service on first read, and its preferences carry over to
+  the new defaults domain. Sparkle cannot update across a bundle id
+  change, so a Quiver.app install must move to SWE.app once, manually;
+  the release checklist covers it.
+- **The iPhone app is SWE Remote now**, with bundle id `com.swe.remote`
+  (was `com.quiver.remote`), extensions `SWEShare` and `SWEWidget`, App
+  Group `group.com.swe.remote` and Keychain group
+  `com.swe.remote.shared`. The shared store's Info.plist key is
+  `SWEKeychainGroup`. Deep links move to `swe://` for pair, session and
+  issue routes, and `quiver://` links keep opening, so pair QRs from a
+  hub that has not upgraded still work. Pair and device metadata sent
+  to the hub names `SWE Remote`; the hub reads the old
+  `QuiverRemote`/`Quiver Remote` tokens the same way, so a phone on the
+  old build still pairs and reports iOS correctly. Because the App
+  Group and Keychain group change, a Quiver Remote install does not
+  carry its pairing over: pair again after updating.
+- **The GitHub repos are `c-wenlong/swe` now.** `c-wenlong/quiver` was
+  renamed to `c-wenlong/swe`, `quiver-hub` to `swe-hub`,
+  `quiver-demo-hub` to `swe-demo-hub` and `homebrew-quiver` to
+  `homebrew-swe`; the old names redirect. The tap is now
+  `c-wenlong/swe`: `brew install --cask c-wenlong/swe/swe` installs the
+  Mac app and `brew install c-wenlong/swe/swe` the CLI. The first SWE
+  release materializes `Casks/swe.rb` in the tap; `Casks/quiver.rb`
+  stays frozen at the last Quiver build so old installs and uninstalls
+  keep working.
 - **New icon and logo everywhere; the pixel-art mascot is gone.** The
   Mac and iPhone app icons, the web app's icons, the landing site and
   the README now use the new mark: three arrowheads above `swe` on a
@@ -1060,8 +1108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reasoning columns stay empty (AA puts per-benchmark scores behind Pro),
   and their hover notes say so. Stored rows in the old shape still
   decode. The quota text now says 100 requests a day, and a `410` reads
-  "Artificial Analysis retired this API. Update Quiver."
-  [#948](https://github.com/c-wenlong/quiver/issues/948).
+  "Artificial Analysis retired this API. Update SWE."
+  [#948](https://github.com/c-wenlong/swe/issues/948).
 
 - **Mac app: less CPU while idle.** The trend sampler no longer reads
   every HID temperature sensor each tick when the SMC already gave the
@@ -1080,7 +1128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `compaction` event in `EVENT_TYPES`, docs/json-contracts.md and
   docs/remote-control.md was never emitted. The hub still accepts one
   from an older satellite
-  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+  ([#516](https://github.com/c-wenlong/swe/issues/516)).
 
 - **`--hub` clones around the state a machine already has.** `swe init
   --hub` and `swe setup --hub` used to refuse any `~/.quiver` with files
@@ -1097,10 +1145,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `data/web-ledger/`, the web app's ledger, and a clone whose own
   `.gitignore` is older gets the missing patterns in its
   `.git/info/exclude`, so this machine's state never reaches the hub's
-  git ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+  git ([#696](https://github.com/c-wenlong/swe/issues/696)).
 
 - **Usage problems say what to do, graded by how much they need you.**
-  A stale login or a credentials file macOS won't let Quiver read puts
+  A stale login or a credentials file macOS won't let SWE read puts
   an account card in its amber "Action needed" state with a Fix sheet,
   raises a banner over the window (it never takes focus) and counts on
   the Settings badge. A sign-out banners only where a read used to work,
@@ -1112,7 +1160,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   login command, and an extra Devin or Cursor account's Doctor row keeps
   the fix aimed at that account's files. Issues of a harness you unstar
   close instead of holding the badge, and the issue store's file work
-  runs off the main thread ([#797](https://github.com/c-wenlong/quiver/issues/797)).
+  runs off the main thread ([#797](https://github.com/c-wenlong/swe/issues/797)).
 
 - **The menu bar fan popover's notes fold into an ⓘ mark.** The
   captions under the Automatic and Manual controls move into the app's
@@ -1133,14 +1181,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Flatter Mac app window.** The page now fills the window to its edges
   instead of sitting in a rounded, inset panel, split from the sidebar by
-  a hairline. The Quiver wordmark and the sidebar toggle moved up into the
+  a hairline. The SWE wordmark and the sidebar toggle moved up into the
   traffic lights' row, and cards, blocks, fields, buttons and sheets have
   smaller corner radii.
 
 - **Flatter web app window.** The web app's page fills the browser to its
   edges like the Mac app's, split from the sidebar by a hairline (on a
   phone, under the page strip), instead of sitting in a rounded, inset
-  panel. The Quiver wordmark row is shorter, so the sidebar list starts
+  panel. The SWE wordmark row is shorter, so the sidebar list starts
   higher, and cards, blocks, fields, buttons and sheets have the Mac app's
   smaller corner radii.
 
@@ -1210,11 +1258,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mac: a picked hub's web app is the whole window now.** The machine
+  switcher used to open the hub only in the panel, so the web app's own
+  sidebar nested inside the native one. While a hub is up the window is
+  all its web app; the title-bar strip names the machine and is the
+  machine menu, the way back to This Mac or to another hub
+  ([#681](https://github.com/c-wenlong/swe/issues/681)).
+
 - **Hub: old `/app/` links keep their query string.** The redirects from
   `/app/…` and `/index.html` to the web app at `/` now carry the query
   onto `Location` (the browser already kept `#pair=` and `#approve`
   fragments), and a test pins that no `/v1/` route falls through to the
-  app's page ([#943](https://github.com/c-wenlong/quiver/issues/943)).
+  app's page ([#943](https://github.com/c-wenlong/swe/issues/943)).
 
 - **Remote: attached files reach harnesses that don't read `@` refs.**
   Every channel used to put a phone attachment into the prompt as
@@ -1225,7 +1280,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own tools. Which harness gets which is harness.json
   `capabilities.attachments.at_refs`, over a fallback table in
   `remote/attachments.py`
-  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+  ([#516](https://github.com/c-wenlong/swe/issues/516)).
 
 - **MCP gateway: no longer throttled by macOS.** The LaunchAgent was
   written with `ProcessType: Background`, as the remote hub's is, and
@@ -1236,7 +1291,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **MCP gateway: a session's burst of connections is queued, not
   reset.** A Claude Code session connects to every shared server at
-  once, and the Python 3.13 that Quiver.app bundles queues only 5
+  once, and the Python 3.13 that SWE.app bundles queues only 5
   connections on a listening socket. With 18 shared servers, 13 of 18
   probes at once got "connection reset" and those servers would fail to
   connect for that session. The gateway now queues 128.
@@ -1252,13 +1307,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mac app: notarized builds keep Terminal automation.** Open in
   Terminal, account sign-in and session resume drive Terminal and iTerm
   through an `osascript` child, and macOS charges that Apple Event to
-  Quiver. Under the hardened runtime that prod and notarized builds use,
+  SWE. Under the hardened runtime that prod and notarized builds use,
   an app without the `com.apple.security.automation.apple-events`
   entitlement is refused (`-1743`) before any prompt appears. Prod builds
   now sign the app, and the bundled Python that runs the hub, with
-  `app/mac/script/Quiver.entitlements`, which grants it; the existing
+  `app/mac/script/SWE.entitlements`, which grants it; the existing
   `NSAppleEventsUsageDescription` gives the prompt its text
-  ([#968](https://github.com/c-wenlong/quiver/issues/968)).
+  ([#968](https://github.com/c-wenlong/swe/issues/968)).
 
 - **Remote: queue-mode sends wait for idle on satellites too.** A
   `queue`-mode message to a session on another machine used to fail
@@ -1271,7 +1326,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The hub's and the satellite's idle wait both probe with the tailer's
   activity time, so a turn that started since the last catalog refresh
   no longer reads as "interrupted" and gets a queued send typed into it
-  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+  ([#516](https://github.com/c-wenlong/swe/issues/516)).
 
 - **The Mac app's Model menu keeps your pick across a harness round
   trip.** On New session, Resolve issue and a task's New agent session,
@@ -1282,7 +1337,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Codex, or Kilo, which takes no model) shows and sends its own
   default, and the next harness that lists it gets it back. What the
   menu shows is still what gets sent. Follows
-  [#914](https://github.com/c-wenlong/quiver/issues/914).
+  [#914](https://github.com/c-wenlong/swe/issues/914).
 - **The fan rule comes back on its own after the helper stops
   answering.** A fan request the root helper never took used to switch
   the rule off until someone toggled it or set a speed by hand, and a
@@ -1304,14 +1359,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PR open`, `Merged`, `Closed`, `Open`, or a Linear workflow state's
   name), and its stepper reads Open → Agent → PR open → Merged for
   GitHub and Open → Started → Done elsewhere
-  ([#875](https://github.com/c-wenlong/quiver/issues/875)).
+  ([#875](https://github.com/c-wenlong/swe/issues/875)).
 - **The iPhone app's tab bar fits again.** The Tasks tab made six tabs,
   and iPhone shows four plus "More" past five, so Issues and Usage were
   hidden behind More and `quiver://issue` links landed inside it.
   Issues and Pull requests now share one GitHub tab with an Issues /
   Pull requests switch at the top, each side keeping what it loaded,
   and issue links open GitHub on its Issues side
-  ([#875](https://github.com/c-wenlong/quiver/issues/875)).
+  ([#875](https://github.com/c-wenlong/swe/issues/875)).
 - **Tasks say what the source says, and say when GitHub didn't
   answer.** The web Tasks page and the iPhone Tasks tab showed the
   hub's internal ladder as each task's status, so an issue whose agent
@@ -1328,7 +1383,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plain launch reloads the list, an old unlink error clears, both
   clients count a pull task as "PR open" until it lands, and linking,
   unlinking or closing the launch sheet no longer refetches every
-  repo from `gh` ([#875](https://github.com/c-wenlong/quiver/issues/875)).
+  repo from `gh` ([#875](https://github.com/c-wenlong/swe/issues/875)).
 - **Cursor usage works for editor-only users on macOS.** The Cursor
   editor now stores its session token encrypted
   (`cursor-safe-storage:v1:` in `state.vscdb`), so usage showed only
@@ -1343,7 +1398,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before asking again. To allow it for good, run
   `security find-generic-password -w -s "Cursor Safe Storage" >/dev/null`
   in Terminal and choose Always Allow. Other platforms keep reading
-  plaintext tokens ([#796](https://github.com/c-wenlong/quiver/issues/796)).
+  plaintext tokens ([#796](https://github.com/c-wenlong/swe/issues/796)).
 - **Stored tasks keep their last-known state when a source can't be
   read.** A linked issue last seen closed or merged read `in_progress`
   again on `GET /v1/tasks` while `gh` was signed out, Linear was down,
@@ -1361,21 +1416,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   folders never arrived. Doctor's Setup section now gives one warning per
   harness listing them, with a fix that names the file to edit, or says
   the file is managed by Nix when it is a store link
-  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+  ([#696](https://github.com/c-wenlong/swe/issues/696)).
 - **The web app's Plugins page says once where missing marketplaces were
   looked for.** A `~/.claude/settings.json` from another machine can
   register several marketplaces whose folders are not on this one, and
   the page printed "no marketplace manifest on disk" once per name. Each
   harness now gets one line naming them and the folder they were looked
   in, and swe's catalog errors carry that folder as `path`
-  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+  ([#696](https://github.com/c-wenlong/swe/issues/696)).
 - **`swe init` builds and repairs every hub folder.** It used to create
   only `skills/` and `backups/`, so a hub that reached a second machine
   as a bare `AGENTS.md` never got `plugins/`, `hooks/` or `mcp/`. The
   hub's folders are now one list in `paths.py` (`HUB_SUBDIRS`), and init
   creates whichever are missing on a new or existing `~/.quiver` without
   touching files already there
-  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+  ([#696](https://github.com/c-wenlong/swe/issues/696)).
 - **Mac app sidebar toggle works in a normal window.** Since the toggle
   moved into the traffic lights' row, a click on it in a window that was
   not full screen did nothing: the sidebar list or the page reached up
@@ -1390,7 +1445,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   late-October grid) never reported a frame, so hovering them drew no
   bubble, and some earlier frames went stale. The cell frames and the
   cell under the pointer now come from the grid's fixed metrics
-  (`HeatmapLayout` in QuiverCore), with one measured origin for the
+  (`HeatmapLayout` in SWECore), with one measured origin for the
   rows.
 - **A unit test could freeze the whole Swift suite.** In
   `clearWaitsForACallInsideTheLock` the clearer ran as `Task.detached`,
@@ -1439,11 +1494,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it are signed out, until a pair request from it is approved again.
   Revoking a device paired through a tailnet request revokes its node
   too. The owner's other devices keep working
-  ([#966](https://github.com/c-wenlong/quiver/issues/966)).
+  ([#966](https://github.com/c-wenlong/swe/issues/966)).
 
-- **Mac app: the fan helper is checked against Quiver's own signature
+- **Mac app: the fan helper is checked against SWE's own signature
   before it runs as root.** The one-time install copied
-  `Quiver.app/Contents/MacOS/QuiverFanHelper` to
+  `SWE.app/Contents/MacOS/SWEFanHelper` to
   `/Library/PrivilegedHelperTools` and only checked that the copy
   matched a hash taken before the password prompt. The bundle is
   user-writable, so anything running as the user could patch the helper
@@ -1451,16 +1506,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A build signed by a team (Developer ID, or the Apple Development
   identity dev builds pick up) now has the root script verify the
   root-owned copy with `codesign --verify --strict` against
-  `identifier "QuiverFanHelper"` and that team, and deletes it and stops
+  `identifier "SWEFanHelper"` and that team, and deletes it and stops
   otherwise. Ad-hoc builds have no signature to check against and keep
   the hash check alone. Installed helpers are not reinstalled, so nobody
   is asked for their password again
-  ([#967](https://github.com/c-wenlong/quiver/issues/967)).
+  ([#967](https://github.com/c-wenlong/swe/issues/967)).
 
-- **Mac app: the fan helper only takes requests from Quiver itself,
+- **Mac app: the fan helper only takes requests from SWE itself,
   checked by its code signature.** The running root helper held the fans
-  for any request whose owner was a live process named `Quiver`, so a
-  program called `/tmp/Quiver` qualified. The install now pins the
+  for any request whose owner was a live process named `SWE`, so a
+  program called `/tmp/SWE` qualified. The install now pins the
   installing app's signature in the launchd job (`--owner-team <team>
   --owner-identifier <id>` for a team-signed build, since the team also
   signs the Python bundled for swe; `--owner-cdhash <hash>` for an
@@ -1468,14 +1523,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audit token and `SecCodeCheckValidity`, keeping the answer per process
   (pid and pid version) so a reused pid is checked afresh. A job without
   a valid pin starts nothing. The helper is now version 4 and writes its
-  `version` into `/var/run/com.cwenlong.quiver.fan.json`. On launch,
-  Quiver finds a helper older than that, says why it needs replacing,
+  `version` into `/var/run/com.cwenlong.swe.fan.json`. On launch,
+  SWE finds a helper older than that, says why it needs replacing,
   and offers "Update helper" (one administrator password prompt) or "Not
   now". Not now is remembered for this version: the old helper is left
   unused, the fans stay with macOS, and both fan popovers show the
   reason with an "Update fan helper" button; Set speed or the
   temperature rule's switch also updates it
-  ([#967](https://github.com/c-wenlong/quiver/issues/967)).
+  ([#967](https://github.com/c-wenlong/swe/issues/967)).
 
 - **Remote: a local process can no longer claim the owner's tailnet
   identity.** Behind `tailscale serve` the hub read the client from
@@ -1491,7 +1546,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serve's local listener forwards any local process as that node. The
   owner's phones and other computers get in as before, and paired
   devices are unaffected; a browser on the hub machine now pairs
-  ([#965](https://github.com/c-wenlong/quiver/issues/965)).
+  ([#965](https://github.com/c-wenlong/swe/issues/965)).
 
 - **The remote hub refuses wildcard and non-tailnet binds.** `swe
   remote serve --host=0.0.0.0` — or a LAN address, a link-local
@@ -3511,7 +3566,7 @@ service / model layering, tests with an 84% coverage floor).
   plain import. The CI test matrix moves to 3.11 and 3.13 and coverage drops to
   a single leg, taking CI from 7 check runs to 6. Users on 3.10 should pin `v0.2.9`,
   the last release that runs on it: `pipx install
-  git+https://github.com/c-wenlong/quiver.git@v0.2.9`. Ubuntu 22.04 LTS ships
+  git+https://github.com/c-wenlong/swe.git@v0.2.9`. Ubuntu 22.04 LTS ships
   3.10, while Debian 12 and Ubuntu 24.04 ship 3.11 and 3.12 respectively.
 
   One behaviour improves: a timestamp carrying nanosecond precision, such as
@@ -3573,7 +3628,7 @@ service / model layering, tests with an 84% coverage floor).
   tag against `project.version`, runs `twine check`, smoke-tests the wheel,
   and attaches both files to the GitHub release. Publishing to PyPI stays
   commented out because the name `quiver` belongs to another project.
-- **A `flake.nix` in the repo.** `nix run github:c-wenlong/quiver` builds
+- **A `flake.nix` in the repo.** `nix run github:c-wenlong/swe` builds
   and runs `swe` with no clone, and `packages.default` is a flake input any
   nix-darwin or Home Manager config can consume. The build runs the whole
   unittest suite inside the sandbox, so `nix flake check` doubles as the
@@ -4524,7 +4579,7 @@ service / model layering, tests with an 84% coverage floor).
 - Stdlib-only core; optional FastMCP server extra for session history MCP tool
 - Test suite (15 unit tests) with isolated `$HOME` fixtures
 
-[1.1.1]: https://github.com/c-wenlong/quiver/releases/tag/v1.1.1
-[1.1.0]: https://github.com/c-wenlong/quiver/releases/tag/v1.1.0
-[1.0.0]: https://github.com/c-wenlong/quiver/releases/tag/v1.0.0
-[0.1.0]: https://github.com/c-wenlong/quiver/releases/tag/v0.1.0
+[1.1.1]: https://github.com/c-wenlong/swe/releases/tag/v1.1.1
+[1.1.0]: https://github.com/c-wenlong/swe/releases/tag/v1.1.0
+[1.0.0]: https://github.com/c-wenlong/swe/releases/tag/v1.0.0
+[0.1.0]: https://github.com/c-wenlong/swe/releases/tag/v0.1.0

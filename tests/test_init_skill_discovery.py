@@ -64,7 +64,7 @@ class DiscoveryTest(unittest.TestCase):
             self.assertNotIn(".hermes.pre-bootstrap-20260730", found)
 
     def test_does_not_recurse_into_projects(self):
-        # Project-level .cursor/skills is not quiver's business.
+        # Project-level .cursor/skills is not swe's business.
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             deep = home / "Desktop" / "proj" / ".cursor" / "skills"
@@ -216,7 +216,7 @@ class SignatureTest(unittest.TestCase):
                 by_path[home / ".pi" / "agent" / "skills"].state, "ignored")
 
     def test_leftover_agents_dir_does_not_imply_cline(self):
-        # ~/.agents was quiver's own pre-0.2.7 root: a leftover proves
+        # ~/.agents was swe's own pre-0.2.7 root: a leftover proves
         # nothing about cline, so its skills root must not appear. The
         # AGENTS.md row still plans create — like every row, it creates a
         # missing file under an existing dir — but that file is the shared

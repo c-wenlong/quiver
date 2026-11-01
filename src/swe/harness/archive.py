@@ -32,7 +32,7 @@ from swe.harness import registry as _registry
 USAGE_LEVELS: tuple[str, ...] = ("unknown", "none", "trial", "used", "heavy")
 
 USAGE_ABOUT = {
-    "unknown": "no session parser, so quiver cannot tell",
+    "unknown": "no session parser, so swe cannot tell",
     "none": "never actually ran it",
     "trial": "a handful of runs, not a real evaluation",
     "used": "used properly for a while",

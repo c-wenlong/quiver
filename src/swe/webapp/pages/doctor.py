@@ -28,6 +28,13 @@ when nothing did), the paths a real file or folder still holds after a
 setup or init (``blocked_paths``) and the report read again after it,
 since even a failed run may have fixed something.
 
+``fix-all`` is the Fix all button: ``swe doctor --fix``'s ordered batch
+(``harness.doctor_fix.run_fixes``), one at a time with the Runs, taking
+each runner's lock as its own Run would. It takes no body and replies
+``{"ran": "fix-all", "result", "blocked", "report"}`` with ``result``
+the ``--fix --json`` shape. Installs, and the fixes that delete or
+overwrite, never run in it; they keep their row's Run.
+
 ``replace`` is the Replace and back up button those blocked paths get:
 ``swe init --force``, which copies each one to ~/.swe/backups and
 links the shared copy in its place. It takes no body. The AGENTS.md
@@ -60,6 +67,14 @@ def post(ctx, action: str, body: dict) -> dict:
         home = home_path(ctx)
         error = run_init_now(home, force=True)
         return {"ran": "replace", "error": error, "blocked": blocked_now(home), "report": _report(ctx)}
+    if action == "fix-all":
+        home = home_path(ctx)
+        with _one_at_a_time():
+            result = _fix_all(home)
+            blocked = blocked_now(home) if any(
+                s["action"] in ("setup", "init") for s in result["ran"]) else []
+            return {"ran": "fix-all", "result": result, "blocked": blocked,
+                    "report": _report(ctx)}
     if action != "run":
         raise PageError(404, "unknown_action", f"unknown doctor action: {action}")
     check, message = body.get("check"), body.get("message")
@@ -119,6 +134,30 @@ def post(ctx, action: str, body: dict) -> dict:
         return {"ran": action_name, "error": error, "blocked": blocked, "report": _report(ctx)}
 
 
+def _fix_all(home: Path) -> dict:
+    """The batch, each step behind the lock its own Run takes."""
+    from swe.harness.commands import doctor_report
+
+    from swe.webapp.pages import plugins
+
+    ran_plugins = []
+
+    def guard(action: str, run) -> str | None:
+        if action == "plugin-fix":
+            ran_plugins.append(action)
+            return _with_plugin_lock(lambda: _guarded(lambda h: run(), home))
+        return _guarded(lambda h: run(), home)
+
+    try:
+        return doctor_fix.run_fixes(
+            home, lambda: doctor_report(home).to_json()["findings"], guard=guard)
+    finally:
+        # A plugin repair, even a failed one, may have changed what the
+        # Plugins page shows: it reads afresh rather than from its cache.
+        if ran_plugins:
+            plugins.clear_cache()
+
+
 @contextmanager
 def _one_at_a_time():
     if not _RUN_LOCK.acquire(blocking=False):
@@ -167,6 +206,9 @@ def _report(ctx) -> dict:
     # about this home, and the picker lists what the hub can start.
     report["home"] = str(home)
     report["launchable"] = harnesses(home)
+    # How many findings Fix all would run a fix for: its button's count.
+    report["fixable"] = sum(1 for f in report["findings"]
+                            if doctor_fix.batch_action(f) is not None)
     return report
 
 

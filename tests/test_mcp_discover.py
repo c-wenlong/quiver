@@ -135,7 +135,7 @@ class ThreeWayMergeTest(unittest.TestCase):
 
     The original merge skipped anything already present by name, so a rotated
     token in a harness config never reached the hub, and a later
-    `sync quiver --all` would push the stale value back out over it.
+    `sync swe --all` would push the stale value back out over it.
     """
 
     HARNESS = {
@@ -283,7 +283,7 @@ class ThreeWayMergeTest(unittest.TestCase):
 
 
 class DiscoverReadsTheDiskTest(unittest.TestCase):
-    """discover enumerated only the config paths quiver had registered.
+    """discover enumerated only the config paths swe had registered.
 
     That is a clean bill of health for anything nobody registered, which is
     exactly where an unmanaged server hides. Here it was four config files
