@@ -131,8 +131,29 @@ enum PhotoPrep {
     /// nil when `data` isn't an image ImageIO can read.
     static func jpeg(from data: Data, maxEdge: Int = AttachmentRules.photoMaxEdge,
                      quality: CGFloat = AttachmentRules.photoQuality) -> Data? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              CGImageSourceGetCount(source) > 0 else { return nil }
+        CGImageSourceCreateWithData(data as CFData, nil).flatMap { jpeg(from: $0, maxEdge: maxEdge, quality: quality) }
+    }
+
+    /// The same from a file, which ImageIO reads as it needs: the share
+    /// extension never holds the original's bytes.
+    static func jpeg(at url: URL, maxEdge: Int = AttachmentRules.photoMaxEdge,
+                     quality: CGFloat = AttachmentRules.photoQuality) -> Data? {
+        CGImageSourceCreateWithURL(url as CFURL, nil).flatMap { jpeg(from: $0, maxEdge: maxEdge, quality: quality) }
+    }
+
+    /// An image another app handed over already decoded.
+    static func jpeg(from image: UIImage, maxEdge: Int = AttachmentRules.photoMaxEdge,
+                     quality: CGFloat = AttachmentRules.photoQuality) -> Data? {
+        let size = image.size, edge = max(size.width, size.height) * image.scale
+        guard edge > CGFloat(maxEdge), edge > 0 else { return image.jpegData(compressionQuality: quality) }
+        let factor = CGFloat(maxEdge) / edge
+        let target = CGSize(width: (size.width * image.scale * factor).rounded(),
+                            height: (size.height * image.scale * factor).rounded())
+        return (image.preparingThumbnail(of: target) ?? image).jpegData(compressionQuality: quality)
+    }
+
+    private static func jpeg(from source: CGImageSource, maxEdge: Int, quality: CGFloat) -> Data? {
+        guard CGImageSourceGetCount(source) > 0 else { return nil }
         let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         let width = props?[kCGImagePropertyPixelWidth] as? Int ?? maxEdge
         let height = props?[kCGImagePropertyPixelHeight] as? Int ?? maxEdge

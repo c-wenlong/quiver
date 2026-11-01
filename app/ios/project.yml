@@ -35,6 +35,7 @@ targets:
         product: NIOSSH
       - package: SwiftTerm
         product: SwiftTerm
+      - target: QuiverShare
     info:
       path: QuiverRemote-Info.plist
       properties:
@@ -60,7 +61,7 @@ targets:
         # range can't be listed there). Residual scope: HTTP to *.ts.net
         # plus local names and IP literals; arbitrary domains still get
         # full ATS.
-        NSAppTransportSecurity:
+        NSAppTransportSecurity: &ats
           NSAllowsLocalNetworking: true
           NSExceptionDomains:
             ts.net:
@@ -72,7 +73,7 @@ targets:
     # registers both on the team's App IDs.
     entitlements:
       path: QuiverRemote.entitlements
-      properties:
+      properties: &sharedGroups
         com.apple.security.application-groups: [group.com.quiver.remote]
         keychain-access-groups: [$(AppIdentifierPrefix)com.quiver.remote.shared]
     settings:
@@ -86,6 +87,58 @@ targets:
         # Charts (imported by the Usage chart) leaks its overloads into
         # every file and ChatView's arithmetic stops type-checking in time.
         SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
+  # The share sheet (#1441): text, links, images and files from any app
+  # into a session. It compiles the app's hub files itself (the store,
+  # the client, the wire types, the attachment rules and the share
+  # logic) rather than a framework, and reads the paired hubs from the
+  # same App Group and Keychain group as the app.
+  QuiverShare:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/QuiverShare
+      - path: Sources/QuiverRemote/Share
+      - path: Sources/QuiverRemote/Hub/Pairing.swift
+      - path: Sources/QuiverRemote/Hub/HubStore.swift
+      - path: Sources/QuiverRemote/Hub/HubClient.swift
+      - path: Sources/QuiverRemote/Hub/Models.swift
+      - path: Sources/QuiverRemote/Hub/Attachments.swift
+      # Wire types HubClient's other routes name.
+      - path: Sources/QuiverRemote/Hub/PullActions.swift
+      - path: Sources/QuiverRemote/Hub/PagePreview.swift
+      - path: Sources/QuiverRemote/Hub/SSHTarget.swift
+      - path: Sources/QuiverRemote/Hub/UsageModels.swift
+      - path: Sources/QuiverRemote/Hub/UsageFormat.swift
+    info:
+      path: QuiverShare-Info.plist
+      properties:
+        CFBundleDisplayName: Quiver
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        QuiverKeychainGroup: $(AppIdentifierPrefix)com.quiver.remote.shared
+        NSAppTransportSecurity: *ats
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsImageWithMaxCount: 10
+              NSExtensionActivationSupportsFileWithMaxCount: 10
+    entitlements:
+      path: QuiverShare.entitlements
+      properties: *sharedGroups
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.quiver.remote.share
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
   QuiverRemoteTests:
     type: bundle.unit-test
     platform: iOS
