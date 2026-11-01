@@ -23,6 +23,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   --action=<a>`. A test fails when the Python runners, the web page's
   wording or the Mac's action list drift apart. Closes
   [#529](https://github.com/c-wenlong/quiver/issues/529).
+- **Launch a harness on a provider from the keys file.** `POST
+  /v1/sessions` takes `provider: "<slug>"` and `swe use` takes
+  `--provider=<slug>`: the launching machine starts the harness with
+  only that provider's variables from its own keys file, as
+  `capabilities.provider` declares. In a tmux pane a small wrapper
+  (`remote/provider_exec.py`) reads the file and execs the harness, so
+  no key goes on argv, in the launch record, the marker or the journal.
+  Machine rows list `providers_at_launch` (slugs whose key is set) and
+  `provider_names`; the hub forwards only the slug to a satellite.
+  A missing key or an undeclared slug is a 422. Part of
+  [#526](https://github.com/c-wenlong/quiver/issues/526).
+- **Hub: service status pushes.** `swe remote notify
+  --service-status=on` (the `service_status` flag in `notify.json`, off
+  by default) starts a five-minute check of every tracked status page
+  in `swe remote serve`, through the web app's shared poller. A model
+  provider or agent platform starting an incident posts once to ntfy,
+  and once more when it is back to normal; the hub emits these as
+  `notify` events of kind `service`; it needs ntfy configured. Maintenance
+  never posts, each page's first reading only records what is already
+  open, and the delivered set in
+  `~/.swe/cache/web-service-status-notified.json` keeps a restart
+  from repeating a push. The rule is `status/alerts.py`, a port of the
+  Mac's `ServiceStatusAlerts`. Closes
+  [#528](https://github.com/c-wenlong/quiver/issues/528).
+- **Mac: service status banners.** With "Notify about service status"
+  on (Settings › Notifications, off by default), the Mac banners when a
+  model provider or agent platform starts an incident on its status
+  page, and once more when it is back to normal. Each incident banners
+  once: the same incident on the next poll, after a relaunch or after it
+  flaps is quiet, two incidents opening at once are two banners, and
+  scheduled maintenance never banners. Each page's first reading only
+  records what is already open. A click opens Service status.
+  Part of [#528](https://github.com/c-wenlong/quiver/issues/528).
 - **Launch providers declared per harness.** `harness.json` gains
   `capabilities.provider`: for each provider slug a harness takes at
   launch, the variables it reads for the key (filled from named

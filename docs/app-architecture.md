@@ -19,6 +19,7 @@ Sources/QuiverApp/
     main.swift          NSApplication bootstrap
     AppModel.swift      the one app-wide model every page reads
     LimitsMonitor.swift limit notifications and the menubar figure refresh
+    ServiceStatusNotifier.swift  provider incident banners (rule in QuiverCore ServiceStatusAlerts)
   Navigation/
     MainWindow.swift    sidebar (collapsible to a rail) plus the page
   MenuBar/
