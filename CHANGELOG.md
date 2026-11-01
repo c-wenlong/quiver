@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rows the hub lists and on Other machines rows, reading as its own
   paired device; the iPhone's app icon badge stays the Inbox count.
   Closes [#1439](https://github.com/c-wenlong/quiver/issues/1439).
+- **Hub: live reply text (`message.delta`) for API channels.** Codex
+  app-server, opencode serve and headless Claude sessions now send
+  `message.delta` events while a reply is written: `{id, kind, text,
+  seq, done}`, at most one per message every 100 ms, with the text
+  redacted over the whole message so far. Headless Claude runs with
+  `--include-partial-messages` (stdout only; transcripts and resume are
+  unchanged). Deltas are never journaled and carry no `seq`, so replay
+  and resume cursors are untouched; the final `message.appended`
+  replaces the streamed text. Satellites coalesce their own and relay
+  them only to a hub that advertises `message_delta`. tmux sessions
+  stay record-by-record. Part of
+  [#1444](https://github.com/c-wenlong/quiver/issues/1444); the client
+  bubbles follow.
 - **iPhone: the paired hubs move to an App Group and a shared Keychain
   group.** The hub list now lives in `group.com.quiver.remote` and each
   hub's credential in the `<team>.com.quiver.remote.shared` Keychain
