@@ -118,6 +118,27 @@ moved, every reader (`paths.provider_keys_path_for`,
 `paths.mcp_secrets_path_for`, the app's `APIKeysStore.defaultURL`) falls back
 to the old path.
 
+### Syncing the hub repo between machines
+
+`swe sync` (`src/swe/sync/`) moves config between machines through that git
+repo, so git stays the only transport. It commits what changed, merges the
+remote in, pushes, and, when something came in, runs what `swe init --hub`
+runs after a clone: the link pass, `register_marketplaces`, and `swe mcp sync
+swe --all` when `mcp.json` changed. The branch decides the mode. On
+`device/<machine>` it merges `origin/device/<machine>` and then the remote's
+default branch, and pushes only the device branch, so `main` changes only when
+someone merges into it on purpose. On any other branch every machine shares
+it.
+
+Sync merges and never rebases, and each merge is tried first with `git
+merge-tree --write-tree` on unreferenced commits built from a scratch index.
+A conflict therefore stops the sync before the branch, the index or the
+working tree moves, and a merge that still fails late is aborted and rolled
+back to the saved HEAD and index tree. It never force-pushes. Every `git add`
+excludes `paths.GITIGNORE_BODY`'s paths by pathspec, so a hub with an older
+`.gitignore` still never commits `secrets/`, `cache/` or `data/`; those files
+are reported as held back.
+
 ## The core idea: one file, many names
 
 Every harness wants its own instruction filename (`CLAUDE.md`, `AGENTS.md`,

@@ -569,6 +569,26 @@ to use their own login state and environment."""
   {c('dim', 'skipped')}   no hooks root, or harness not installed
   {c('dim', 'ignored')}   .linkignore, archived in harness.json, or disabled
   {c('yellow', 'foreign')}   not managed by swe — list-only"""),
+    "sync": (
+        "Commit, merge and push the ~/.swe hub repo",
+        f"""\
+  {c('cyan', 'swe sync')}                   Commit local changes, merge the remote in, push,
+                             then re-link every harness when content came in
+  {c('cyan', 'swe sync --dry-run')}         Fetch and show what would happen, change nothing
+  {c('cyan', 'swe sync status')}            Branch mode, ahead/behind, uncommitted changes
+  {c('cyan', 'swe sync status --fetch')}    Fetch the remote first
+
+  {c('bold', 'Device mode')}, on a {c('bold', 'device/<machine>')} branch: merges origin/device/<machine>
+  and then origin/main into it, and pushes the device branch only.
+  {c('bold', 'Single-branch mode')}, on any other branch: merges origin/<branch>, pushes it.
+
+  Every merge is tried first without touching the repo. On a conflict sync
+  lists the files and stops with ~/.swe exactly as it was. It never
+  force-pushes, and never commits secrets/, cache/, data/ or anything else
+  swe's .gitignore lists, even when the hub's own .gitignore is older.
+
+  Both take {c('cyan', '--json')} for the app's document."""
+    ),
     "instructions": (
         "Compile shared instruction chapters into ~/.swe/AGENTS.md",
         f"""\
@@ -878,6 +898,7 @@ COMMAND_CATEGORIES = [
     ]),
     ("Remote", [
         ("remote",  None),
+        ("sync",    None),
     ]),
     ("Reference", [
         ("find",    None),

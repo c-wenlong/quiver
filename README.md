@@ -269,6 +269,7 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe mcp <subcommand> …` | | MCP server management (see below) |
 | `swe providers [<subcommand>] …` | `pv` | Provider API key + metadata management |
 | `swe remote <subcommand> …` | | Watch and steer sessions from a phone: `serve` (hub), `agent` (satellite), `setup`, `pair`, `status`, `devices`, `attach`, `notify`, `ssh` |
+| `swe sync [status]` | | Commit, merge and push the `~/.swe` hub repo; `status` shows the branch mode, ahead/behind and uncommitted changes |
 | `swe gh <subcommand> …` | | GitHub surfaces over `gh`: `pr`, `issue`, `run`, `inbox`, `repo`, `board`, `sync`, … |
 | `swe bug` | | Open a bug report on GitHub with your versions filled in |
 | `swe version` | `-v`, `--version` | Print the swe version |

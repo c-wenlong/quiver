@@ -76,6 +76,7 @@ Status words:
 | Settings | yes | yes | part | iOS: the hub chip menu holds switch hub, devices, Console, Refresh and Unpair; no notification settings |
 | Doctor | yes | yes | - | Mac: a Settings section; web: `#/doctor`, no sidebar entry. Findings carry `source` + `remedies`; only the web page renders them (source line, remedy rows, Fix-with-agent picker through `/v1/sessions`). Web Run also covers `undeclare` (drop a hook declaration) and `marketplace-drop` (drop missing marketplace entries), each file backed up first and managed files refused. Mac reads `fix`/`action` as before |
 | First-run setup | yes | yes | - | Web: `#/setup`. Hub URL step on all three: `swe setup --hub`, web step 2 (clones on the hub's thread, page polls), Mac links step (runs `swe setup --hub --json`) |
+| Hub sync (`swe sync`) | - | - | - | CLI only so far ([#525](https://github.com/c-wenlong/quiver/issues/525)): commits `~/.swe`, merges the remote in (on `device/<machine>` it merges `origin/main` and pushes only the device branch), pushes, re-links. Never commits `secrets/`, `cache/` or `data/`; a conflict stops with nothing changed |
 | API keys | yes | part | - | Settings › Providers on both. Web: no key check, rename, move, custom providers or coding plans |
 | Fan control, Clean up, updates, Report a bug | yes | - | - | Mac-only by design |
 
