@@ -256,14 +256,17 @@ def _run_dangling_link(home: Path, finding: dict, remedy: dict | None) -> str | 
 
 
 def _run_mcp_sync(home: Path, finding: dict, remedy: dict | None) -> str | None:
-    return doctor_fix.RUNNERS["mcp-sync"](home, finding, remedy)
+    """Behind the MCP page's lock (``CONFIG_LOCK``, the Plugins page's
+    too): both rewrite the harness MCP configs, and two read-modify-write
+    passes at once would drop one's change."""
+    return _with_plugin_lock(lambda: doctor_fix.RUNNERS["mcp-sync"](home, finding, remedy))
 
 
 def _with_plugin_lock(run) -> str | None:
     from quiver.webapp.pages import plugins
 
     if not plugins._WRITE_LOCK.acquire(blocking=False):
-        return "A plugin change is still running. Wait for it, then try again."
+        return "A plugin or MCP change is still running. Wait for it, then try again."
     try:
         return run()
     finally:

@@ -118,7 +118,11 @@ no network calls. When the hub's <code>mcp.json</code> holds the same name in a
 shape that passes, the finding gets <code>mcp-sync</code>: a click per finding
 that checks again, backs the config file up to <code>~/.quiver/backups</code>
 and runs <code>swe mcp sync quiver &lt;tool&gt; --only=&lt;name&gt; --force</code>, which
-replaces only that entry. Batches never run it, since it overwrites.
+replaces only that entry (through a symlink, the file it points at is
+what gets backed up), then checks again: a sync that skipped the entry
+is an error. The hub copy must name only stored secrets and have a
+command or url. A config the readers cannot parse is one
+<code>mcp.unchecked</code> warning. Batches never run it, since it overwrites.
 Part of <a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
 </li>
 <li><p><strong>iPhone: home screen widget.</strong> Small and medium widgets show the

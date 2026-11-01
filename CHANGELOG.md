@@ -17,7 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shape that passes, the finding gets `mcp-sync`: a click per finding
   that checks again, backs the config file up to `~/.quiver/backups`
   and runs `swe mcp sync quiver <tool> --only=<name> --force`, which
-  replaces only that entry. Batches never run it, since it overwrites.
+  replaces only that entry (through a symlink, the file it points at is
+  what gets backed up), then checks again: a sync that skipped the entry
+  is an error. The hub copy must name only stored secrets and have a
+  command or url. A config the readers cannot parse is one
+  `mcp.unchecked` warning. Batches never run it, since it overwrites.
   Part of [#529](https://github.com/c-wenlong/quiver/issues/529).
 - **iPhone: home screen widget.** Small and medium widgets show the
   hub's sessions waiting on you (approvals and replies), sessions still
