@@ -121,6 +121,17 @@ a failed run may have fixed something. A setup whose linking pass stopped
 reports `links.error`. A real file left in the way is not an error; it is
 in `blocked`.
 
+`POST /v1/app/doctor/fix-all` takes no body and runs `swe doctor
+--fix`'s batch (`harness.doctor_fix.run_fixes`): setup, discover, init
+and `plugin-fix`, in that order, re-reading the report between steps.
+Each step takes the lock its own Run would (the registry lock, and the
+Plugins page's write lock for `plugin-fix`). Installs and the fixes that
+delete or overwrite never run in it. The reply is `{"ran": "fix-all",
+"result", "blocked", "report"}`, `result` being the `swe doctor --fix
+--json` shape (`ran`, `fixed`, `still_failing`, `skipped`,
+`not_cleared`, `fixable_left`). The report carries `fixable`, the count
+the Fix all button shows.
+
 `POST /v1/app/doctor/replace` takes no body and runs
 `run_init(home, force=True, quiet=True, ask=False)`, `swe init --force`:
 each blocked path is copied to `~/.swe/backups`, then replaced with a
@@ -133,7 +144,7 @@ any path it still left alone (one resolving outside the home or into
 | 400 | `bad_finding` | `check` or `message` missing, not text, or over 4000 characters |
 | 404 | `unknown_finding` | that finding is not in the report now |
 | 404 | `unknown_remedy` | the body's `action` names no action remedy on the finding now |
-| 404 | `unknown_action` | any action but `run` and `replace` |
+| 404 | `unknown_action` | any action but `run`, `fix-all` and `replace` |
 | 409 | `busy` | another fix is running (one at a time, not queued; the AGENTS.md page's Link and Replace count) |
 | 422 | `no_action` | the finding has no fix swe can run itself |
 | 403 | `bad_origin` | the hub's Origin check |

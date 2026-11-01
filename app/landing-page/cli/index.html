@@ -440,8 +440,13 @@ Alias  swe discover is the same as swe harness discover
 <p><em>Launch a tool (replaces current process)</em></p>
 <pre><code class="language-text">  swe use &lt;name|alias&gt; [args]  Launch a registered tool
   swe run &lt;name|alias&gt; [args]  Same as use
+  swe use --provider=&lt;slug&gt; &lt;name&gt; [args]
+                                Start it on a provider from the keys file
 
   Extra args are passed through to the underlying command.
+  --provider goes before the name. It sets only that provider's
+  variables (key, base URL) as harness.json capabilities.provider
+  declares, and drops the keys file's other variables.
   Uses os.execvp to replace the process cleanly.
 
 Examples

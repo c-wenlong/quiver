@@ -288,6 +288,36 @@ class RunnerParityTest(unittest.TestCase):
         self.assertFalse(doctor_fix.BATCH & doctor_fix.CLICK)
         self.assertIn("install", doctor_fix.CLICK)
 
+    def test_the_mac_app_runs_every_action_and_batches_the_same(self):
+        import re
+
+        swift = (Path(__file__).resolve().parents[1]
+                 / "app/mac/Sources/QuiverCore/Swe/Doctor.swift").read_text(encoding="utf-8")
+        enum = swift[swift.index("public enum Action: String"):]
+        enum = enum[:enum.index("public var isBatch")]
+        names = set()
+        for case in re.findall(r"^\s*case (.+)$", enum, re.M):
+            for part in case.split(","):
+                part = part.strip()
+                raw = re.search(r'=\s*"([^"]+)"', part)
+                names.add(raw.group(1) if raw else part.strip("`"))
+        self.assertEqual(names, set(doctor_fix.RUNNERS))
+        batch = swift[swift.index("public var isBatch"):]
+        batch = batch[:batch.index("default:")]
+        swift_batch = {n.strip(" .`") for n in batch.split("case", 1)[1].split(":")[0].split(",")}
+        camel = {"pluginFix": "plugin-fix"}
+        self.assertEqual({camel.get(n, n) for n in swift_batch}, set(doctor_fix.BATCH))
+
+    def test_the_web_page_says_what_every_action_does(self):
+        import re
+
+        js = (Path(__file__).resolve().parents[1]
+              / "src/swe/webapp/static/pages/doctor.js").read_text(encoding="utf-8")
+        block = js[js.index("const DOCTOR_RUNS = {"):js.index("};", js.index("const DOCTOR_RUNS = {"))]
+        keys = {m.group(1) or m.group(2)
+                for m in re.finditer(r'^\s*(?:"([a-z-]+)"|([a-z]+)):', block, re.M)}
+        self.assertEqual(keys, set(doctor_fix.RUNNERS))
+
 
 if __name__ == "__main__":
     unittest.main()

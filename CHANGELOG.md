@@ -23,6 +23,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind counts and uncommitted changes by primitive; both take
   `--json`, sync takes `--dry-run`. Part of
   [#525](https://github.com/c-wenlong/quiver/issues/525).
+- **Doctor: Fix all on the Mac and web pages.** The findings card gets
+  a Fix all (N) button whenever some finding has a batch fix. It runs
+  `swe doctor --fix`'s ordered batch (setup, discover, init, plugin
+  installs) behind a confirm on the web, then shows what it fixed, which
+  fixes failed and how many findings are left for a person. Installs and
+  the fixes that delete or overwrite never run in it and keep their own
+  Run. The web route is `POST /v1/app/doctor/fix-all`, one at a time
+  with the row Runs; the Mac runs `swe doctor --fix --json` behind the
+  registry gate. The Mac app now also has Run for `undeclare`,
+  `marketplace-drop`, `plugin-fix`, `plugin-reinstall`, `dangling-link`
+  and `mcp-sync`, through `swe doctor --fix=<check> --message=<text>
+  --action=<a>`. A test fails when the Python runners, the web page's
+  wording or the Mac's action list drift apart. Closes
+  [#529](https://github.com/c-wenlong/quiver/issues/529).
+- **Launch a harness on a provider from the keys file.** `POST
+  /v1/sessions` takes `provider: "<slug>"` and `swe use` takes
+  `--provider=<slug>`: the launching machine starts the harness with
+  only that provider's variables from its own keys file, as
+  `capabilities.provider` declares. In a tmux pane a small wrapper
+  (`remote/provider_exec.py`) reads the file and execs the harness, so
+  no key goes on argv, in the launch record, the marker or the journal.
+  Machine rows list `providers_at_launch` (slugs whose key is set) and
+  `provider_names`; the hub forwards only the slug to a satellite.
+  A missing key or an undeclared slug is a 422. Part of
+  [#526](https://github.com/c-wenlong/quiver/issues/526).
 - **Hub: service status pushes.** `swe remote notify
   --service-status=on` (the `service_status` flag in `notify.json`, off
   by default) starts a five-minute check of every tracked status page

@@ -929,6 +929,7 @@ class RemoteAgent:
                     model=str(data.get("model") or "") or None,
                     effort=str(data.get("effort") or "") or None,
                     yolo=bool(data.get("yolo")),
+                    provider=str(data.get("provider") or "") or None,
                 )
                 return ok, note, False
             if op == "attachment":

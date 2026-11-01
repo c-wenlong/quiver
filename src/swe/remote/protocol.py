@@ -65,6 +65,20 @@ def _launch_value(body: dict, field: str) -> str | None:
     return value
 
 
+def _launch_provider(body: dict) -> str | None:
+    """An optional ``provider`` slug: None when absent or empty. Only
+    the slug travels; the launching machine reads its own key."""
+    from swe.remote.launch_provider import SLUG_RE
+
+    value = body.get("provider")
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str) or not SLUG_RE.fullmatch(value):
+        raise ValueError("provider must be a provider slug "
+                         "(lowercase letters, digits and . _ -)")
+    return value
+
+
 def _launch_bool(body: dict, field: str) -> bool:
     """An optional launch switch (``yolo``): False when absent, else a
     strict bool — a stringly value is refused rather than coerced."""
@@ -390,4 +404,5 @@ def parse_launch_command(body: dict) -> dict:
             "prompt": prompt,
             "model": _launch_value(body, "model"),
             "effort": _launch_value(body, "effort"),
-            "yolo": _launch_bool(body, "yolo")}
+            "yolo": _launch_bool(body, "yolo"),
+            "provider": _launch_provider(body)}

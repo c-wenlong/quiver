@@ -378,6 +378,7 @@ class HubState:
     def new_launch(
         self, machine: str, harness: str, cwd: str,
         model: str = "", effort: str = "", yolo: bool = False,
+        provider: str = "",
     ) -> str:
         now = time.time()
         launch_id = "l" + secrets.token_hex(6)
@@ -389,7 +390,7 @@ class HubState:
                 "launch_id": launch_id, "machine": machine,
                 "harness": harness, "cwd": cwd, "state": "pending",
                 "model": model, "effort": effort, "yolo": bool(yolo),
-                "key": "", "note": "", "created_at": now,
+                "provider": provider, "key": "", "note": "", "created_at": now,
             }
         return launch_id
 
@@ -2677,14 +2678,29 @@ class _Handler(BaseHTTPRequestHandler):
             if blocked:
                 self._send_error(409, "unsupported_launch_option", blocked)
                 return
+            # Only the slug goes to the satellite, which reads the key
+            # from its own keys file; its row lists the slugs it has.
+            if cmd["provider"] and not \
+                    catalog_mod.reads_launch_provider(row):
+                self._send_error(
+                    409, "unsupported_launch_option",
+                    f"{machine} runs an agent too old to take a provider; "
+                    "upgrade it, or launch without one")
+                return
+            blocked = catalog_mod.provider_option_error(
+                row, harness, cmd["provider"])
+            if blocked:
+                self._send_error(422, "unsupported_provider", blocked)
+                return
             launch_id = state.new_launch(
                 machine, harness, cwd,
                 model=cmd["model"] or "", effort=cmd["effort"] or "",
-                yolo=cmd["yolo"])
+                yolo=cmd["yolo"], provider=cmd["provider"] or "")
             queued = state.queue_command(machine, "launch", "", {
                 "harness": harness, "cwd": cwd, "prompt": cmd["prompt"],
                 "model": cmd["model"] or "", "effort": cmd["effort"] or "",
                 "yolo": cmd["yolo"],
+                "provider": cmd["provider"] or "",
                 "launch_id": launch_id,
             })
             if queued is None:
@@ -2719,6 +2735,19 @@ class _Handler(BaseHTTPRequestHandler):
         if blocked:
             self._send_error(409, "unsupported_launch_option", blocked)
             return
+        if cmd["provider"]:
+            from swe.remote import launch_provider
+
+            try:
+                blocked = launch_provider.provider_error(
+                    harness, cmd["provider"],
+                    keys=launch_provider.read_keys(
+                        launch_provider.keys_path(state.home)))
+            except ValueError as exc:
+                blocked = f"can't read the keys file: {exc}"
+            if blocked:
+                self._send_error(422, "unsupported_provider", blocked)
+                return
         if not supervise.tmux_bin():
             self._send_error(422, "launch_failed", "tmux is not installed")
             return
@@ -2727,7 +2756,7 @@ class _Handler(BaseHTTPRequestHandler):
         launch_id = state.new_launch(
             machine, harness, cwd,
             model=cmd["model"] or "", effort=cmd["effort"] or "",
-            yolo=cmd["yolo"])
+            yolo=cmd["yolo"], provider=cmd["provider"] or "")
 
         def run() -> None:
             # Every same-cwd session that exists before launch: adoption
@@ -2738,6 +2767,7 @@ class _Handler(BaseHTTPRequestHandler):
                 state.home, harness, cwd, cmd["prompt"],
                 known_ids=known, launch_id=launch_id, binary=binary,
                 model=cmd["model"], effort=cmd["effort"], yolo=cmd["yolo"],
+                provider=cmd["provider"],
             )
             if not ok:
                 state.settle_launch(launch_id, state="failed", note=note)

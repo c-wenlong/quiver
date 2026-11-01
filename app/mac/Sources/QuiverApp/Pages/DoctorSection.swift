@@ -17,6 +17,9 @@ struct DoctorSection: View {
             if let done = model.installed {
                 installedCard(done, model: model)
             }
+            if model.fixAllResult != nil || model.fixAllError != nil {
+                fixAllCard
+            }
             states
         }
         .task(id: app.swePath) {
@@ -44,6 +47,45 @@ struct DoctorSection: View {
                 InstallOutputView(text: DoctorModel.outputTail(done.output))
             }
         }
+    }
+
+    /// What Fix all did: how many findings it fixed, the fixes that
+    /// failed, and how many are left for a person.
+    private var fixAllCard: some View {
+        Card(title: "Fix all",
+             accessory: {
+                 Button("Dismiss", systemImage: "xmark") { model.dismissFixAll() }
+                     .labelStyle(.iconOnly)
+                     .iconButton()
+                     .hoverTip("Hide this summary")
+             }) {
+            VStack(alignment: .leading, spacing: 6) {
+                if let error = model.fixAllError {
+                    Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                }
+                if let run = model.fixAllResult {
+                    Text(Self.fixAllLine(run)).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                    ForEach(Array(run.ran.enumerated()), id: \.offset) { _, step in
+                        if let error = step.error {
+                            Text("\(step.fix ?? step.action): \(error)")
+                                .font(Theme.caption).foregroundStyle(Theme.dangerText)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// "Fixed 3 findings; 2 left for you below."
+    static func fixAllLine(_ run: FixRun) -> String {
+        guard !run.ran.isEmpty else { return "Nothing to fix here: what is left needs you." }
+        let failed = run.ran.filter { $0.error != nil }.count
+        let left = run.stillFailing.count
+        var line = "Fixed \(run.fixed.count) finding\(run.fixed.count == 1 ? "" : "s")"
+        if failed > 0 { line += ", \(failed) fix\(failed == 1 ? "" : "es") failed" }
+        if left > 0 { line += "; \(left) left for you below" }
+        return line + "."
     }
 
     private var states: some View {
@@ -84,8 +126,14 @@ struct DoctorSection: View {
         let findings = (app.issues.findings + report.findings)
             .filter { seen.insert($0.check).inserted }
         let shown = RowFold.visible(findings, limit: Self.foldLimit, expanded: showsAll)
+        let batch = DoctorModel.batchCount(report)
         return Card(title: findings.count == 1 ? "1 finding" : "\(findings.count) findings",
-                    accessory: { refreshButton }) {
+                    accessory: {
+                        HStack(spacing: 8) {
+                            if batch > 0 { fixAllButton(batch) }
+                            refreshButton
+                        }
+                    }) {
             ForEach(shown) { finding in
                 FindingRow(finding: finding, model: model)
                 if finding != shown.last { Divider().overlay(Theme.border) }
@@ -98,6 +146,30 @@ struct DoctorSection: View {
                           edge: .inset) {
                     withAnimation(.easeOut(duration: Theme.fadeDuration)) { showsAll.toggle() }
                 }
+            }
+        }
+    }
+
+    /// Runs `swe doctor --fix`: the local repairs, in order. Installs and
+    /// fixes that delete or overwrite keep their own Run.
+    private func fixAllButton(_ count: Int) -> some View {
+        Group {
+            if model.running.contains(DoctorModel.fixAllID) {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Fixing…").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+            } else {
+                Button("Fix all (\(count))") {
+                    Task {
+                        await model.fixAll()
+                        await app.others.load()
+                        await app.skills.load(for: app.swePath)
+                    }
+                }
+                .secondaryButton()
+                .disabled(!model.running.isEmpty || isLoading)
+                .hoverTip("Runs swe doctor --fix: setup, discover, init and plugin installs, in order. Installs and fixes that delete or overwrite wait for their own Run.")
             }
         }
     }
