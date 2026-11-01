@@ -70,7 +70,7 @@ Status words:
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
 | Menu bar | yes | - | - | Mac-only by design |
-| Widgets | yes | - | - | Mac-only by design |
+| Widgets | yes | - | yes | iOS: a home screen widget (small, medium) with sessions waiting on you, sessions working and today's spend; no lock screen widget or Live Activity (#1442) |
 | Notifications | yes | - | - | Mac: limit resets and 90% crossings, and GitHub notification banners. iOS: the app has no notification code; the hub posts to ntfy (`remote/notify.py`) and the ntfy app delivers it. APNs planned |
 | Service status | yes | yes | - | |
 | Settings | yes | yes | part | iOS: the hub chip menu holds switch hub, devices, Console, Refresh and Unpair; no notification settings |

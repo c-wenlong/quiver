@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **iPhone: home screen widget.** Small and medium widgets show the
+  hub's sessions waiting on you (approvals and replies), sessions still
+  working, and today's spend
+  ([#1442](https://github.com/c-wenlong/quiver/issues/1442)). The
+  widget fetches sessions, the inbox and today's overview about every
+  15 minutes, and redraws when the app's refresh changes the snapshot
+  it keeps in the App Group. When the hub can't be reached it draws
+  that snapshot with "as of <time>". A medium widget's session row
+  opens its chat through the new `quiver://session/<key>?hub=<hub>`
+  deep link; anywhere else opens the app.
 - **iPhone: share into a session.** A share extension ("Quiver" in the
   share sheet) sends text, links, images and files from any app to a
   session ([#1441](https://github.com/c-wenlong/quiver/issues/1441)).

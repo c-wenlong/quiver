@@ -7,7 +7,7 @@ import SwiftUI
 /// still comes from ntfy; the app holds no push code yet.
 @main
 struct QuiverRemoteApp: App {
-    @State private var app = AppModel()
+    @State private var app = AppModel(widgets: .live)
     @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
@@ -102,11 +102,22 @@ struct MainTabs: View {
         }
         .onAppear {
             openIssue(app.pendingIssue)
+            openSession(app.pendingSession)
             app.startRefreshing()
         }
+        // A `quiver://session/<key>` link (a widget row) opens the chat
+        // on the Sessions stack.
+        .onChange(of: app.pendingSession) { _, key in openSession(key) }
         // A `quiver://issue/<o>/<r>/<n>` link opens the detail on the
         // GitHub stack, on its Issues side, over whatever was there.
         .onChange(of: app.pendingIssue) { _, link in openIssue(link) }
+    }
+
+    private func openSession(_ key: String?) {
+        guard let key else { return }
+        app.pendingSession = nil
+        tab = .sessions
+        sessionsPath = [.chat(key)]
     }
 
     private func openIssue(_ link: IssueLink?) {

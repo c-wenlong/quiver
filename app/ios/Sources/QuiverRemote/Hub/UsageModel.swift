@@ -58,8 +58,10 @@ final class UsageModel {
     func loadPeriod(app: AppModel, _ period: UsagePeriod, force: Bool = false) async {
         guard force || overviews[period] == nil, let client = app.client else { return }
         do {
-            overviews[period] = try await client.overview(period: period)
+            let overview = try await client.overview(period: period)
+            overviews[period] = overview
             overviewErrors[period] = nil
+            if period == .today { app.publishSpend(overview.totals?.costUsd) }
         } catch is CancellationError {
         } catch {
             overviewErrors[period] = message(error, app: app, client: client)

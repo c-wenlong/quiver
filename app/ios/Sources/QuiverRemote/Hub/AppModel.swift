@@ -31,9 +31,15 @@ final class AppModel {
         try? await client.revokeDevice(id: deviceId, confirmThisDevice: true)
     }
 
-    init(store: HubStore = KeychainHubStore(), sshTargets: SSHTargetStore = SSHTargetStore()) {
+    /// Keeps the home screen widget's snapshot current; nil in tests,
+    /// so they never write the App Group's copy.
+    @ObservationIgnored private let widgets: WidgetPublisher?
+
+    init(store: HubStore = KeychainHubStore(), sshTargets: SSHTargetStore = SSHTargetStore(),
+         widgets: WidgetPublisher? = nil) {
         self.store = store
         self.sshTargets = sshTargets
+        self.widgets = widgets
         hubs = store.load()
     }
 
@@ -106,6 +112,9 @@ final class AppModel {
             inbox = dismissals.overlay(inboxBody.items)
             refreshedAt = Date()
             connection = .online
+            if let paired = pairedAtStart {
+                widgets?.publish(hubId: paired.id, hubName: hubName, sessions: sessions, inbox: inbox)
+            }
             loadError = nil
         } catch is CancellationError {
             // The app left the screen, or another hub went on it: not a
@@ -349,6 +358,7 @@ final class AppModel {
         store.saveIndex(hubs)
         pairing = PairingFlow()
         showHub()
+        widgets?.hubChanged()
         return true
     }
 
@@ -358,6 +368,7 @@ final class AppModel {
         hubs.activeId = id
         store.saveIndex(hubs)
         showHub()
+        widgets?.hubChanged()
     }
 
     /// Unpair, from the hub menu: drops the hub on screen and shows the
@@ -388,6 +399,7 @@ final class AppModel {
         sshTargets.remove(current.id)
         hubs.remove(current.id)
         store.saveIndex(hubs)
+        widgets?.hubChanged(dropping: current.id)
         if hub == nil {
             stopRefreshing()
             clearHubState()
@@ -443,6 +455,16 @@ final class AppModel {
     /// when they appear.
     var pendingIssue: IssueLink?
 
+    /// A `quiver://session/<key>` link (the widget's rows) the tabs
+    /// haven't opened yet; MainTabs consumes it like `pendingIssue`.
+    var pendingSession: String?
+
+    /// Today's spend the Usage tab loaded, for the widget.
+    func publishSpend(_ usd: Double?) {
+        guard let hub else { return }
+        widgets?.publishSpend(hubId: hub.id, usd: usd)
+    }
+
     /// A `quiver://pair` link that came from outside the app (the Camera
     /// app, a tapped link), held until the person confirms the hub it
     /// names. Anyone can craft one, and a hub paired by it sees every
@@ -450,7 +472,9 @@ final class AppModel {
     var pairOffer: PairLink?
 
     /// A `quiver://pair` deep link waits in `pairOffer`; a
-    /// `quiver://issue/…` deep link goes onto the Issues stack.
+    /// `quiver://issue/…` deep link goes onto the Issues stack, and a
+    /// `quiver://session/…` one opens the chat, on the hub it names
+    /// when that hub is paired here.
     func handle(_ url: URL) async {
         if let link = PairLink(url) {
             pairing.error = nil
@@ -460,6 +484,14 @@ final class AppModel {
         }
         if let issue = IssueLink(url) {
             pendingIssue = issue
+        }
+        if let link = SessionLink(url) {
+            // A hub no longer paired here: the app just opens.
+            if let id = link.hubId {
+                guard hubs.hubs.contains(where: { $0.id == id }) else { return }
+                switchHub(to: id)
+            }
+            pendingSession = link.key
         }
     }
 
@@ -652,50 +684,6 @@ struct PendingPairing {
 }
 
 // MARK: Grouping
-
-/// The Inbox page's sections. The hub decides which rows ship — an
-/// approval at any age, fresh follow-ups and errors, `done` rows when
-/// asked, unread GitHub threads — so this only sorts what arrived. An
-/// unfamiliar status lands in Waiting on you rather than vanishing.
-enum InboxGrouping {
-    /// The section a row belongs in, in page order.
-    enum Section: CaseIterable {
-        case waiting, errors, github, finished
-        var title: String {
-            switch self {
-            case .waiting: "Waiting on you"
-            case .errors: "Errors"
-            case .github: "GitHub"
-            case .finished: "Finished today"
-            }
-        }
-        /// The "Clear …" menu item: "Clear errors", "Clear GitHub".
-        var clearTitle: String {
-            switch self {
-            case .waiting: "waiting on you"
-            case .errors: "errors"
-            case .github: "GitHub"
-            case .finished: "finished"
-            }
-        }
-    }
-
-    static func section(of item: InboxItem) -> Section {
-        if item.isGitHub { return .github }
-        switch item.sessionStatus {
-        case .error, .interrupted: return .errors
-        case .done: return .finished
-        default: return .waiting
-        }
-    }
-
-    /// `items` bucketed by section, sections in page order.
-    static func groups(_ items: [InboxItem]) -> [(Section, [InboxItem])] {
-        var grouped: [Section: [InboxItem]] = [:]
-        for item in items { grouped[section(of: item), default: []].append(item) }
-        return Section.allCases.compactMap { s in grouped[s].map { (s, $0) } }
-    }
-}
 
 /// Dismissals this phone posted but a concurrently fetched inbox list
 /// may not reflect yet — the same race `PinLedger` covers for pins. An
