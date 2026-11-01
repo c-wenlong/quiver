@@ -206,6 +206,33 @@ final class UnreadTests: XCTestCase {
     }
 
     @MainActor
+    func testAReadStaysWithTheHubItWasMadeOn() async {
+        func hub(_ host: String) -> PairedHub {
+            PairedHub(baseURL: URL(string: "http://\(host):8477")!,
+                      credential: Credential(deviceId: "d-\(host)", credential: "c", name: nil))
+        }
+        var list = HubList()
+        list.adopt(hub("mac"))
+        list.adopt(hub("server"))
+        let app = AppModel(store: MemoryHubStore(list))
+        defer { app.stopRefreshing() }
+        let posted = expectation(description: "read posted")
+        var hosts: [String?] = []
+        app.markReadOnHub = { client, _ in
+            hosts.append(client.baseURL.host)
+            posted.fulfill()
+            return ReadAck(ok: true, at: 150)
+        }
+        app.chatOpened("claude:1", newest: 1)
+        // The phone switches hubs before the read's task runs.
+        app.switchHub(to: hub("mac").id)
+        await fulfillment(of: [posted], timeout: 2)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(hosts, ["server"], "the read goes to the hub the chat was on")
+        XCTAssertNil(app.unread.marks["claude:1"], "its answer is dropped on the new hub")
+    }
+
+    @MainActor
     func testARefusedReadIsIgnored() async {
         let app = AppModel(hub: PairedHub(baseURL: URL(string: "http://hub.test:8477")!,
                                           credential: Credential(deviceId: "d", credential: "c", name: nil)))

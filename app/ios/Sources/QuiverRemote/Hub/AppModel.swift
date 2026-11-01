@@ -183,9 +183,12 @@ final class AppModel {
     /// leaves the dot to the next list. The hub's answer is its cursor,
     /// which clears everything up to it.
     private func postRead(_ key: String) {
+        // The hub on screen now, not when the task runs: a hub switch in
+        // between must not send this chat's read to the new hub.
+        guard let client, let start = hub else { return }
         let call = markReadOnHub
         Task {
-            guard let ack = try? await onSameHub({ try await call($0, key) }), let at = ack.at else { return }
+            guard let ack = try? await call(client, key), hub == start, let at = ack.at else { return }
             unread.mark(key, at: at)
         }
     }
