@@ -25,8 +25,10 @@ private func tempStore() -> WidgetSnapshotStore {
 private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
 private func snapshot(hubId: String = hub().id, spend: Double? = 1, spendAt: Date? = now, at: Date = now) -> WidgetSnapshot {
-    WidgetSummary.make(hubId: hubId, hubName: "mac", sessions: [session("a", status: "active", at: 1)],
-                       inbox: [], spendUsd: spend, spendAt: spendAt, at: at)
+    var s = WidgetSummary.make(hubId: hubId, hubName: "mac", sessions: [session("a", status: "active", at: 1)],
+                               inbox: [], at: at)
+    if let spendAt { s.setSpend(spend, at: spendAt) }
+    return s
 }
 
 final class WidgetSummaryTests: XCTestCase {
@@ -38,7 +40,7 @@ final class WidgetSummaryTests: XCTestCase {
                        session("done", status: "done", at: 8)],
             inbox: [inbox("waiting", status: "followup", at: 9), inbox("err", status: "error", at: 7),
                     inbox("fin", status: "done", at: 6), inbox("gh:1", status: "github", at: 10, github: true)],
-            spendUsd: 2.5, spendAt: now, at: now)
+            at: now)
         XCTAssertEqual(s.needsYou.map(\.key), ["waiting", "ask"])
         XCTAssertEqual(s.needsYouCount, 2)
         // A session waiting on you isn't also counted as working.
@@ -52,7 +54,7 @@ final class WidgetSummaryTests: XCTestCase {
     func testListsAreCappedButCountsCoverEverySession() {
         let many = (0..<9).map { session("s\($0)", status: "active", at: Double($0)) }
         let s = WidgetSummary.make(hubId: "h", hubName: "mac", sessions: many, inbox: [],
-                                   spendUsd: nil, spendAt: nil, at: now)
+                                   at: now)
         XCTAssertEqual(s.working.count, WidgetSnapshot.rowLimit)
         XCTAssertEqual(s.working.first?.key, "s8")
         XCTAssertEqual(s.workingCount, 9)
@@ -61,9 +63,13 @@ final class WidgetSummaryTests: XCTestCase {
 
     func testSpendShowsOnlyOnItsOwnDay() {
         let utc = TimeZone(identifier: "UTC")!
-        let s = snapshot(spend: 3)
+        var s = snapshot()
+        s.setSpend(3, at: now, timeZone: utc)
         XCTAssertEqual(s.spendToday(now: now, timeZone: utc), 3)
         XCTAssertNil(s.spendToday(now: now.addingTimeInterval(86_400), timeZone: utc))
+        // Fetched at 08:00 UTC; at UTC-10 that moment is the day before, so
+        // the stored day doesn't match there.
+        XCTAssertNil(s.spendToday(now: now, timeZone: TimeZone(secondsFromGMT: -10 * 3600)!))
         XCTAssertEqual(WidgetSummary.day(Date(timeIntervalSince1970: 0), timeZone: utc), "1970-01-01")
     }
 
@@ -71,6 +77,10 @@ final class WidgetSummaryTests: XCTestCase {
         let a = snapshot(at: now), b = snapshot(at: now.addingTimeInterval(60))
         XCTAssertTrue(a.sameContent(as: b))
         XCTAssertFalse(a.sameContent(as: snapshot(spend: 2)))
+        // The same total fetched again isn't a change...
+        XCTAssertTrue(a.sameContent(as: snapshot(spendAt: now.addingTimeInterval(600))))
+        // ...but the same total for another day is.
+        XCTAssertFalse(a.sameContent(as: snapshot(spendAt: now.addingTimeInterval(86_400))))
     }
 }
 
@@ -207,19 +217,18 @@ final class WidgetLoaderTests: XCTestCase {
     }
 
     func testALateFetchKeepsNewerRowsAndTheNewerSpend() {
-        let fetched = WidgetSummary.make(hubId: "h", hubName: "mac", sessions: [], inbox: [],
-                                         spendUsd: 2, spendAt: now, at: now)
+        var fetched = WidgetSummary.make(hubId: "h", hubName: "mac", sessions: [], inbox: [], at: now)
+        fetched.setSpend(2, at: now)
         // The app wrote newer rows while the fetch was out, with an older spend.
-        let newerRows = WidgetSummary.make(hubId: "h", hubName: "mac", sessions: [session("a", status: "active", at: 1)],
-                                           inbox: [], spendUsd: 1, spendAt: now.addingTimeInterval(-600),
-                                           at: now.addingTimeInterval(5))
+        var newerRows = WidgetSummary.make(hubId: "h", hubName: "mac", sessions: [session("a", status: "active", at: 1)],
+                                           inbox: [], at: now.addingTimeInterval(5))
+        newerRows.setSpend(1, at: now.addingTimeInterval(-600))
         let merged = WidgetLoader.merge(fetched, onto: newerRows)
         XCTAssertEqual(merged.workingCount, 1)
         XCTAssertEqual(merged.spendUsd, 2)
         // The Usage tab's newer spend beats the fetch's.
         var newerSpend = fetched
-        newerSpend.spendUsd = 5
-        newerSpend.spendAt = now.addingTimeInterval(5)
+        newerSpend.setSpend(5, at: now.addingTimeInterval(5))
         newerSpend.fetchedAt = now.addingTimeInterval(-60)
         XCTAssertEqual(WidgetLoader.merge(fetched, onto: newerSpend).spendUsd, 5)
         XCTAssertEqual(WidgetLoader.merge(fetched, onto: newerSpend).fetchedAt, now)

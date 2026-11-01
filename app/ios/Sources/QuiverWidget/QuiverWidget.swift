@@ -68,13 +68,17 @@ struct NeedsYouProvider: TimelineProvider {
 
 extension WidgetSnapshot {
     /// The gallery's preview.
-    static let sample = WidgetSnapshot(
-        hubId: "", hubName: "mac",
-        needsYou: [.init(key: "a", title: "Fix the login redirect", harness: "Claude Code", status: "approval")],
-        needsYouCount: 1,
-        working: [.init(key: "b", title: "Write the release notes", harness: "Codex", status: "active"),
-                  .init(key: "c", title: "Port the usage chart", harness: "Claude Code", status: "active")],
-        workingCount: 2, spendUsd: 4.2, spendAt: Date(), fetchedAt: Date())
+    static let sample: WidgetSnapshot = {
+        var s = WidgetSnapshot(
+            hubId: "", hubName: "mac",
+            needsYou: [.init(key: "a", title: "Fix the login redirect", harness: "Claude Code", status: "approval")],
+            needsYouCount: 1,
+            working: [.init(key: "b", title: "Write the release notes", harness: "Codex", status: "active"),
+                      .init(key: "c", title: "Port the usage chart", harness: "Claude Code", status: "active")],
+            workingCount: 2, fetchedAt: Date())
+        s.setSpend(4.2, at: Date())
+        return s
+    }()
 }
 
 /// The app's colours (`Theme`): amber for "needs you", green only for

@@ -58,28 +58,47 @@ struct WidgetSnapshot: Codable, Equatable {
     var needsYouCount: Int
     var working: [Row]
     var workingCount: Int
-    /// The day's cost, and when the hub reported it. The app's refresh
-    /// carries it over, so it ages apart from `fetchedAt`.
+    /// The day's cost, when the hub reported it, and the phone's day
+    /// (`yyyy-MM-dd`) the hub cut it for. The app's refresh carries it
+    /// over, so it ages apart from `fetchedAt`.
     var spendUsd: Double?
     var spendAt: Date?
+    var spendDay: String?
     var fetchedAt: Date
 
     /// Rows kept per list: the medium widget shows three.
     static let rowLimit = 4
 
     /// The spend, if it's for `now`'s day: yesterday's total is not today's.
+    /// The stored day, not one worked out again from `spendAt`, so a
+    /// phone that changed time zone doesn't move the total to another day.
     func spendToday(now: Date, timeZone: TimeZone = .current) -> Double? {
-        guard let spendAt, WidgetSummary.day(spendAt, timeZone: timeZone) == WidgetSummary.day(now, timeZone: timeZone)
-        else { return nil }
+        guard let spendDay, spendDay == WidgetSummary.day(now, timeZone: timeZone) else { return nil }
         return spendUsd
     }
 
-    /// Equal apart from when it was fetched: what decides whether the
-    /// widget needs reloading.
+    /// The hub's total for the day `at` falls on.
+    mutating func setSpend(_ usd: Double?, at: Date, timeZone: TimeZone = .current) {
+        spendUsd = usd
+        spendAt = at
+        spendDay = WidgetSummary.day(at, timeZone: timeZone)
+    }
+
+    /// `other`'s spend, whatever it is.
+    mutating func takeSpend(from other: WidgetSnapshot?) {
+        spendUsd = other?.spendUsd
+        spendAt = other?.spendAt
+        spendDay = other?.spendDay
+    }
+
+    /// Equal apart from when the rows and the spend were fetched: what
+    /// decides whether the widget needs reloading.
     func sameContent(as other: WidgetSnapshot) -> Bool {
-        var a = self
-        a.fetchedAt = other.fetchedAt
-        return a == other
+        var a = self, b = other
+        a.fetchedAt = b.fetchedAt
+        a.spendAt = nil
+        b.spendAt = nil
+        return a == b
     }
 
     /// The sessions the medium widget lists: waiting on you first.
@@ -90,8 +109,9 @@ enum WidgetSummary {
     /// Sessions waiting on you are the Inbox's "Waiting on you" rows (the
     /// tab badge's set) plus any listed session the hub marks approval or
     /// follow-up; working are the active sessions not among them.
+    /// No spend: callers lay it on with `setSpend` or `takeSpend`.
     static func make(hubId: String, hubName: String, sessions: [SessionRow], inbox: [InboxItem],
-                     spendUsd: Double?, spendAt: Date?, at: Date) -> WidgetSnapshot {
+                     at: Date) -> WidgetSnapshot {
         var waiting: [String: WidgetSnapshot.Row] = [:]
         var stamps: [String: Double] = [:]
         for item in inbox where InboxGrouping.section(of: item) == .waiting {
@@ -113,7 +133,7 @@ enum WidgetSummary {
                 .init(key: $0.key, title: $0.displayTitle, harness: $0.harnessName, status: $0.status)
             },
             workingCount: active.count,
-            spendUsd: spendUsd, spendAt: spendAt, fetchedAt: at)
+            fetchedAt: at)
     }
 
     /// The phone's calendar day, as the overview's `tz` cuts it.
@@ -173,8 +193,8 @@ struct WidgetPublisher {
     /// doesn't fetch it.
     func publish(hubId: String, hubName: String, sessions: [SessionRow], inbox: [InboxItem], at: Date = Date()) {
         let old = store.read().flatMap { $0.hubId == hubId ? $0 : nil }
-        let snapshot = WidgetSummary.make(hubId: hubId, hubName: hubName, sessions: sessions, inbox: inbox,
-                                          spendUsd: old?.spendUsd, spendAt: old?.spendAt, at: at)
+        var snapshot = WidgetSummary.make(hubId: hubId, hubName: hubName, sessions: sessions, inbox: inbox, at: at)
+        snapshot.takeSpend(from: old)
         if store.write(snapshot) { reload() }
     }
 
@@ -182,8 +202,7 @@ struct WidgetPublisher {
     func publishSpend(hubId: String, usd: Double?, at: Date = Date()) {
         guard var snapshot = store.read(), snapshot.hubId == hubId,
               (snapshot.spendAt ?? .distantPast) <= at else { return }
-        snapshot.spendUsd = usd
-        snapshot.spendAt = at
+        snapshot.setSpend(usd, at: at)
         if store.write(snapshot) { reload() }
     }
 
@@ -234,9 +253,9 @@ struct WidgetLoader {
         do {
             let got = try await fetch(hub)
             let name = got.sessions.machines?.first?.displayName ?? hubs.name(of: hub)
-            let fetched = WidgetSummary.make(hubId: hub.id, hubName: name, sessions: got.sessions.sessions,
-                                             inbox: got.inbox.items, spendUsd: got.spendUsd,
-                                             spendAt: got.spendUsd == nil ? nil : now, at: now)
+            var fetched = WidgetSummary.make(hubId: hub.id, hubName: name, sessions: got.sessions.sessions,
+                                             inbox: got.inbox.items, at: now)
+            if let usd = got.spendUsd { fetched.setSpend(usd, at: now) }
             let snapshot = Self.merge(fetched, onto: store.read())
             store.write(snapshot)
             return .summary(snapshot, stale: false)
@@ -262,13 +281,7 @@ struct WidgetLoader {
         guard let latest, latest.hubId == fetched.hubId else { return fetched }
         var out = latest.fetchedAt > fetched.fetchedAt ? latest : fetched
         let ours = fetched.spendAt ?? .distantPast, theirs = latest.spendAt ?? .distantPast
-        if ours >= theirs, fetched.spendAt != nil {
-            out.spendUsd = fetched.spendUsd
-            out.spendAt = fetched.spendAt
-        } else {
-            out.spendUsd = latest.spendUsd
-            out.spendAt = latest.spendAt
-        }
+        out.takeSpend(from: ours >= theirs && fetched.spendAt != nil ? fetched : latest)
         return out
     }
 
