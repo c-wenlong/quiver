@@ -123,6 +123,28 @@ hubs from the App Group and shared Keychain group, and says so
 instead of sending when the phone isn't paired or the hub can't be
 reached.</p>
 </li>
+<li><p><strong>Homebrew tap.</strong> <code>brew install --cask c-wenlong/quiver/quiver</code>
+installs the Mac app and <code>brew install c-wenlong/quiver/swe</code> the CLI,
+from <a href="https://github.com/c-wenlong/homebrew-quiver">c-wenlong/homebrew-quiver</a>.
+The release workflow's new <code>bump-homebrew-tap</code> job points both at each
+release's DMG and wheel with fresh SHA-256s (<code>scripts/bump_tap.py</code>),
+once the signed DMG is on the latest published release. It needs a
+<code>HOMEBREW_TAP_TOKEN</code> secret and skips with a notice without one.
+(<a href="https://github.com/c-wenlong/quiver/issues/1445">#1445</a>)</p>
+</li>
+<li><p><strong>Hub: live reply text (<code>message.delta</code>) for API channels.</strong> Codex
+app-server, opencode serve and headless Claude sessions now send
+<code>message.delta</code> events while a reply is written: <code>{id, kind, text, seq, done}</code>, at most one per message every 100 ms, with the text
+redacted over the whole message so far. Headless Claude runs with
+<code>--include-partial-messages</code> (stdout only; transcripts and resume are
+unchanged). Deltas are never journaled and carry no <code>seq</code>, so replay
+and resume cursors are untouched; the final <code>message.appended</code>
+replaces the streamed text. Satellites coalesce their own and relay
+them only to a hub that advertises <code>message_delta</code>. tmux sessions
+stay record-by-record. Part of
+<a href="https://github.com/c-wenlong/quiver/issues/1444">#1444</a>; the client
+bubbles follow.</p>
+</li>
 <li><p><strong>iPhone: the paired hubs move to an App Group and a shared Keychain
 group.</strong> The hub list now lives in <code>group.com.quiver.remote</code> and each
 hub's credential in the <code>&lt;team&gt;.com.quiver.remote.shared</code> Keychain

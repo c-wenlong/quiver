@@ -21,6 +21,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hubs from the App Group and shared Keychain group, and says so
   instead of sending when the phone isn't paired or the hub can't be
   reached.
+- **Homebrew tap.** `brew install --cask c-wenlong/quiver/quiver`
+  installs the Mac app and `brew install c-wenlong/quiver/swe` the CLI,
+  from [c-wenlong/homebrew-quiver](https://github.com/c-wenlong/homebrew-quiver).
+  The release workflow's new `bump-homebrew-tap` job points both at each
+  release's DMG and wheel with fresh SHA-256s (`scripts/bump_tap.py`),
+  once the signed DMG is on the latest published release. It needs a
+  `HOMEBREW_TAP_TOKEN` secret and skips with a notice without one.
+  ([#1445](https://github.com/c-wenlong/quiver/issues/1445))
+- **Hub: live reply text (`message.delta`) for API channels.** Codex
+  app-server, opencode serve and headless Claude sessions now send
+  `message.delta` events while a reply is written: `{id, kind, text,
+  seq, done}`, at most one per message every 100 ms, with the text
+  redacted over the whole message so far. Headless Claude runs with
+  `--include-partial-messages` (stdout only; transcripts and resume are
+  unchanged). Deltas are never journaled and carry no `seq`, so replay
+  and resume cursors are untouched; the final `message.appended`
+  replaces the streamed text. Satellites coalesce their own and relay
+  them only to a hub that advertises `message_delta`. tmux sessions
+  stay record-by-record. Part of
+  [#1444](https://github.com/c-wenlong/quiver/issues/1444); the client
+  bubbles follow.
 - **iPhone: the paired hubs move to an App Group and a shared Keychain
   group.** The hub list now lives in `group.com.quiver.remote` and each
   hub's credential in the `<team>.com.quiver.remote.shared` Keychain

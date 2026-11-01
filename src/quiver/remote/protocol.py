@@ -195,6 +195,31 @@ def message(
     }
 
 
+def delta_event(
+    session: str,
+    machine: str,
+    msg_id: str,
+    kind: str,
+    text: str,
+    seq: int,
+    *,
+    done: bool = False,
+    ts: float | None = None,
+) -> dict:
+    """A ``message.delta`` envelope: live text for one streamed message.
+
+    It carries no envelope ``seq``: deltas are never journaled, so they
+    must not move a client's replay cursor (the SSE frame has no
+    ``id:`` either). ``data.seq`` counts this message's deltas from 1.
+    """
+    ev = event("message.delta", session, machine, {
+        "id": msg_id, "kind": kind, "text": text, "seq": seq,
+        "done": done,
+    }, ts=ts)
+    del ev["seq"]
+    return ev
+
+
 def command(
     op: str,
     session: str,
