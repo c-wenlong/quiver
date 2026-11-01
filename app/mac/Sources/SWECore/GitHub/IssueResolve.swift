@@ -48,7 +48,7 @@ public enum IssueResolve {
             .split(separator: "/").map { $0.lowercased() }
         // The repo was quiver before it became swe, and checkouts and
         // worktrees made before the rename keep the old folder name.
-        let names = parts[1] == "swe" ? ["swe", "quiver"] : [parts[1]]
+        let names = parts[0] == "c-wenlong" && parts[1] == "swe" ? ["swe", "quiver"] : [parts[1]]
         return components.contains { component in
             names.contains { component == $0 || component.hasPrefix("\(parts[0])__\($0)") }
         }
