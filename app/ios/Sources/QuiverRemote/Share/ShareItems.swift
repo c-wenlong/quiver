@@ -119,25 +119,35 @@ enum ShareInbox {
             if let url = await copyFile(provider, type: type, into: folder, index: index) {
                 return .success(.image(name: AttachmentRules.jpegName(url.lastPathComponent), file: url))
             }
-            // Some apps share a decoded image instead of a file.
-            if let image = await loadItem(provider, type: type) as? UIImage, let data = PhotoPrep.jpeg(from: image) {
-                return .success(.imageData(name: AttachmentRules.jpegName(fallbackName), data: data))
+            // Some apps share a decoded image, its bytes or a file URL
+            // instead of a file representation.
+            switch await loadItem(provider, type: type) {
+            case let image as UIImage:
+                if let data = PhotoPrep.jpeg(from: image) {
+                    return .success(.imageData(name: AttachmentRules.jpegName(fallbackName), data: data))
+                }
+            case let data as Data:
+                if let jpeg = PhotoPrep.jpeg(from: data) {
+                    return .success(.imageData(name: AttachmentRules.jpegName(fallbackName), data: jpeg))
+                }
+            case let url as URL where url.isFileURL:
+                return copyLocal(url, into: folder, index: index)
+            default:
+                break
             }
             return .failure(Refusal(message: "\(fallbackName) couldn't be read as an image."))
         case .fileURL:
-            guard let url = await loadItem(provider, type: UTType.fileURL.identifier) as? URL else {
+            guard let url = await loadURL(provider, conformingTo: .fileURL) else {
                 return .failure(Refusal(message: "\(fallbackName) couldn't be read."))
             }
             return copyLocal(url, into: folder, index: index)
         case .link:
-            switch await loadItem(provider, type: UTType.url.identifier) {
-            case let url as URL where url.isFileURL: return copyLocal(url, into: folder, index: index)
-            case let url as URL: return .success(.link(url))
-            case let s as String: return URL(string: s).map { .success(.link($0)) } ?? .success(.text(s))
-            default: return .failure(Refusal(message: "That link couldn't be read."))
+            guard let url = await loadURL(provider, conformingTo: .url) else {
+                return .failure(Refusal(message: "That link couldn't be read."))
             }
+            return url.isFileURL ? copyLocal(url, into: folder, index: index) : .success(.link(url))
         case .text:
-            switch await loadItem(provider, type: UTType.plainText.identifier) {
+            switch await loadItem(provider, conformingTo: .plainText) {
             case let s as String: return .success(.text(s))
             case let s as NSAttributedString: return .success(.text(s.string))
             case let url as URL where url.isFileURL: return copyLocal(url, into: folder, index: index)
@@ -206,14 +216,51 @@ enum ShareInbox {
         }
     }
 
-    /// The provider's suggested name when it has one (its file is often a
-    /// temp name), with the type's extension when the name lacks one.
+    /// The provider's suggested name when it has one (the file it hands
+    /// over can carry a temp name, or its type's, "PNG image.png"), with
+    /// the file's extension, else the type's, when the name lacks one.
     static func fileName(suggested: String?, provided: URL, type: String) -> String {
         guard let suggested, !suggested.isEmpty else { return provided.lastPathComponent }
         let safe = suggested.replacingOccurrences(of: "/", with: "-")
         guard (safe as NSString).pathExtension.isEmpty else { return safe }
         let ext = provided.pathExtension.isEmpty ? UTType(type)?.preferredFilenameExtension : provided.pathExtension
         return ext.map { "\(safe).\($0)" } ?? safe
+    }
+
+    /// Loads the first registered type that conforms to `kind`: a provider
+    /// answers only for a type it registered (`public.utf8-plain-text`,
+    /// not `public.plain-text`).
+    private static func loadItem(_ provider: NSItemProvider, conformingTo kind: UTType) async -> NSSecureCoding? {
+        guard let type = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: kind) == true })
+        else { return nil }
+        return await loadItem(provider, type: type)
+    }
+
+    /// A URL through the provider's own object loading, which decodes
+    /// every form it stores one in (an `NSURL`'s is a property list);
+    /// else the raw item.
+    private static func loadURL(_ provider: NSItemProvider, conformingTo kind: UTType) async -> URL? {
+        if provider.canLoadObject(ofClass: URL.self) {
+            let url: URL? = await withCheckedContinuation { done in
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in done.resume(returning: url) }
+            }
+            if let url { return url }
+        }
+        return asURL(await loadItem(provider, conformingTo: kind))
+    }
+
+    /// A URL item as some providers hand it over: a URL, or its text.
+    static func asURL(_ item: NSSecureCoding?) -> URL? {
+        let text: String?
+        switch item {
+        case let url as URL: return url
+        case let s as String: text = s
+        case let data as Data: text = String(data: data, encoding: .utf8)
+        default: text = nil
+        }
+        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let url = URL(string: trimmed), url.scheme != nil else { return nil }
+        return url
     }
 
     private static func loadItem(_ provider: NSItemProvider, type: String) async -> NSSecureCoding? {

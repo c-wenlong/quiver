@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **iPhone: share into a session.** A share extension ("Quiver" in the
+  share sheet) sends text, links, images and files from any app to a
+  session ([#1441](https://github.com/c-wenlong/quiver/issues/1441)).
+  The sheet lists the active hub's attached sessions, most recent
+  first, with a hub picker when the phone has more than one, and an
+  optional message. Text and links go in the message; images go up as
+  JPEGs with the long edge at most 2048 px and other files stream from
+  disk, one at a time, through the composer's attachments route and
+  caps, then the message is sent with their refs. It reads the paired
+  hubs from the App Group and shared Keychain group, and says so
+  instead of sending when the phone isn't paired or the hub can't be
+  reached.
 - **iPhone: the paired hubs move to an App Group and a shared Keychain
   group.** The hub list now lives in `group.com.quiver.remote` and each
   hub's credential in the `<team>.com.quiver.remote.shared` Keychain
