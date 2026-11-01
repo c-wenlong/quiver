@@ -1,4 +1,4 @@
-# Quiver Remote roadmap
+# SWE Remote roadmap
 
 The phone client for remote control: watch every agent session on your
 machines, unblock the ones waiting on you, and steer the ones you

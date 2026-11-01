@@ -1,4 +1,4 @@
-# QuiverRemote (iOS)
+# SWERemote (iOS)
 
 The native SwiftUI client for remote control. It talks to the hub that
 `swe remote serve` runs, over the tailnet: REST for lists and actions,
@@ -11,14 +11,14 @@ at `/` is the client for browsers and other devices.
 
 | Folder | What |
 |---|---|
-| `Sources/QuiverRemote/Hub/` | Wire types, `HubClient` (one method per route), the SSE reader, `AppModel` (pairing, sessions, inbox), `ChatModel` (one open chat), `Attachments` (the composer's picked files), `TasksModel`, `IssuesModel` and `PullsModel` (the Tasks and GitHub tabs' data), `NewSession` (what the launch sheets offer, and the launch poll), `UsageModel` and `UsageFormat` (the Usage tab's data and number formatting), `PromptCompletion` (the prompt box's `@` and `/` menus), and the diff, markdown and page-preview helpers |
-| `Sources/QuiverRemote/Hub/SSH*.swift`, `ConsoleModel.swift` | The console: this phone's SSH key (`SSHIdentity`), the hub's `/v1/ssh` answer and the saved targets (`SSHTarget`), the SwiftNIO SSH shell with pinned host keys (`SSHShell`), and the console's state (`ConsoleModel`) |
-| `Sources/QuiverRemote/Share/`, `Sources/QuiverShare/` | The share extension: what a share carries and how it sends (`ShareItems`, `ShareModel`, compiled into the app too so the tests reach them), and the extension's own view controller and sheet |
-| `Sources/QuiverRemote/Widget/`, `Sources/QuiverWidget/` | The home screen widget: the snapshot it draws, its store in the App Group, the summary and fetch rules and the `quiver://session` link (shared with the app, which rewrites the snapshot after each refresh), and the WidgetKit extension itself |
-| `Sources/QuiverRemote/Theme/` | The Mac app's theme ported to iOS: the same hex values and roles, cards, list rows, badges, buttons |
-| `Sources/QuiverRemote/Views/` | Welcome and pairing, Sessions (with rename, fork and the new-session sheet), Chat, Inbox, Tasks, GitHub (issues and pull requests, their detail pages and launch sheets), Usage (limits and spend), Pair requests and devices, Console, the QR scanner |
-| `Tests/QuiverRemoteTests/` | Unit tests for parsing, pairing links, diffs, grouping, chat event handling, the GitHub and Tasks rules, usage formatting and the console |
-| `Tests/QuiverRemoteUITests/` | UI tests for the launch sheets' Model menu; they need a paired hub on the simulator and skip without one |
+| `Sources/SWERemote/Hub/` | Wire types, `HubClient` (one method per route), the SSE reader, `AppModel` (pairing, sessions, inbox), `ChatModel` (one open chat), `Attachments` (the composer's picked files), `TasksModel`, `IssuesModel` and `PullsModel` (the Tasks and GitHub tabs' data), `NewSession` (what the launch sheets offer, and the launch poll), `UsageModel` and `UsageFormat` (the Usage tab's data and number formatting), `PromptCompletion` (the prompt box's `@` and `/` menus), and the diff, markdown and page-preview helpers |
+| `Sources/SWERemote/Hub/SSH*.swift`, `ConsoleModel.swift` | The console: this phone's SSH key (`SSHIdentity`), the hub's `/v1/ssh` answer and the saved targets (`SSHTarget`), the SwiftNIO SSH shell with pinned host keys (`SSHShell`), and the console's state (`ConsoleModel`) |
+| `Sources/SWERemote/Share/`, `Sources/SWEShare/` | The share extension: what a share carries and how it sends (`ShareItems`, `ShareModel`, compiled into the app too so the tests reach them), and the extension's own view controller and sheet |
+| `Sources/SWERemote/Widget/`, `Sources/SWEWidget/` | The home screen widget: the snapshot it draws, its store in the App Group, the summary and fetch rules and the `quiver://session` link (shared with the app, which rewrites the snapshot after each refresh), and the WidgetKit extension itself |
+| `Sources/SWERemote/Theme/` | The Mac app's theme ported to iOS: the same hex values and roles, cards, list rows, badges, buttons |
+| `Sources/SWERemote/Views/` | Welcome and pairing, Sessions (with rename, fork and the new-session sheet), Chat, Inbox, Tasks, GitHub (issues and pull requests, their detail pages and launch sheets), Usage (limits and spend), Pair requests and devices, Console, the QR scanner |
+| `Tests/SWERemoteTests/` | Unit tests for parsing, pairing links, diffs, grouping, chat event handling, the GitHub and Tasks rules, usage formatting and the console |
+| `Tests/SWERemoteUITests/` | UI tests for the launch sheets' Model menu; they need a paired hub on the simulator and skip without one |
 
 The look follows the Mac app (`app/mac/Sources/SWEApp/Theme/Theme.swift`):
 dark and light from the same tokens, sentence case, green only for
@@ -37,8 +37,8 @@ copies the Mac app's `harness-*.svg` into `Assets.xcassets/Harnesses`.
   requests, in the hub menu on Sessions), from the hub with
   `swe remote devices --approve=<code>`, or from the web app's
   Settings › Integrations › Remote.
-- **QR:** on the hub machine, open Quiver › Settings › Remote › Pair a
-  device (the Mac app, or the hub's web app), choose Quiver app, and
+- **QR:** on the hub machine, open SWE › Settings › Remote › Pair a
+  device (the Mac app, or the hub's web app), choose SWE app, and
   scan its code, either in the app or with the Camera app (the
   `quiver://pair` link opens the app, which names the hub and asks
   before pairing with it). A server with neither runs
@@ -51,9 +51,9 @@ scanned code) adds it instead of replacing the first, and the hub menu
 at the top right of Sessions switches between them. Unpair drops only
 the hub on screen, and asks that hub to sign this phone out (its
 device row and console key go too) when it can be reached. Each hub's credential is its own Keychain item, in the
-shared access group `<team>.com.quiver.remote.shared`; the addresses,
+shared access group `<team>.com.swe.remote.shared`; the addresses,
 names and the hub on screen are in the App Group
-`group.com.quiver.remote`'s defaults. Extensions (the share sheet, the
+`group.com.swe.remote`'s defaults. Extensions (the share sheet, the
 widget) read the paired hubs from there. A phone paired before the
 groups keeps its hubs: the first launch copies each into the groups
 and drops the old copy only once the new one is stored. A phone
@@ -63,7 +63,7 @@ shell keeps its pairing the same way.
 
 ## Share sheet
 
-The `QuiverShare` extension shows as Quiver in any app's share sheet.
+The `SWEShare` extension shows as SWE in any app's share sheet.
 It takes text, a link, up to 10 images and files, lists the active
 hub's attached sessions (most recent first; the hub refuses a message
 to a session it only observes), and sends an optional message. Text and
@@ -71,14 +71,14 @@ links go in the message; images go up as downscaled JPEGs and other
 files stream from disk, one at a time, through the composer's
 attachments route and caps. It reads the paired hubs from the App
 Group and the shared Keychain group, so it needs both entitlements on
-its own App ID (`com.quiver.remote.share`); without a pairing or a
+its own App ID (`com.swe.remote.share`); without a pairing or a
 reachable hub it says so and sends nothing. The extension compiles the
-app's hub files it needs (listed under `QuiverShare` in `project.yml`)
+app's hub files it needs (listed under `SWEShare` in `project.yml`)
 rather than a shared framework.
 
 ## Widget
 
-The `QuiverWidget` extension puts a small or medium widget on the home
+The `SWEWidget` extension puts a small or medium widget on the home
 screen for the hub on screen in the app: how many sessions wait on you
 (the Inbox's "Waiting on you" rows, plus sessions marked approval or
 follow-up), how many are still working, and today's spend. The medium
@@ -132,17 +132,17 @@ one. `build_ios.sh` builds and installs on the first paired iPhone
 ```sh
 cd app/ios
 xcodegen generate
-xcodebuild -project QuiverRemote.xcodeproj -scheme QuiverRemote \
+xcodebuild -project SWERemote.xcodeproj -scheme SWERemote \
   -destination 'platform=iOS,name=<your phone>' \
   -allowProvisioningUpdates -derivedDataPath build build
 xcrun devicectl device install app --device <device-id> \
-  build/Build/Products/Debug-iphoneos/QuiverRemote.app
+  build/Build/Products/Debug-iphoneos/SWERemote.app
 ```
 
 Tests run on a simulator:
 
 ```sh
-xcodebuild -project QuiverRemote.xcodeproj -scheme QuiverRemote \
+xcodebuild -project SWERemote.xcodeproj -scheme SWERemote \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   -derivedDataPath build-sim test
 ```
@@ -155,7 +155,7 @@ run, and prints the `TEST_RUNNER_QUIVER_SSH_*` variables, the key
 included, to run the tests with.
 
 `project.yml` carries the pieces that matter: bundle id
-`com.quiver.remote`, the `quiver` URL scheme so pair QRs open the app,
+`com.swe.remote`, the `quiver` URL scheme so pair QRs open the app,
 the scoped ATS exceptions for a plain-HTTP hub on the tailnet
 (`NSAllowsLocalNetworking` for IP literals and local names — which is
 what covers Tailscale CGNAT addresses — plus an `NSExceptionDomains`
@@ -163,11 +163,11 @@ entry for `*.ts.net` MagicDNS names; arbitrary domains still get full
 ATS),
 the camera prompt for the QR scanner, iOS 17+, `DEVELOPMENT_TEAM`, and
 the entitlements for the App Group and the shared Keychain group (on
-the app, `QuiverShare` and `QuiverWidget`). The
-Keychain group is written as `$(AppIdentifierPrefix)com.quiver.remote.shared`
-(in the entitlements and in Info.plist's `QuiverKeychainGroup`), so the
+the app, `SWEShare` and `SWEWidget`). The
+Keychain group is written as `$(AppIdentifierPrefix)com.swe.remote.shared`
+(in the entitlements and in Info.plist's `SWEKeychainGroup`), so the
 signing team fills it in. Automatic signing registers both groups on
-each target's App ID (`com.quiver.remote`, `.share`, `.widget`) the first time a device build runs with
+each target's App ID (`com.swe.remote`, `.share`, `.widget`) the first time a device build runs with
 `-allowProvisioningUpdates`.
 The icon is `assets/logo-square.png` at 1024, saved without an alpha
 channel because App Store icons must be opaque; `AppMark` is the same

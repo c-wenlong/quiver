@@ -594,7 +594,7 @@ class TestDevicesList(unittest.TestCase):
         devices = {"d1": {
             "name": "phone", "display_name": "Dev's",
             "kind": "iphone", "model": "iPhone16,2",
-            "client": "Quiver Remote 1.0", "os": "iOS 18.5",
+            "client": "SWE Remote 1.0", "os": "iOS 18.5",
             "node_name": "test-iphone.ts.net", "paired_via": "tailscale",
             "credential_hash": "secret-hash",
             "created_at": 1, "last_seen_at": 1_700_000_000,
@@ -606,7 +606,7 @@ class TestDevicesList(unittest.TestCase):
         row = json.loads(out)["data"]["devices"][0]
         self.assertEqual(row["display_name"], "Dev's")
         self.assertEqual(row["kind"], "iphone")
-        self.assertEqual(row["client"], "Quiver Remote 1.0")
+        self.assertEqual(row["client"], "SWE Remote 1.0")
         self.assertEqual(row["node_name"], "test-iphone.ts.net")
         self.assertNotIn("credential_hash", row)
         self.assertNotIn("credential", row)
