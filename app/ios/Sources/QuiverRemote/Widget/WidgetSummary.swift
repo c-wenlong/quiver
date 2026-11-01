@@ -58,9 +58,10 @@ struct WidgetSnapshot: Codable, Equatable {
     var needsYouCount: Int
     var working: [Row]
     var workingCount: Int
-    /// Today's cost, and the phone's day (`yyyy-MM-dd`) it was for.
+    /// The day's cost, and when the hub reported it. The app's refresh
+    /// carries it over, so it ages apart from `fetchedAt`.
     var spendUsd: Double?
-    var spendDay: String?
+    var spendAt: Date?
     var fetchedAt: Date
 
     /// Rows kept per list: the medium widget shows three.
@@ -68,7 +69,8 @@ struct WidgetSnapshot: Codable, Equatable {
 
     /// The spend, if it's for `now`'s day: yesterday's total is not today's.
     func spendToday(now: Date, timeZone: TimeZone = .current) -> Double? {
-        guard let spendDay, spendDay == WidgetSummary.day(now, timeZone: timeZone) else { return nil }
+        guard let spendAt, WidgetSummary.day(spendAt, timeZone: timeZone) == WidgetSummary.day(now, timeZone: timeZone)
+        else { return nil }
         return spendUsd
     }
 
@@ -89,7 +91,7 @@ enum WidgetSummary {
     /// tab badge's set) plus any listed session the hub marks approval or
     /// follow-up; working are the active sessions not among them.
     static func make(hubId: String, hubName: String, sessions: [SessionRow], inbox: [InboxItem],
-                     spendUsd: Double?, spendDay: String?, at: Date) -> WidgetSnapshot {
+                     spendUsd: Double?, spendAt: Date?, at: Date) -> WidgetSnapshot {
         var waiting: [String: WidgetSnapshot.Row] = [:]
         var stamps: [String: Double] = [:]
         for item in inbox where InboxGrouping.section(of: item) == .waiting {
@@ -111,7 +113,7 @@ enum WidgetSummary {
                 .init(key: $0.key, title: $0.displayTitle, harness: $0.harnessName, status: $0.status)
             },
             workingCount: active.count,
-            spendUsd: spendUsd, spendDay: spendDay, fetchedAt: at)
+            spendUsd: spendUsd, spendAt: spendAt, fetchedAt: at)
     }
 
     /// The phone's calendar day, as the overview's `tz` cuts it.
@@ -172,15 +174,16 @@ struct WidgetPublisher {
     func publish(hubId: String, hubName: String, sessions: [SessionRow], inbox: [InboxItem], at: Date = Date()) {
         let old = store.read().flatMap { $0.hubId == hubId ? $0 : nil }
         let snapshot = WidgetSummary.make(hubId: hubId, hubName: hubName, sessions: sessions, inbox: inbox,
-                                          spendUsd: old?.spendUsd, spendDay: old?.spendDay, at: at)
+                                          spendUsd: old?.spendUsd, spendAt: old?.spendAt, at: at)
         if store.write(snapshot) { reload() }
     }
 
     /// Today's spend from the Usage tab, laid onto the hub's snapshot.
     func publishSpend(hubId: String, usd: Double?, at: Date = Date()) {
-        guard var snapshot = store.read(), snapshot.hubId == hubId else { return }
+        guard var snapshot = store.read(), snapshot.hubId == hubId,
+              (snapshot.spendAt ?? .distantPast) <= at else { return }
         snapshot.spendUsd = usd
-        snapshot.spendDay = WidgetSummary.day(at)
+        snapshot.spendAt = at
         if store.write(snapshot) { reload() }
     }
 
@@ -215,9 +218,11 @@ struct WidgetLoader {
     var store: WidgetSnapshotStore
     var fetch: (PairedHub) async throws -> Fetched
 
-    /// A snapshot this fresh, with today's spend, is drawn as it is: the
-    /// app just wrote it and asked for the redraw.
+    /// A snapshot this fresh is drawn as it is: the app just wrote it
+    /// and asked for the redraw...
     static let reuseFor: TimeInterval = 120
+    /// ...as long as its spend is from this widget interval too.
+    static let spendFreshFor: TimeInterval = 15 * 60
 
     /// Draws from the snapshot when the app wrote it moments ago,
     /// otherwise asks the hub and keeps what it answered; falls back to
@@ -229,11 +234,10 @@ struct WidgetLoader {
         do {
             let got = try await fetch(hub)
             let name = got.sessions.machines?.first?.displayName ?? hubs.name(of: hub)
-            let today = WidgetSummary.day(now)
-            let spend = got.spendUsd ?? cached?.spendToday(now: now)
-            let snapshot = WidgetSummary.make(hubId: hub.id, hubName: name, sessions: got.sessions.sessions,
-                                              inbox: got.inbox.items, spendUsd: spend,
-                                              spendDay: spend == nil ? nil : today, at: now)
+            let fetched = WidgetSummary.make(hubId: hub.id, hubName: name, sessions: got.sessions.sessions,
+                                             inbox: got.inbox.items, spendUsd: got.spendUsd,
+                                             spendAt: got.spendUsd == nil ? nil : now, at: now)
+            let snapshot = Self.merge(fetched, onto: store.read())
             store.write(snapshot)
             return .summary(snapshot, stale: false)
         } catch let error as HubError where error.isUnauthorized {
@@ -247,7 +251,25 @@ struct WidgetLoader {
 
     static func canReuse(_ snapshot: WidgetSnapshot, now: Date) -> Bool {
         let age = now.timeIntervalSince(snapshot.fetchedAt)
-        return age >= 0 && age < reuseFor && snapshot.spendToday(now: now) != nil
+        let spendAge = snapshot.spendAt.map { now.timeIntervalSince($0) } ?? .infinity
+        return age >= 0 && age < reuseFor && spendAge < spendFreshFor && snapshot.spendToday(now: now) != nil
+    }
+
+    /// What the fetch answered, laid onto the snapshot as it is now, which
+    /// the app may have rewritten while the fetch was out: the newer rows
+    /// and the newer spend win, each on its own.
+    static func merge(_ fetched: WidgetSnapshot, onto latest: WidgetSnapshot?) -> WidgetSnapshot {
+        guard let latest, latest.hubId == fetched.hubId else { return fetched }
+        var out = latest.fetchedAt > fetched.fetchedAt ? latest : fetched
+        let ours = fetched.spendAt ?? .distantPast, theirs = latest.spendAt ?? .distantPast
+        if ours >= theirs, fetched.spendAt != nil {
+            out.spendUsd = fetched.spendUsd
+            out.spendAt = fetched.spendAt
+        } else {
+            out.spendUsd = latest.spendUsd
+            out.spendAt = latest.spendAt
+        }
+        return out
     }
 
     /// The live fetch: sessions and inbox must answer; the spend is best

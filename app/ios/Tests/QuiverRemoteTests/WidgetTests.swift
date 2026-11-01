@@ -23,11 +23,10 @@ private func tempStore() -> WidgetSnapshotStore {
 }
 
 private let now = Date(timeIntervalSince1970: 1_800_000_000)
-private let today = WidgetSummary.day(now)
 
-private func snapshot(hubId: String = hub().id, spend: Double? = 1, day: String? = today, at: Date = now) -> WidgetSnapshot {
+private func snapshot(hubId: String = hub().id, spend: Double? = 1, spendAt: Date? = now, at: Date = now) -> WidgetSnapshot {
     WidgetSummary.make(hubId: hubId, hubName: "mac", sessions: [session("a", status: "active", at: 1)],
-                       inbox: [], spendUsd: spend, spendDay: day, at: at)
+                       inbox: [], spendUsd: spend, spendAt: spendAt, at: at)
 }
 
 final class WidgetSummaryTests: XCTestCase {
@@ -39,7 +38,7 @@ final class WidgetSummaryTests: XCTestCase {
                        session("done", status: "done", at: 8)],
             inbox: [inbox("waiting", status: "followup", at: 9), inbox("err", status: "error", at: 7),
                     inbox("fin", status: "done", at: 6), inbox("gh:1", status: "github", at: 10, github: true)],
-            spendUsd: 2.5, spendDay: "2026-11-01", at: now)
+            spendUsd: 2.5, spendAt: now, at: now)
         XCTAssertEqual(s.needsYou.map(\.key), ["waiting", "ask"])
         XCTAssertEqual(s.needsYouCount, 2)
         // A session waiting on you isn't also counted as working.
@@ -53,7 +52,7 @@ final class WidgetSummaryTests: XCTestCase {
     func testListsAreCappedButCountsCoverEverySession() {
         let many = (0..<9).map { session("s\($0)", status: "active", at: Double($0)) }
         let s = WidgetSummary.make(hubId: "h", hubName: "mac", sessions: many, inbox: [],
-                                   spendUsd: nil, spendDay: nil, at: now)
+                                   spendUsd: nil, spendAt: nil, at: now)
         XCTAssertEqual(s.working.count, WidgetSnapshot.rowLimit)
         XCTAssertEqual(s.working.first?.key, "s8")
         XCTAssertEqual(s.workingCount, 9)
@@ -62,8 +61,7 @@ final class WidgetSummaryTests: XCTestCase {
 
     func testSpendShowsOnlyOnItsOwnDay() {
         let utc = TimeZone(identifier: "UTC")!
-        var s = snapshot(spend: 3)
-        s.spendDay = WidgetSummary.day(now, timeZone: utc)
+        let s = snapshot(spend: 3)
         XCTAssertEqual(s.spendToday(now: now, timeZone: utc), 3)
         XCTAssertNil(s.spendToday(now: now.addingTimeInterval(86_400), timeZone: utc))
         XCTAssertEqual(WidgetSummary.day(Date(timeIntervalSince1970: 0), timeZone: utc), "1970-01-01")
@@ -197,10 +195,36 @@ final class WidgetLoaderTests: XCTestCase {
         _ = await loader.load(hubs: paired(hub()), now: now)
         XCTAssertEqual(fetches, 0)
         // Without today's spend it asks the hub, which fills it in.
-        store.write(snapshot(spend: nil, day: nil, at: now.addingTimeInterval(-30)))
+        store.write(snapshot(spend: nil, spendAt: nil, at: now.addingTimeInterval(-30)))
         _ = await loader.load(hubs: paired(hub()), now: now)
         XCTAssertEqual(fetches, 1)
+        // The app's refresh carried an old spend over: it's fetched again.
+        store.write(snapshot(spendAt: now.addingTimeInterval(-WidgetLoader.spendFreshFor - 1),
+                             at: now.addingTimeInterval(-30)))
+        _ = await loader.load(hubs: paired(hub()), now: now)
+        XCTAssertEqual(fetches, 2)
         XCTAssertFalse(WidgetLoader.canReuse(snapshot(at: now.addingTimeInterval(-600)), now: now))
+    }
+
+    func testALateFetchKeepsNewerRowsAndTheNewerSpend() {
+        let fetched = WidgetSummary.make(hubId: "h", hubName: "mac", sessions: [], inbox: [],
+                                         spendUsd: 2, spendAt: now, at: now)
+        // The app wrote newer rows while the fetch was out, with an older spend.
+        let newerRows = WidgetSummary.make(hubId: "h", hubName: "mac", sessions: [session("a", status: "active", at: 1)],
+                                           inbox: [], spendUsd: 1, spendAt: now.addingTimeInterval(-600),
+                                           at: now.addingTimeInterval(5))
+        let merged = WidgetLoader.merge(fetched, onto: newerRows)
+        XCTAssertEqual(merged.workingCount, 1)
+        XCTAssertEqual(merged.spendUsd, 2)
+        // The Usage tab's newer spend beats the fetch's.
+        var newerSpend = fetched
+        newerSpend.spendUsd = 5
+        newerSpend.spendAt = now.addingTimeInterval(5)
+        newerSpend.fetchedAt = now.addingTimeInterval(-60)
+        XCTAssertEqual(WidgetLoader.merge(fetched, onto: newerSpend).spendUsd, 5)
+        XCTAssertEqual(WidgetLoader.merge(fetched, onto: newerSpend).fetchedAt, now)
+        // Another hub's snapshot is replaced outright.
+        XCTAssertEqual(WidgetLoader.merge(fetched, onto: snapshot(hubId: "other")), fetched)
     }
 
     func testAFailedOverviewKeepsTodaysSpend() async {

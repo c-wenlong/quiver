@@ -459,10 +459,10 @@ final class AppModel {
     /// haven't opened yet; MainTabs consumes it like `pendingIssue`.
     var pendingSession: String?
 
-    /// Today's spend the Usage tab loaded, for the widget.
-    func publishSpend(_ usd: Double?) {
-        guard let hub else { return }
-        widgets?.publishSpend(hubId: hub.id, usd: usd)
+    /// Today's spend the Usage tab loaded from `hubId`, for the widget.
+    /// The widget keeps it only on that hub's snapshot.
+    func publishSpend(_ usd: Double?, hubId: String) {
+        widgets?.publishSpend(hubId: hubId, usd: usd)
     }
 
     /// A `quiver://pair` link that came from outside the app (the Camera

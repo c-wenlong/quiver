@@ -47,7 +47,14 @@ struct NeedsYouProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<NeedsYouEntry>) -> Void) {
         Task {
             let entry = await entry()
-            completion(Timeline(entries: [entry], policy: .after(entry.date.addingTimeInterval(Self.interval))))
+            let next = entry.date.addingTimeInterval(Self.interval)
+            var entries = [entry]
+            // Yesterday's spend leaves at midnight, not at the next fetch.
+            if let midnight = Calendar.current.nextDate(after: entry.date, matching: DateComponents(hour: 0, minute: 0),
+                                                        matchingPolicy: .nextTime), midnight < next {
+                entries.append(NeedsYouEntry(date: midnight, content: entry.content))
+            }
+            completion(Timeline(entries: entries, policy: .after(next)))
         }
     }
 
@@ -67,7 +74,7 @@ extension WidgetSnapshot {
         needsYouCount: 1,
         working: [.init(key: "b", title: "Write the release notes", harness: "Codex", status: "active"),
                   .init(key: "c", title: "Port the usage chart", harness: "Claude Code", status: "active")],
-        workingCount: 2, spendUsd: 4.2, spendDay: WidgetSummary.day(Date()), fetchedAt: Date())
+        workingCount: 2, spendUsd: 4.2, spendAt: Date(), fetchedAt: Date())
 }
 
 /// The app's colours (`Theme`): amber for "needs you", green only for
