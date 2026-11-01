@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   iPhone's Usage tab a row of machine chips under the periods. A
   satellite's days are its own local days, and its view has no top
   models, since daily rows carry none. Closes
+- **Mac and web: Hub sync card.** Settings › Files shows `swe sync
+  status` for `~/.swe` (branch mode, uncommitted changes by primitive,
+  commits to push and pull, new commits on `origin/main`, files kept
+  out) with a refresh that fetches first, and a Sync button that runs
+  `swe sync` and says what it did. A conflict names the files and
+  changes nothing; relink problems show as a warning. The web card
+  syncs the hub machine's repo through `GET /v1/app/settings?part=hub_sync`
+  and `POST /v1/app/settings/hub_sync` (one at a time). Sync stays
+  manual; there is no timer. Part of
   [#525](https://github.com/c-wenlong/quiver/issues/525).
 - **`swe sync` and `swe sync status`.** Sync commits what changed in
   `~/.swe` with a generated message, merges the remote in, pushes, and

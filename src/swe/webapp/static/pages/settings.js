@@ -89,7 +89,7 @@ const SETTINGS_GROUPS = [
   ]],
   ["Advanced", [
     ["integrations", "Integrations", "The GitHub CLI behind the GitHub pages, the keys for the services SWE calls, and the phones paired to watch your sessions."],
-    ["files", "Files", "Where SWE finds swe, your API keys file and your MCP server folders, and the editor that opens them."],
+    ["files", "Files", "Where SWE finds swe, your API keys file and your MCP server folders, the editor that opens them, and syncing ~/.swe."],
     ["experimental", "Experimental", "Features being tried out. They may change or go away."],
   ]],
 ];
@@ -119,6 +119,11 @@ const settingsPage = {
   data: null, gen: 0, github: null, githubBusy: false,
   // Sync now: a sync in flight, and its failure or the owners it skipped.
   syncing: false, syncError: null,
+  // Files › Hub sync: the repo status (`swe sync status`), a read in
+  // flight or its failure, a Sync in flight, its answer or failure.
+  // Stale on every visit, like the setup steps.
+  hubSync: null, hubSyncBusy: false, hubSyncLoadError: null, hubSyncStale: false,
+  hubSyncing: false, hubSyncResult: null, hubSyncError: null,
   // `swe remote setup`'s steps for this machine, and a load in flight.
   // Stale once Settings is opened again: a step can come undone (the
   // last phone revoked, the hub stopped), so each visit checks again.
@@ -179,6 +184,7 @@ async function renderSettings() {
   p.ticket = null;
   p.confirming = null;
   p.setupStale = true;
+  p.hubSyncStale = true;
   settingsForgetRevealed();
   p.keyEditor = null;
   if (p.data) paintSettings();
@@ -854,7 +860,160 @@ function filesSection() {
     setRow("API keys file", `In use: ${paths.api_keys}.`),
     setRow("MCP servers folder", `In use: ${paths.mcp_servers}.`),
     macRow("Editor", "Opens a server folder from the MCP servers page."),
-  ])}<p class="caption set-note">These are the hub's paths. Pointing SWE somewhere else is a Mac app setting.</p></div>`;
+  ])}<p class="caption set-note">These are the hub's paths. Pointing SWE somewhere else is a Mac app setting.</p>
+  ${setGroup("Hub sync", "The hub's ~/.swe git repo: what changed here, and what the remote has that it doesn't.", hubSyncCard())}</div>`;
+}
+
+/* --------------------------------------------------------------- Hub sync */
+
+const hubSyncCount = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/* The card's lines from `swe sync status --json`, as the Mac card words
+ * them (HubSyncStatus.lines in QuiverCore). */
+function hubSyncLines(s) {
+  if (!s.mode) return { repo: s.problem || "~/.swe isn't a git repository.", changes: "", warning: s.problem };
+  const repo = s.mode === "device"
+    ? `Device branch ${s.branch}: merges ${s.base || "origin/main"} in, pushes only ${s.branch}.`
+    : `Branch ${s.branch}, shared by every machine.`;
+  const groups = Object.entries(s.groups || {}).sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([g, c]) => `${g} ${c}`).join(", ");
+  const changes = (s.changes || []).length
+    ? `${hubSyncCount(s.changes.length, "uncommitted file")}: ${groups}.` : "Nothing to commit.";
+  const remote = [];
+  if (!s.upstream) remote.push(`${s.branch} isn't on the remote yet`);
+  else {
+    if (s.ahead) remote.push(`${hubSyncCount(s.ahead, "commit")} to push`);
+    if (s.behind) remote.push(`${hubSyncCount(s.behind, "commit")} to pull`);
+  }
+  if (s.base_behind) remote.push(`${hubSyncCount(s.base_behind, "new commit")} on ${s.base}`);
+  const sync = remote.length ? `${remote.join(" · ")}.`
+    : s.fetched ? "In step with the remote." : "In step with the remote as of the last fetch.";
+  const held = (s.held_back || []).length
+    ? `${hubSyncCount(s.held_back.length, "changed file")} under paths that never sync stay out: the hub's .gitignore is older than swe's.`
+    : null;
+  return { repo, changes: `${changes} ${sync}`, warning: s.problem || s.fetch_error || held };
+}
+
+/* One line for what the last Sync did. */
+function hubSyncOutcome(r) {
+  if (r.result === "conflict") {
+    return { text: `Conflict in ${r.conflicts.join(", ")}. Nothing changed; resolve it in ~/.swe, then sync again.`, danger: true };
+  }
+  if (r.result === "up-to-date") return { text: "Already in sync." };
+  // Relink problems (a blocked path, MCP servers not copied, a
+  // marketplace a harness refused) don't fail the sync, but the person
+  // has something to do about them, and a retry won't relink again.
+  const relinked = r.relinked || {};
+  const problems = [...(relinked.notes || []),
+    ...(relinked.marketplaces || []).filter((m) => m.error)
+      .map((m) => `${m.marketplace} not registered in ${m.harness}: ${m.error}.`)];
+  const extra = problems.length ? ` ${problems.join(" ")}` : "";
+  if (r.result === "push-failed") {
+    return { text: `Committed and merged, but the push failed: ${r.push_error}. Sync again to retry.${extra}`, danger: true };
+  }
+  const done = [];
+  if (r.commit) done.push(`committed ${hubSyncCount(r.commit.files.length, "file")}`);
+  const merged = (r.merges || []).reduce((sum, m) => sum + m.commits, 0);
+  if (merged) done.push(`merged ${hubSyncCount(merged, "commit")}`);
+  if (r.pushed) done.push(`pushed ${r.branch}`);
+  if (r.relinked) done.push("re-linked every harness");
+  const text = done.join(", ");
+  return {
+    text: (text ? text[0].toUpperCase() + text.slice(1) + "." : "Synced.") + extra,
+    danger: problems.length > 0,
+  };
+}
+
+function hubSyncCard() {
+  const p = settingsPage;
+  const s = p.hubSync;
+  // The refresh stays on every state, a failed first read included, so a
+  // check that failed can always be run again.
+  const refresh = `<button class="icon-button${p.hubSyncBusy ? " spinning" : ""}" id="set-hub-refresh"
+    aria-label="Fetch and check again" title="Fetch the remote and check again"${p.hubSyncBusy || p.hubSyncing ? " disabled" : ""}>${icon("rescan")}</button>`;
+  if (!s) {
+    if (p.hubSyncLoadError) return setCard([setRow("Hub repo", "", refresh, { warning: p.hubSyncLoadError, danger: true })]);
+    return setCardSkeleton(3);
+  }
+  const lines = hubSyncLines(s);
+  // A later read that failed shows over the card it couldn't refresh.
+  const repoWarning = p.hubSyncLoadError
+    ? `Couldn't check again: ${p.hubSyncLoadError}` : s.ready ? null : lines.warning;
+  const repo = setRow("Hub repo", `${lines.repo}${s.remote ? ` Remote: ${s.remote}.` : ""}`, refresh,
+    { warning: repoWarning, danger: true });
+  if (!s.ready) return setCard([repo]);
+  const outcome = p.hubSyncResult ? hubSyncOutcome(p.hubSyncResult) : null;
+  const button = `<button class="set-button primary" id="set-hub-sync"${p.hubSyncing ? " disabled" : ""}
+    title="Commit, merge the remote in and push">${p.hubSyncing ? "Syncing…" : "Sync"}</button>`;
+  const failure = p.hubSyncError || (outcome && outcome.danger ? outcome.text : null);
+  return setCard([
+    repo,
+    setRow("Changes", lines.changes, "", { warning: lines.warning }),
+    setRow("Sync", outcome ? outcome.text
+      : "Commits these changes, merges the remote in, pushes, then re-links every harness. Never secrets/, cache/ or the stores swe keeps out of git.",
+    button, { warning: failure, danger: true }),
+  ]);
+}
+
+function settingsRepaintFiles(focus) {
+  if (!onSettingsPage() || settingsSection() !== "files") return;
+  const body = document.getElementById("set-body");
+  if (!body) return;
+  body.innerHTML = filesSection();
+  bindHubSync();
+  if (focus) document.querySelector(focus)?.focus();
+}
+
+function bindHubSync() {
+  const p = settingsPage;
+  const refresh = document.getElementById("set-hub-refresh");
+  if (refresh) refresh.onclick = () => settingsLoadHubSync(true);
+  const sync = document.getElementById("set-hub-sync");
+  if (sync) sync.onclick = settingsRunHubSync;
+  // Each visit reads the repo again: a commit made in a terminal counts.
+  if (p.hubSyncStale && !p.hubSyncBusy) {
+    p.hubSyncStale = false;
+    settingsLoadHubSync(false);
+  }
+}
+
+async function settingsLoadHubSync(fetch) {
+  const p = settingsPage;
+  const gen = routeGen;
+  p.hubSyncBusy = true;
+  settingsRepaintFiles();
+  const { status, data } = await api(`/v1/app/settings?part=hub_sync${fetch ? "&fetch=1" : ""}`);
+  p.hubSyncBusy = false;
+  if (status === 401) { if (gen === routeGen && onSettingsPage()) renderGate(); return; }
+  if (status === 200 && data) {
+    p.hubSync = data.hub_sync;
+    p.hubSyncLoadError = null;
+  } else {
+    p.hubSyncLoadError = failText(status, data);
+  }
+  if (gen === routeGen) settingsRepaintFiles(fetch ? "#set-hub-refresh" : null);
+}
+
+/* Sync: the hub runs swe sync on its own ~/.swe and answers with what it
+ * did and the card read again. A conflict changes nothing and says where. */
+async function settingsRunHubSync() {
+  const p = settingsPage;
+  if (p.hubSyncing) return;
+  const gen = routeGen;
+  p.hubSyncing = true;
+  p.hubSyncError = null;
+  p.hubSyncResult = null;
+  settingsRepaintFiles("#set-hub-sync");
+  const { status, data } = await apiPost("/v1/app/settings/hub_sync", {});
+  p.hubSyncing = false;
+  if (status === 401) { if (gen === routeGen && onSettingsPage()) renderGate(); return; }
+  if (status === 200 && data) {
+    p.hubSyncResult = data.result;
+    p.hubSync = data.hub_sync;
+  } else {
+    p.hubSyncError = failText(status, data);
+  }
+  settingsRepaintFiles("#set-hub-sync");
 }
 
 /* ---------------------------------------------------------- Experimental */
@@ -1060,6 +1219,7 @@ function bindSettings(section) {
     });
   }
   if (section === "integrations") bindRemote();
+  if (section === "files") bindHubSync();
   bindKeys();
 }
 
