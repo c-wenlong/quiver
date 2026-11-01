@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe doctor --fix`.** Runs every safe local fix doctor found, in
+  order (setup, then discover, then init), reads the report again after
+  each step, and prints what it fixed and what is left.
+  `--fix=<check>` scopes it (`--fix=setup`), `--dry-run` (or `--check`)
+  previews, and `--json` prints `{dry_run, ran, fixed, still_failing,
+  skipped}`. Installs and the drops that delete entries never run in a
+  batch; `--fix=<check> --message=<text> [--action=<a>]` runs one
+  finding's fix, as a Run button does. A failed fix is reported and the
+  rest still run. Plain `swe doctor` still writes nothing. The runners
+  moved to `harness/doctor_fix.py`, which the web Doctor page now calls
+  too. Part of [#529](https://github.com/c-wenlong/quiver/issues/529).
+
 - **Homebrew tap.** `brew install --cask c-wenlong/quiver/quiver`
   installs the Mac app and `brew install c-wenlong/quiver/swe` the CLI,
   from [c-wenlong/homebrew-quiver](https://github.com/c-wenlong/homebrew-quiver).

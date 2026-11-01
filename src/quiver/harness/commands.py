@@ -1736,6 +1736,13 @@ def _doctor_probe(home: Path) -> SimpleNamespace:
 def cmd_doctor(args):
     """Diagnose Node/PATH mismatches that hide globally installed harnesses."""
     args, json_view = take_json_flag(list(args or []))
+    fix_args = [a for a in args if a == "--fix" or a.startswith(_FIX_FLAGS)
+                or a in ("--dry-run", "--check")]
+    if fix_args and any(a == "--fix" or a.startswith("--fix=") for a in fix_args):
+        rest = [a for a in args if a not in fix_args]
+        if not rest:
+            return _doctor_fix(Path.home(), fix_args, json_view)
+        args = rest
     if args:
         message = f"  Unexpected args: {' '.join(args)}"
         if json_view:
@@ -1849,6 +1856,80 @@ def cmd_doctor(args):
     print(c("dim", "  Related: swe check  ·  swe install <name>  ·  swe help doctor\n"))
 
     return 1 if failed else 0
+
+
+_FIX_FLAGS = ("--fix=", "--message=", "--action=")
+
+
+def _doctor_fix(home: Path, args: list, json_view: bool) -> int:
+    """``swe doctor --fix[=<check>] [--message=<text> [--action=<a>]]
+    [--dry-run]``: run the fixes, read the report again, say what changed.
+
+    Exit 0 when every fix that ran worked and no finding in scope has a
+    batch fix left; the findings that need a person do not count.
+    """
+    from quiver.harness import doctor_fix
+
+    def value(flag: str) -> str | None:
+        hits = [a.split("=", 1)[1] for a in args if a.startswith(flag + "=")]
+        return hits[-1] if hits else None
+
+    check, message, action = value("--fix"), value("--message"), value("--action")
+    dry_run = "--dry-run" in args or "--check" in args
+    out = error_stream(json_view)
+    if (message is not None or action is not None) and not check:
+        print("  --message and --action name one finding: add --fix=<check>", file=out)
+        return 1
+    if action is not None and message is None:
+        print("  --action runs one finding's fix: add --message=<text>", file=out)
+        return 1
+    try:
+        result = doctor_fix.run_fixes(
+            home, lambda: doctor_report(home).to_json()["findings"],
+            check=check, message=message, action=action, dry_run=dry_run)
+    except doctor_fix.FixRefused as exc:
+        print(f"  {exc}", file=out)
+        return 1
+    failed = any(step["error"] for step in result["ran"])
+    left = doctor_fix.fixable_left(result)
+    code = 0 if dry_run or not (failed or left) else 1
+    if json_view:
+        emit(result)
+        return code
+
+    verb = "Would run" if dry_run else "Ran"
+    print(f"\n{c('bold', 'swe doctor --fix')}{' (dry run)' if dry_run else ''}\n")
+    if not result["ran"]:
+        print(c("dim", "  Nothing to fix here."))
+    for step in result["ran"]:
+        icon = (c("cyan", "·") if dry_run else
+                c("red", "✗") if step["error"] else c("green", "✓"))
+        what = step["fix"] or step["action"]
+        print(f"  {icon} {step['action']:<9} {what}")
+        for finding in step["findings"]:
+            print(c("dim", f"      {finding['check']}: {finding['message']}"))
+        if step["error"]:
+            for line in str(step["error"]).splitlines()[:8]:
+                print(c("red", f"      {line}"))
+    if result["skipped"]:
+        print()
+        print(c("bold", "  Needs a click per finding"))
+        for finding in result["skipped"]:
+            print(f"    {c('yellow', '!')} {finding['check']}: {finding['message']}")
+            print(c("dim", f"        runs: {', '.join(finding['actions'])}"))
+    print()
+    if dry_run:
+        print(c("dim", f"  {verb} {len(result['ran'])} fix(es). A later fix may find more "
+                       "once an earlier one has run."))
+    else:
+        manual = len(result["still_failing"]) - len(left)
+        print(f"  Fixed {c('green', str(len(result['fixed'])))}"
+              f" · still fixable {c('red' if left else 'dim', str(len(left)))}"
+              f" · need you {manual}")
+        if manual:
+            print(c("dim", "  Run swe doctor to see what is left and how to fix it."))
+    print()
+    return code
 
 
 def _install_command_name(reg_name: str, tools: dict) -> str:

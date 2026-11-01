@@ -248,6 +248,13 @@ The CLI side of remote also speaks `--json`:
   for `marketplace-drop`. `fix` stays the one-line summary for clients
   without remedy support. The command may exit nonzero with valid JSON,
   so the client is called with `allowFailure`.
+- `swe doctor --fix --json`: `{dry_run, ran, fixed, still_failing,
+  skipped}`. `ran` lists each fix as `{action, fix, findings, error}`
+  (`findings` are `{check, message, harness?}`; one `setup`, `discover`
+  or `init` run covers every finding naming it), `fixed` the findings
+  gone afterwards, `still_failing` the full findings in scope still
+  there, `skipped` the ones whose only fixes need a click (`actions`
+  lists them). Exits 1 when a fix failed or a batch fix is still owed.
 - `SessionListPayload`: `sessions` (`id`, `harness`, `agent`, `cwd`,
   `title`, `title_source`, `last_active_at`, `status`, `resume`) plus
   `failures` for parsers that crashed.

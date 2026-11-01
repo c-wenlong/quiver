@@ -354,6 +354,11 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     ],
     "doctor": [
         ("--json", "Machine-readable output"),
+        ("--fix", "Run every safe local fix, then check again"),
+        ("--fix=", "Only fix findings under this check"),
+        ("--dry-run", "With --fix: show what would run"),
+        ("--message=", "With --fix=<check>: the one finding to fix"),
+        ("--action=", "With --message: which of its fixes to run"),
     ],
     "harness star": [
         ("--json", "Print the new state as JSON"),
