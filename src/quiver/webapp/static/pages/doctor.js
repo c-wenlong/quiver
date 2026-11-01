@@ -39,6 +39,7 @@ const DOCTOR_RUNS = {
   "plugin-fix": (m, f, r) => `On ${m}: runs ${(r && r.detail) || f.fix}, which registers the marketplace folder or installs the plugin from it. Nothing is removed.`,
   "plugin-reinstall": (m, f, r) => `On ${m}: runs ${(r && r.detail) || f.fix}: Codex's copy of the plugin is removed, then installed again from your folder in ~/.quiver/plugins.`,
   "dangling-link": (m, f, r) => `On ${m}: copies the broken link ${(r && r.path) || ""} to ~/.quiver/backups, then removes it. A link synced from another machine may still work there.`,
+  "mcp-sync": (m, f, r) => `On ${m}: ${(r && r.command) || f.fix} replaces this one server entry with the hub's copy from ~/.quiver/mcp.json, after backing the config file up to ~/.quiver/backups.`,
   "marketplace-drop": (m, f, r) => `On ${m}: deletes the missing marketplace entries from the settings files, after backing each one up to ~/.quiver/backups. The folders stay gone; restore them by copying them over.`,
 };
 
