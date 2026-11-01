@@ -22,6 +22,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from repeating a push. The rule is `status/alerts.py`, a port of the
   Mac's `ServiceStatusAlerts`. Closes
   [#528](https://github.com/c-wenlong/quiver/issues/528).
+- **Mac: service status banners.** With "Notify about service status"
+  on (Settings › Notifications, off by default), the Mac banners when a
+  model provider or agent platform starts an incident on its status
+  page, and once more when it is back to normal. Each incident banners
+  once: the same incident on the next poll, after a relaunch or after it
+  flaps is quiet, two incidents opening at once are two banners, and
+  scheduled maintenance never banners. Each page's first reading only
+  records what is already open. A click opens Service status.
+  Part of [#528](https://github.com/c-wenlong/quiver/issues/528).
+- **Launch providers declared per harness.** `harness.json` gains
+  `capabilities.provider`: for each provider slug a harness takes at
+  launch, the variables it reads for the key (filled from named
+  variables in the keys file) and any fixed values such as
+  `ANTHROPIC_BASE_URL`. `launch_provider.PROVIDER_FALLBACK` covers
+  OpenCode (24 providers), Pi (16) and Claude Code (Anthropic, plus
+  DeepSeek, Kimi, MiniMax and OpenRouter through their
+  Anthropic-compatible endpoints), each tried on a real install with
+  fake keys. No launch uses it yet. Part of
+  [#526](https://github.com/c-wenlong/quiver/issues/526).
 - **Doctor folds in `swe mcp doctor`.** `swe doctor` now warns about
   each MCP server a harness config holds that fails a local check (a
   stdio binary missing, an empty env value, a bad URL scheme) as
