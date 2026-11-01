@@ -52,8 +52,8 @@ struct UsageSections: View {
             SectionTitle(text: "Spend").padding(.top, 20)
             PeriodChips(selection: $model.period)
                 .padding(.bottom, 4)
-            if model.machines.count > 1 {
-                MachineChips(machines: model.machines, selection: model.machine, select: selectMachine)
+            if model.shownMachines.count > 1 {
+                MachineChips(machines: model.shownMachines, selection: model.machine, select: selectMachine)
                     .padding(.bottom, 4)
             }
             if let overview = model.overviews[model.period] {

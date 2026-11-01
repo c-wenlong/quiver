@@ -98,12 +98,32 @@ class TestOtherMachines(TestOverview):
         self.add(_at(2026, 10, 22), 100)
         self.add(_at(2026, 10, 22, 11), 50)
         self.add(_at(2026, 10, 23), 7, harness="codex", model="gpt-x")
-        with unittest.mock.patch.object(overview, "zone", return_value=SG):
-            out = overview.daily_totals(self.store, CATALOG, now=NOW)
+        out = overview.daily_totals(self.store, CATALOG, now=NOW, tz=SG)
         self.assertEqual([(r["date"], r["harness"], r["tokens"]) for r in out["days"]],
                          [("2026-10-22", "claude", 150), ("2026-10-23", "codex", 7)])
         self.assertAlmostEqual(out["days"][0]["cost_usd"], 150e-06)
         self.assertEqual(out["days"][1]["unpriced_tokens"], 7)
+
+    def test_daily_totals_keep_each_events_own_daylight_saving(self):
+        # New York: 23:30 on 15 January (EST, UTC-5) and on 15 July (EDT,
+        # UTC-4) both stay on the 15th, read from either season.
+        ny = ZoneInfo("America/New_York")
+        self.add(datetime(2026, 1, 15, 23, 30, tzinfo=ny).timestamp(), 10)
+        self.add(datetime(2026, 7, 15, 23, 30, tzinfo=ny).timestamp(), 20)
+        now = datetime(2026, 7, 20, 12, tzinfo=ny).timestamp()
+        out = overview.daily_totals(self.store, CATALOG, now=now, tz=ny)
+        self.assertEqual([r["date"] for r in out["days"]], ["2026-01-15", "2026-07-15"])
+
+    def test_local_zone_reads_tz_with_its_rules(self):
+        with unittest.mock.patch.dict("os.environ", {"TZ": "America/New_York"}):
+            self.assertEqual(str(overview.local_zone()), "America/New_York")
+
+    def test_non_finite_costs_count_as_nothing(self):
+        rows = [_row("2026-10-22", 10, cost=float("inf")), _row("2026-10-22", 10, cost=float("nan"))]
+        body = overview.build(self.store, CATALOG, "month", "Asia/Singapore", now=NOW,
+                              extra=rows, local=False)
+        self.assertEqual(body["totals"]["cost_usd"], 0.0)
+        self.assertEqual(body["totals"]["tokens"], 20)
 
     def test_all_machines_adds_the_rows_up(self):
         self.add(_at(2026, 10, 22), 100)

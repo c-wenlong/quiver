@@ -88,8 +88,17 @@ final class UsageModel {
             }
         } catch is CancellationError {
         } catch {
-            overviewErrors[period] = message(error, app: app, client: client)
+            let text = message(error, app: app, client: client)
+            // A failure for the old filter isn't the new one's.
+            guard machine == self.machine else { return }
+            overviewErrors[period] = text
         }
+    }
+
+    /// The machines for the chips: the period on screen's own list, so
+    /// their shares match its figures; the last list only while it loads.
+    var shownMachines: [OverviewResponse.Machine] {
+        overviews[period]?.machines ?? machines
     }
 
     private func message(_ error: Error, app: AppModel, client: HubClient) -> String {

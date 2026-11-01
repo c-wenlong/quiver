@@ -174,13 +174,27 @@ class TestSatelliteStore(unittest.TestCase):
         self.assertEqual(records[0]["received_at"], 200.0)
 
     def test_daily_usage_kept_when_well_formed(self):
-        usage.save_satellite(self.home, "a", {"harnesses": [], "daily_usage": {
-            "time_zone": "UTC", "days": [{"date": "2026-10-01"}, "junk"]}})
+        usage.save_satellite(self.home, "a", {"harnesses": [], "server_time": 50.0, "daily_usage": {
+            "time_zone": "UTC", "days": [
+                {"date": "2026-10-01", "harness": "claude", "tokens": 5, "cost_usd": float("inf")},
+                {"date": "2026-10-02", "tokens": -3, "cost_usd": 10 ** 400},
+                "junk", {"no": "date"}]}})
         usage.save_satellite(self.home, "b", {"harnesses": [], "daily_usage": "bad"})
         records = {r["machine_id"]: r for r in usage.load_satellites(self.home)}
-        self.assertEqual(records["a"]["daily_usage"],
-                         {"time_zone": "UTC", "days": [{"date": "2026-10-01"}]})
+        daily = records["a"]["daily_usage"]
+        self.assertEqual(daily["reported_at"], 50.0)
+        self.assertEqual([(r["date"], r["harness"], r["tokens"], r["cost_usd"]) for r in daily["days"]],
+                         [("2026-10-01", "claude", 5, 0.0), ("2026-10-02", "unknown", 0, 0.0)])
         self.assertIsNone(records["b"]["daily_usage"])
+
+    def test_a_report_without_daily_rows_keeps_the_last_ones(self):
+        usage.save_satellite(self.home, "a", {"harnesses": [], "server_time": 50.0, "daily_usage": {
+            "time_zone": "UTC", "days": [{"date": "2026-10-01", "tokens": 5}]}})
+        usage.save_satellite(self.home, "a", {"harnesses": [{"name": "x"}], "server_time": 80.0})
+        record = usage.load_satellites(self.home)[0]
+        self.assertEqual(record["reported_at"], 80.0)
+        self.assertEqual(record["daily_usage"]["reported_at"], 50.0)
+        self.assertEqual(record["daily_usage"]["days"][0]["tokens"], 5)
 
     def test_bad_harnesses_rejected(self):
         with self.assertRaises(ValueError):

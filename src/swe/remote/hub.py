@@ -3648,7 +3648,9 @@ class _Handler(BaseHTTPRequestHandler):
             out.append({
                 "id": mid,
                 "name": (machines.get(mid) or {}).get("name") or mid,
-                "reported_at": record.get("reported_at"),
+                # When these daily rows were reported, which is older than
+                # the limits when the last reports came without them.
+                "reported_at": daily.get("reported_at", record.get("reported_at")),
                 "days": daily.get("days") or [],
             })
         return out

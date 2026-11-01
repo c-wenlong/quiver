@@ -175,7 +175,7 @@ final class UsageDecodingTests: XCTestCase {
         XCTAssertEqual(body.heatmap?.days?.first?.future, true)
     }
 
-    func testOverviewMachinesDecodeAndWordTheSource() throws {
+    @MainActor func testOverviewMachinesDecodeAndWordTheSource() throws {
         let json = #"""
         {"machine": "Home", "machine_filter": "all", "machines": [
           {"id": "hub", "name": "Home", "hub": true, "tokens": 300, "cost_usd": 1.0, "reported_at": null},
@@ -191,6 +191,13 @@ final class UsageDecodingTests: XCTestCase {
         let machines = try XCTUnwrap(all.machines)
         XCTAssertEqual(MachineChips.title(machines[1], total: 400), "MacBook 25%")
         XCTAssertEqual(MachineChips.title(machines[1], total: 0), "MacBook")
+        // The chips show the period on screen's own machines.
+        let week = try UsageFixtures.decode(json.replacingOccurrences(of: "300", with: "900"),
+                                            as: OverviewResponse.self)
+        let model = UsageModel(overviews: [.week: week, .today: all], period: .today)
+        XCTAssertEqual(model.shownMachines.first?.tokens, 300)
+        model.period = .week
+        XCTAssertEqual(model.shownMachines.first?.tokens, 900)
         // An older hub sends no machines: the hub's own line, as before.
         let old = try UsageFixtures.decode(#"{"machine": "Home"}"#, as: OverviewResponse.self)
         XCTAssertNil(old.machines)
