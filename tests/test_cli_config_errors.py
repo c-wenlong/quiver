@@ -58,7 +58,7 @@ class CorruptRegistryThroughRealCommandsTest(unittest.TestCase):
 
     def _swe(self, *args):
         with tempfile.TemporaryDirectory() as tmp:
-            config = pathlib.Path(tmp) / ".quiver" / "config"
+            config = pathlib.Path(tmp) / ".swe" / "config"
             config.mkdir(parents=True)
             (config / "harness.json").write_text("{corrupt")
             env = os.environ.copy()

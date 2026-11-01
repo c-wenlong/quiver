@@ -14,7 +14,7 @@ come from the Pricing page's modules.
 
 The app downloads Artificial Analysis data with an API key saved in
 Settings › Services, into a store only the app reads
-(`~/.quiver/data/artificial-analysis/`). Nothing in Python reads that key or
+(`~/.swe/data/artificial-analysis/`). Nothing in Python reads that key or
 store, and this port adds no key flow, so these stay in the Mac app:
 
 - the benchmark columns: Intelligence index, Terminal-Bench 4.0 (coding),

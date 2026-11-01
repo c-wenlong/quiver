@@ -32,7 +32,7 @@ def _skill(root: Path, name: str, body: str = "x") -> None:
 
 def _home(tmp: str) -> Path:
     home = Path(tmp)
-    shared = home / ".quiver" / "skills"
+    shared = home / ".swe" / "skills"
     for n in ("alpha", "beta"):
         _skill(shared, n)
     return home
@@ -52,7 +52,7 @@ class DiscoveryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             found = {str(p.relative_to(home)) for p in discover_skill_roots(home)}
-            self.assertNotIn(".quiver/skills", found)
+            self.assertNotIn(".swe/skills", found)
 
     def test_skips_backup_directories(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -121,15 +121,15 @@ class SignatureTest(unittest.TestCase):
             self.assertIn(".pi/agent/skills", found)
 
     def test_declared_root_cannot_be_the_shared_tree(self):
-        # A malformed capability resolving to ~/.quiver/skills would let
+        # A malformed capability resolving to ~/.swe/skills would let
         # init classify and replace the link target itself.
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             registry = {"evil": {"capabilities": {
-                "skills": {"supported": True, "root": "~/.quiver/skills"}}}}
+                "skills": {"supported": True, "root": "~/.swe/skills"}}}}
             found = {str(p.relative_to(home))
                      for p in discover_skill_roots(home, registry)}
-            self.assertNotIn(".quiver/skills", found)
+            self.assertNotIn(".swe/skills", found)
 
     def test_declared_root_cannot_escape_home(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -345,7 +345,7 @@ class ClassifyTest(unittest.TestCase):
         # same length used to pass _same_skill and get absorbed.
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             (shared / "alpha" / "helper.sh").write_text("#!/bin/sh\n")
             root = home / ".pane" / "skills"
             _skill(root, "alpha")
@@ -414,7 +414,7 @@ class ClassifyTest(unittest.TestCase):
             home = _home(tmp)
             root = home / ".qwen" / "skills"
             root.parent.mkdir(parents=True)
-            root.symlink_to(home / ".quiver" / "skills")
+            root.symlink_to(home / ".swe" / "skills")
             self.assertEqual(classify_skill_root(root, home)[0], "linked")
 
     def test_symlink_elsewhere_reads_as_relink(self):
@@ -469,7 +469,7 @@ class SafetyTest(unittest.TestCase):
             self._run(home, ["--force", "--yes"])
             self.assertTrue(pane.is_symlink())
 
-            saved = list((home / ".quiver" / "backups").glob("*pane_skills*"))
+            saved = list((home / ".swe" / "backups").glob("*pane_skills*"))
             self.assertEqual(len(saved), 1)
             self.assertIn(
                 "irreplaceable", (saved[0] / "only-here" / "SKILL.md").read_text()
@@ -482,7 +482,7 @@ class SafetyTest(unittest.TestCase):
             _skill(dup, "alpha")
             self._run(home, [])
             self.assertEqual(
-                len(list((home / ".quiver" / "backups").glob("*copilot_skills*"))), 1
+                len(list((home / ".swe" / "backups").glob("*copilot_skills*"))), 1
             )
 
     def test_check_mode_changes_nothing(self):
@@ -508,24 +508,24 @@ class SafetyTest(unittest.TestCase):
             self.assertFalse(root.is_symlink())
 
     def test_force_never_deletes_under_quiver_or_outside_home(self):
-        # A capability pointing into ~/.quiver is a real file "conflict"
+        # A capability pointing into ~/.swe is a real file "conflict"
         # --force used to resolve by deleting it — the registry itself.
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            qdir = home / ".quiver" / "config"
+            qdir = home / ".swe" / "config"
             qdir.mkdir(parents=True)
             victim = qdir / "harness.json"
             victim.write_text(
                 json.dumps({
                     "evil": {"capabilities": {
-                        "instructions": {"file": "~/.quiver/config/harness.json"},
+                        "instructions": {"file": "~/.swe/config/harness.json"},
                         "skills": {"supported": False},
                     }}
                 })
             )
             code, _out = self._run(home, ["--force"])
             self.assertEqual(code, 1)
-            self.assertTrue(victim.is_file(), "--force deleted inside ~/.quiver")
+            self.assertTrue(victim.is_file(), "--force deleted inside ~/.swe")
             self.assertFalse(victim.is_symlink())
 
     def test_rerun_is_stable(self):
@@ -534,10 +534,10 @@ class SafetyTest(unittest.TestCase):
             _skill(home / ".copilot" / "skills", "alpha")
             _skill(home / ".pane" / "skills", "only-here")
             self._run(home, [])
-            backups_after_first = len(list((home / ".quiver" / "backups").iterdir()))
+            backups_after_first = len(list((home / ".swe" / "backups").iterdir()))
             self._run(home, [])
             self.assertEqual(
-                len(list((home / ".quiver" / "backups").iterdir())),
+                len(list((home / ".swe" / "backups").iterdir())),
                 backups_after_first,
                 "a second run should absorb nothing new",
             )

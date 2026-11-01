@@ -31,7 +31,7 @@ public enum Vendor: String, Codable, Sendable, CaseIterable {
 ///
 /// The default profile of each vendor is the vendor's own login in its usual
 /// place (`~/.claude`, `~/.codex`). Every other profile owns an isolated
-/// directory tree under `~/.quiver/accounts`, so its CLI login, desktop
+/// directory tree under `~/.swe/accounts`, so its CLI login, desktop
 /// session and history never touch another profile's.
 public struct Profile: Codable, Sendable, Identifiable, Equatable, Hashable {
     /// `<vendor>-<slug>`; the defaults are `claude-default` and `codex-default`.

@@ -21,7 +21,7 @@ class SetupFindingsTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def hub(self):
-        swe_dir = self.home / ".quiver"
+        swe_dir = self.home / ".swe"
         swe_dir.mkdir(exist_ok=True)
         return swe_dir
 
@@ -76,13 +76,13 @@ class SetupFindingsTest(unittest.TestCase):
         claude = self.home / ".claude"
         claude.mkdir(exist_ok=True)
         markets = {name: {"source": {"source": "directory",
-                                     "path": str(self.home / ".quiver" / "plugins" / name)}}
+                                     "path": str(self.home / ".swe" / "plugins" / name)}}
                    for name in names}
         markets["remote"] = {"source": {"source": "github", "repo": "o/r"}}
         settings = claude / "settings.json"
         settings.write_text(json.dumps({"extraKnownMarketplaces": markets}))
         for name in present:
-            (self.home / ".quiver" / "plugins" / name).mkdir(parents=True)
+            (self.home / ".swe" / "plugins" / name).mkdir(parents=True)
         return settings
 
     def test_missing_marketplace_folders_fold_into_one_warning(self):
@@ -373,7 +373,7 @@ class IssueFindingsTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _write(self, issues):
-        store = self.home / ".quiver" / "data"
+        store = self.home / ".swe" / "data"
         store.mkdir(parents=True)
         (store / "issues.json").write_text(json.dumps(
             {"version": 1, "issues": issues}))

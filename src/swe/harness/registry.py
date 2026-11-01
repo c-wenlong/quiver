@@ -59,7 +59,7 @@ def load_registry() -> dict:
     # installed listed eight it did not have, each printing a version
     # constant as though it had been probed. Later the empty {} was still
     # saved here, which made a read (or a command that then failed, like
-    # `swe --version` on an old release) create ~/.quiver: anything wanting
+    # `swe --version` on an old release) create ~/.swe: anything wanting
     # to place content at that path had to land before the first swe
     # invocation. The registry answers "what is on this machine", which
     # only `swe discover` can know; writers scaffold through
@@ -257,7 +257,7 @@ def _backup_legacy_files() -> None:
     Derived from CONFIG_DIR rather than importing SWE_DIR directly, so
     that patching CONFIG_DIR (as every test here does, to keep this pointed
     at a tmp dir) also redirects the backup — it must never write under a
-    real ~/.quiver during a test run.
+    real ~/.swe during a test run.
     """
     stamp = datetime.now().strftime("%Y%m%d")
     dest_dir = CONFIG_DIR.parent / ".backup" / f"registry-migration-{stamp}"

@@ -108,7 +108,7 @@ function header() {
   }
   const off = page.tab === "health" && fixing;
   return pageHeader("Plugins",
-    "Every plugin in every marketplace, and where Claude Code and Codex no longer match ~/.quiver/plugins.",
+    "Every plugin in every marketplace, and where Claude Code and Codex no longer match ~/.swe/plugins.",
     `${updated}${fixAll}<button class="icon-button${busy ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="${help}"${
       off ? " disabled" : ""}>${icon("rescan")}</button>`);
 }
@@ -207,9 +207,9 @@ function healthBody() {
   const err = (page.error.health ? errorCard(page.error.health) : "") + fixOutcome() + confirmAllCard();
   if (!d) return err || driftSkeleton();
   if (d.sources === 0) {
-    return err + iconCard("puzzle", "No plugins in ~/.quiver/plugins, so there is nothing to keep in step.", "muted-label");
+    return err + iconCard("puzzle", "No plugins in ~/.swe/plugins, so there is nothing to keep in step.", "muted-label");
   }
-  if (!d.drift.length) return err + iconCard("seal", "Claude Code and Codex run what ~/.quiver/plugins holds.");
+  if (!d.drift.length) return err + iconCard("seal", "Claude Code and Codex run what ~/.swe/plugins holds.");
   const harnesses = [];
   for (const f of d.drift) if (!harnesses.includes(f.harness)) harnesses.push(f.harness);
   const cards = harnesses.map((h) => {

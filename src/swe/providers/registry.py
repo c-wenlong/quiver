@@ -2,7 +2,7 @@
 
 Mirrors ``swe.harness.registry`` so the on-disk shape and ergonomics
 match the rest of quiver. The registry lives at
-``~/.quiver/config/providers.json`` and is seeded with the built-in
+``~/.swe/config/providers.json`` and is seeded with the built-in
 ``DEFAULT_PROVIDERS`` catalog on first run.
 
 The ``name`` and ``aliases`` fields on every provider are *derived*

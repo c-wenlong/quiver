@@ -20,10 +20,10 @@ from swe.init import commands as init_commands
 
 def _home(tmp: str, registry: dict | None) -> Path:
     home = Path(tmp)
-    (home / ".quiver").mkdir()
+    (home / ".swe").mkdir()
     (home / ".claude").mkdir()
     if registry is not None:
-        cfg = home / ".quiver" / "config"
+        cfg = home / ".swe" / "config"
         cfg.mkdir()
         (cfg / "harness.json").write_text(json.dumps(registry))
     return home

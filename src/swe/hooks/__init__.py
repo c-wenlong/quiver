@@ -1,4 +1,4 @@
-"""Quiver hooks: the per-harness hook scripts under ~/.quiver/hooks."""
+"""Quiver hooks: the per-harness hook scripts under ~/.swe/hooks."""
 
 from swe.hooks.commands import cmd_hooks
 

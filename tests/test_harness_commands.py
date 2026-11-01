@@ -486,7 +486,7 @@ class CmdListSessColumnTest(unittest.TestCase):
     def setUp(self):
         _setup_patches(self)
         # The header reads the developer's saved session window; pin it so
-        # the column really is "100d" whatever ~/.quiver/config.json says.
+        # the column really is "100d" whatever ~/.swe/config.json says.
         p = patch("swe.harness.commands.load_window", return_value=100)
         p.start()
         self.addCleanup(p.stop)

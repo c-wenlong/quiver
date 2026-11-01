@@ -82,7 +82,7 @@ class SkillsRootsTest(unittest.TestCase):
     def test_unsynced_then_synced_grouping(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             lone = home / ".lone" / "skills"
             lone.mkdir(parents=True)
@@ -107,7 +107,7 @@ class SkillsRootsTest(unittest.TestCase):
             nodes = [self._node("old", home / ".old" / "skills", state="keep")]
             reg = {"old": {"state": "archived", "command": "old"}}
             with patch("swe.find.roots.skills_tree",
-                       return_value=(home / ".quiver" / "skills", nodes)), \
+                       return_value=(home / ".swe" / "skills", nodes)), \
                     patch("swe.find.roots.count_skills", return_value=0), \
                     patch("swe.find.roots.load_registry_if_present", return_value=reg):
                 out = skills_roots(home, scope=SCOPE_ALL)

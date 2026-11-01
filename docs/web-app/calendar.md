@@ -93,7 +93,7 @@ Ported from `Activity.swift`, `ActivityBlocks.swift` and
    The Cursor app (`CursorAppActivity`): each account root's
    `User/globalStorage/state.vscdb`, opened read-only. The roots are
    `~/Library/Application Support/Cursor` plus each extra Cursor
-   profile's `~/.quiver/accounts/cursor/<id>/desktop`, and the root is
+   profile's `~/.swe/accounts/cursor/<id>/desktop`, and the root is
    the block's account ("Cursor", or "Cursor: <profile>"). Every
    `cursorDiskKV` row keyed `bubbleId:<composer>:<bubble>` is a response
    at its `createdAt` (an ISO time or epoch milliseconds), grouped by
@@ -164,9 +164,9 @@ listing gets a stand-in row from the ledger, as the app's
   with the token in its Settings into its own store, which the hub
   doesn't share. A satellite's activity is not shown either.
   The hub keeps its file index in memory; the Mac's copy in
-  `~/.quiver/cache/calendar` is its own.
+  `~/.swe/cache/calendar` is its own.
 - **Grok Bot titles** come from the names the Mac app remembered in
-  `~/.quiver/data/grok-bot-names.json` (read only); the hub has no Bot
+  `~/.swe/data/grok-bot-names.json` (read only); the hub has no Bot
   roster, so a deleted Bot reads as its short id, not "Deleted Bot".
 - **Tokens and spend** are added to the block card and the project
   sheet for ledger harnesses; the app shows time and responses only.

@@ -361,6 +361,6 @@ import Testing
 
     @Test func theDefaultFileIsUnderTheRealHomeQuiverCache() {
         let file = WidgetSnapshotStore.defaultFile(home: URL(fileURLWithPath: "/Users/k"))
-        #expect(file.path == "/Users/k/.quiver/cache/widgets/snapshot.json")
+        #expect(file.path == "/Users/k/.swe/cache/widgets/snapshot.json")
     }
 }

@@ -109,7 +109,7 @@ class TestLoading(unittest.TestCase):
 
     def test_offline_falls_back_to_the_snapshot_and_overrides_win(self):
         home = Path(tempfile.mkdtemp())
-        cfg = home / ".quiver" / "config"
+        cfg = home / ".swe" / "config"
         cfg.mkdir(parents=True)
         (cfg / "pricing.json").write_text(json.dumps(
             {"models": {"my-model": {"input": 1, "output": 2}, "bad": {"input": 1}}}))
@@ -128,7 +128,7 @@ class TestLoading(unittest.TestCase):
 
     def test_an_unsupported_override_shape_is_ignored(self):
         home = Path(tempfile.mkdtemp())
-        cfg = home / ".quiver" / "config"
+        cfg = home / ".swe" / "config"
         cfg.mkdir(parents=True)
         (cfg / "pricing.json").write_text(json.dumps({"models": [{"model": "x", "input": 1}]}))
         cat = load_catalog(home, download=False)

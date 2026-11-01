@@ -136,7 +136,7 @@ _LINK_GLYPH = {
     # A real directory whose contents are all duplicates or empty, so init can
     # replace it with the link without losing anything.
     "absorb": ("yellow", "\u25cb"),
-    # Listed in ~/.quiver/.linkignore: the user asked init to leave it alone.
+    # Listed in ~/.swe/.linkignore: the user asked init to leave it alone.
     "ignored": ("dim", "\u2013"),
 }
 
@@ -255,14 +255,14 @@ def cmd_list_legend(args=None) -> int:
 
     print(f"\n  {c('bold', 'AGENTS.MD and SKILLS glyphs')}\n")
     rows = [
-        ("linked", "points at the shared copy in ~/.quiver"),
-        ("relink", "is a symlink, but aimed somewhere other than ~/.quiver"),
+        ("linked", "points at the shared copy in ~/.swe"),
+        ("relink", "is a symlink, but aimed somewhere other than ~/.swe"),
         ("create", "nothing there yet; swe init would create the link"),
         ("absorb", "a real directory, but its contents are all duplicates or empty"),
         ("keep", "a real directory holding files that exist nowhere else, left alone"),
         ("conflict", "a real file sits where the link should go; needs --force"),
         ("skipped", "harness is not installed"),
-        ("ignored", "listed in ~/.quiver/.linkignore, left alone on purpose"),
+        ("ignored", "listed in ~/.swe/.linkignore, left alone on purpose"),
     ]
     for state, meaning in rows:
         colour, glyph = _LINK_GLYPH.get(state, ("dim", "?"))

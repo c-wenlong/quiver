@@ -1,4 +1,4 @@
-"""User-configured skill catalog registry (~/.quiver/config/skill_catalogs.json)."""
+"""User-configured skill catalog registry (~/.swe/config/skill_catalogs.json)."""
 
 import json
 import os

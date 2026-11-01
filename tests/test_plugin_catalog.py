@@ -269,12 +269,12 @@ class MalformedTest(_CatalogHome, unittest.TestCase):
         # (CatalogProblems.missingManifest), so it is pinned here.
         self.settings["extraKnownMarketplaces"] = {
             "elsewhere": {"source": {"source": "directory",
-                                     "path": str(self.home / ".quiver" / "plugins" / "elsewhere")}}}
+                                     "path": str(self.home / ".swe" / "plugins" / "elsewhere")}}}
         self._write_claude()
         catalog = self.catalog()
         self.assertIn({"harness": "claude", "marketplace": "elsewhere",
                        "detail": "no marketplace manifest on disk",
-                       "path": str(self.home / ".quiver" / "plugins" / "elsewhere")},
+                       "path": str(self.home / ".swe" / "plugins" / "elsewhere")},
                       catalog["errors"])
         # A hub path, so it would be the app's Local section, with nothing in it.
         elsewhere = self.mkt("elsewhere", catalog)

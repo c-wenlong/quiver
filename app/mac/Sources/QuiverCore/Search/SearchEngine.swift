@@ -99,7 +99,7 @@ public final class SearchEngine: @unchecked Sendable {
     }
 
     /// - Parameter directory: where `search.sqlite` lives; production uses
-    ///   `SearchLocation.directory(under:)` (`~/.quiver/data/search/`),
+    ///   `SearchLocation.directory(under:)` (`~/.swe/data/search/`),
     ///   tests a temp dir.
     public init(directory: URL) {
         self.directory = directory

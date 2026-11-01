@@ -77,7 +77,7 @@ import Testing
     @Test func skillsDecodeRootsAndSkills() async throws {
         let (swe, _) = try client("swe-skills")
         let inventory = try await swe.skills()
-        #expect(inventory.sharedDir == "/tmp/quiver-fixture-home/.quiver/skills")
+        #expect(inventory.sharedDir == "/tmp/quiver-fixture-home/.swe/skills")
         let claude = try #require(inventory.harnesses.first)
         #expect(claude.name == "claude")
         #expect(claude.state == "linked")
@@ -148,7 +148,7 @@ import Testing
         let market = try #require(catalog.marketplaces.first)
         #expect(market.name == "fixture-market")
         #expect(market.hub == true)
-        #expect(market.path == "/tmp/quiver-fixture-home/.quiver/plugins/fixture-market")
+        #expect(market.path == "/tmp/quiver-fixture-home/.swe/plugins/fixture-market")
 
         let plugin = try #require(market.plugins.first)
         #expect(plugin.name == "fixture-plugin")
@@ -160,7 +160,7 @@ import Testing
         #expect(plugin.skills.map(\.name) == ["fixture-plugin-skill"])
         #expect(plugin.harnesses["claude"]?.installed == false)
         #expect(plugin.drift?["claude"]?.state == .unregistered)
-        #expect(plugin.drift?["claude"]?.id == "claude:unregistered:/tmp/quiver-fixture-home/.quiver/plugins/fixture-market")
+        #expect(plugin.drift?["claude"]?.id == "claude:unregistered:/tmp/quiver-fixture-home/.swe/plugins/fixture-market")
     }
 
     @Test func pluginActionReplyDecodes() async throws {
@@ -179,7 +179,7 @@ import Testing
         #expect(report.sources == 1)
         #expect(report.drift.count == 2)
         let finding = try #require(report.drift.first)
-        #expect(finding.id == "claude:unregistered:/tmp/quiver-fixture-home/.quiver/plugins/fixture-market")
+        #expect(finding.id == "claude:unregistered:/tmp/quiver-fixture-home/.swe/plugins/fixture-market")
         #expect(finding.harness == "claude")
         #expect(finding.marketplace == "fixture-market")
         #expect(finding.plugin == nil)
@@ -190,7 +190,7 @@ import Testing
 
     @Test func pluginFixReplyDecodes() async throws {
         let (swe, _) = try client("swe-find-plugins-fix")
-        try await swe.fixPluginDrift(id: "claude:unregistered:/tmp/quiver-fixture-home/.quiver/plugins/fixture-market")
+        try await swe.fixPluginDrift(id: "claude:unregistered:/tmp/quiver-fixture-home/.swe/plugins/fixture-market")
     }
 
     @Test func doctorDecodesFindings() async throws {
@@ -211,7 +211,7 @@ import Testing
     @Test func initCheckDecodesLinkStates() async throws {
         let (swe, _) = try client("swe-init-check")
         let check = try await swe.initCheck()
-        #expect(check.agentsFile == "/tmp/quiver-fixture-home/.quiver/AGENTS.md")
+        #expect(check.agentsFile == "/tmp/quiver-fixture-home/.swe/AGENTS.md")
         #expect(check.agentsFileExists == true)
         let claude = try #require(check.harnesses.first)
         #expect(claude.instructions?.state == .linked)
@@ -273,7 +273,7 @@ import Testing
         let beacon = try #require(inventory.hooks.first)
         #expect(beacon.script == "beacon.py")
         #expect(beacon.harness == "claude")
-        #expect(beacon.source == "/tmp/quiver-fixture-home/.quiver/hooks/claude/beacon.py")
+        #expect(beacon.source == "/tmp/quiver-fixture-home/.swe/hooks/claude/beacon.py")
         #expect(beacon.destination == "/tmp/quiver-fixture-home/.claude/hooks/beacon.py")
         #expect(beacon.state == .linked)
         #expect(beacon.tier == .harness)
@@ -357,7 +357,7 @@ import Testing
         let claude = try #require(info.harnesses.first)
         #expect(claude.harness == "claude")
         #expect(claude.state == .linked)
-        #expect(claude.source == "/tmp/quiver-fixture-home/.quiver/hooks/claude/prose-guard.py")
+        #expect(claude.source == "/tmp/quiver-fixture-home/.swe/hooks/claude/prose-guard.py")
         #expect(claude.destination == "/tmp/quiver-fixture-home/.claude/hooks/prose-guard.py")
         #expect(claude.summary == "Blocks prompt submissions that ask for edits to prose files.")
         let declared = try #require(claude.declared.first)
@@ -383,7 +383,7 @@ import Testing
         let (swe, runner) = try client("swe-hooks-new")
         let reply = try await swe.newHook(harness: "claude", name: "guard")
         #expect(runner.calls.last == ["hooks", "new", "claude", "guard", "--json"])
-        #expect(reply.path.hasSuffix(".quiver/hooks/claude/guard.py"))
+        #expect(reply.path.hasSuffix(".swe/hooks/claude/guard.py"))
         #expect(reply.command == "~/.claude/hooks/guard.py")
         #expect(reply.settings == ["/tmp/quiver-fixture-home/.claude/settings.json"])
         #expect(reply.stanza.contains("PreToolUse"))
@@ -395,13 +395,13 @@ import Testing
         let runner = FakeRunner(.init(status: 0, stdout: Data(#"""
             {"schema": 1, "data": {"hooks": [
               {"script": "a.py", "harness": "shared",
-               "source": "/h/.quiver/hooks/shared/a.py",
+               "source": "/h/.swe/hooks/shared/a.py",
                "destination": "/h/.claude/hooks/a.py",
                "state": "linked", "detail": "", "declared": [],
                "tier": "shared", "enabled": true,
                "events_supported": ["PreToolUse"]},
               {"script": "b.py", "harness": "claude",
-               "source": "/h/.quiver/hooks/claude/b.py",
+               "source": "/h/.swe/hooks/claude/b.py",
                "destination": "/h/.claude/hooks/b.py",
                "state": "create", "detail": "", "declared": [],
                "tier": "unlisted-word"}

@@ -18,7 +18,7 @@ _TOTAL = "input + output + cache_read + cache_write + reasoning"
 
 
 def ledger_path_for(home: Path | None = None) -> Path:
-    """``~/.quiver/data/web-ledger/ledger.sqlite``. Apart from the Mac
+    """``~/.swe/data/web-ledger/ledger.sqlite``. Apart from the Mac
     app's ``data/ledger/`` on purpose: the two schemas differ."""
     return data_dir_for(home) / "web-ledger" / "ledger.sqlite"
 

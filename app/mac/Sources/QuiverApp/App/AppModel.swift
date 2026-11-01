@@ -310,7 +310,7 @@ final class AppModel {
     }
 
     let accounts: AccountsModel
-    /// Usage failures the user can act on, persisted under ~/.quiver so
+    /// Usage failures the user can act on, persisted under ~/.swe so
     /// toasts deduplicate across polls and restarts; Doctor's rows and
     /// the Settings badge read it. Rebuilt never — the store is file-backed,
     /// so a new swe keeps the same issues.
@@ -344,11 +344,11 @@ final class AppModel {
     @ObservationIgnored private(set) var codexHomes: @MainActor () -> [String] = { [] }
     /// App-wide so unsaved AGENTS.md edits outlive a trip to another page.
     let agentsMd = AgentsModel()
-    /// The same for chapter edits under ~/.quiver/AGENTS_MD.
+    /// The same for chapter edits under ~/.swe/AGENTS_MD.
     let chapters = ChaptersModel()
     private(set) var apiKeys: APIKeysModel
 
-    /// The shell file of API keys; empty means ~/.quiver/secrets/providers/.api_keys.
+    /// The shell file of API keys; empty means ~/.swe/secrets/providers/.api_keys.
     var apiKeysPath: String {
         didSet {
             UserDefaults.standard.set(apiKeysPath, forKey: "apiKeysPath")
@@ -356,7 +356,7 @@ final class AppModel {
         }
     }
 
-    /// The managed MCP servers folder; empty means ~/.quiver/mcp/servers.
+    /// The managed MCP servers folder; empty means ~/.swe/mcp/servers.
     var mcpServersPath: String {
         didSet { UserDefaults.standard.set(mcpServersPath, forKey: "mcpServersPath") }
     }
@@ -447,21 +447,21 @@ final class AppModel {
     /// The GitHub pages: pins, per-repo boards and the inbox, read
     /// through `swe gh`. The model gets the current swe per call, so a
     /// path change needs no rebuild here. Boards and the inbox persist
-    /// to ~/.quiver/cache for a warm start.
+    /// to ~/.swe/cache for a warm start.
     let github: GitHubModel
     /// The Tasks page: the work items the hub's agents are on, read
     /// through this Mac's hub (`GET /v1/app/tasks`).
     let tasks = TasksModel()
     /// Polls the inbox while the app runs — regardless of which page is
     /// open — and turns new notifications into banners plus board
-    /// invalidations. Assigned in init, where `~/.quiver` is known.
+    /// invalidations. Assigned in init, where `~/.swe` is known.
     let githubNotify: GitHubNotifier
     /// The MCP servers page's "Server folders" section.
     let mcpRepo = McpServerRepoModel()
     /// The Settings > General Updates card's build and release state.
     let updates: UpdatesModel
     let plugins: PluginsModel
-    /// The Hooks page's list: the scripts under ~/.quiver/hooks, their link
+    /// The Hooks page's list: the scripts under ~/.swe/hooks, their link
     /// states and the check's findings. It asks for the current swe per
     /// call, so a path change needs no rebuild here.
     let hooks: HooksModel
@@ -471,7 +471,7 @@ final class AppModel {
     /// The Plugins page's tab, so another page can open Explore.
     var pluginsTab: PluginsTab = .explore
     /// Quiver's display names for marketplaces and plugins, from
-    /// ~/.quiver/config/plugin-display-names.json.
+    /// ~/.swe/config/plugin-display-names.json.
     var primitiveNames: PluginDisplayNames
     private let userHome = FileManager.default.homeDirectoryForCurrentUser
     /// This Mac's hub, which the Sessions page's chat talks to.
@@ -482,7 +482,39 @@ final class AppModel {
         return LocalHub(locator: swe, store: HubDeviceStore(url: HubDeviceStore.defaultURL(home: home)))
     }
 
+    /// `~/.quiver` → `~/.swe`, mirroring `swe.paths._resolve_data_dir`.
+    ///
+    /// The app reaches the data root before any bundled `swe` command may
+    /// have run, so the move has to happen here too: when `~/.swe` does
+    /// not exist and `~/.quiver` is a real directory, rename it in place
+    /// and leave a `~/.quiver` → `.swe` symlink so harness links and older
+    /// copies of the CLI keep resolving. A `~/.quiver` that is itself a
+    /// link is mirrored as `~/.swe`, never moved out from under whatever
+    /// put it there. On any failure the old root keeps serving.
+    private static func migrateDataRoot(home: URL) {
+        let fm = FileManager.default
+        let new = home.appending(path: ".swe")
+        let old = home.appending(path: ".quiver")
+        if (try? fm.attributesOfItem(atPath: new.path)) != nil { return }
+        guard let attrs = try? fm.attributesOfItem(atPath: old.path),
+              let type = attrs[.type] as? FileAttributeType else { return }
+        if type == .typeSymbolicLink {
+            if let target = try? fm.destinationOfSymbolicLink(atPath: old.path) {
+                try? fm.createSymbolicLink(atPath: new.path, withDestinationPath: target)
+            }
+            return
+        }
+        guard type == .typeDirectory else { return }
+        do {
+            try fm.moveItem(at: old, to: new)
+            try? fm.createSymbolicLink(atPath: old.path, withDestinationPath: ".swe")
+        } catch {
+            // The old root keeps serving; the CLI can still move it later.
+        }
+    }
+
     init() {
+        Self.migrateDataRoot(home: FileManager.default.homeDirectoryForCurrentUser)
         let saved = UserDefaults.standard.string(forKey: SweLocation.defaultsKey) ?? ""
         swePath = saved
         let client = Self.client(for: saved)
@@ -501,9 +533,9 @@ final class AppModel {
         hideTrivialSessions = Self.hidesTrivialSessions()
         codeEditor = UserDefaults.standard.string(forKey: "codeEditor") ?? ""
 
-        // Everything Quiver keeps lives under ~/.quiver (see AGENTS.md).
+        // Everything Quiver keeps lives under ~/.swe (see AGENTS.md).
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let quiver = home.appending(path: ".quiver")
+        let quiver = home.appending(path: ".swe")
         primitiveNames = PluginDisplayNames.load(from: PluginDisplayNames.file(home: home))
         limits = LimitsMonitor(quiver: quiver)
         github = GitHubModel(
@@ -1068,7 +1100,7 @@ final class AppModel {
     }
 
     /// Open a new agent session on a PR's head: `swe gh pr worktree`
-    /// checks the head out under ~/.quiver/worktrees, then the chosen
+    /// checks the head out under ~/.swe/worktrees, then the chosen
     /// terminal gets `cd <checkout> && <harness cli>`.
     func openPrSession(repo: String, number: Int, harness: Harness) async {
         guard let path = await github.prWorktree(repo: repo, pr: number, swe: swe) else { return }
@@ -1104,20 +1136,20 @@ final class AppModel {
         let trimmed = path.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty,
               PathSafety.rejection(of: trimmed) == nil else {
-            return home.appending(path: ".quiver/mcp/servers")
+            return home.appending(path: ".swe/mcp/servers")
         }
         return URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
     }
 
     private static func keysModel(path: String) -> APIKeysModel {
-        // One backup of the previous version, private to you, under ~/.quiver.
-        let backups = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".quiver/backups/api-keys")
+        // One backup of the previous version, private to you, under ~/.swe.
+        let backups = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".swe/backups/api-keys")
         let home = FileManager.default.homeDirectoryForCurrentUser
         return APIKeysModel(store: APIKeysStore(url: keysFile(path: path), backupDirectory: backups,
                                                 sealedFolder: APIKeysStore.secretsFolder(home: home)),
                             shell: LoginShellEnvironment(),
                             checkCache: APIKeyCheckStore(url: FileManager.default.homeDirectoryForCurrentUser
-                                .appending(path: ".quiver/cache/api-key-checks.json")))
+                                .appending(path: ".swe/cache/api-key-checks.json")))
     }
 
     private static func client(for path: String) -> SweClient {

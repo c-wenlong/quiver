@@ -203,7 +203,7 @@ class TestTotals(unittest.TestCase):
 class TestAccounts(unittest.TestCase):
     def test_labels(self):
         home = Path(tempfile.mkdtemp())
-        accounts_dir = home / ".quiver" / "accounts"
+        accounts_dir = home / ".swe" / "accounts"
         accounts_dir.mkdir(parents=True)
         (accounts_dir / "profiles.json").write_text(json.dumps({"schema": 1, "profiles": [
             {"id": "claude-default", "vendor": "claude", "name": "Personal", "isDefault": True},
@@ -221,7 +221,7 @@ class TestAccounts(unittest.TestCase):
 
     def test_cursor_accounts_are_the_apps_user_data_dirs(self):
         home = Path(tempfile.mkdtemp())
-        accounts_dir = home / ".quiver" / "accounts"
+        accounts_dir = home / ".swe" / "accounts"
         accounts_dir.mkdir(parents=True)
         (accounts_dir / "profiles.json").write_text(json.dumps({"schema": 1, "profiles": [
             {"id": "cursor-a", "vendor": "cursor", "name": "Side", "isDefault": False},
@@ -279,7 +279,7 @@ class TestGrokRoster(unittest.TestCase):
             self.assertEqual(cal._grok_names(self.home), {}, body)
 
     def test_the_mac_apps_memory_is_not_read(self):
-        data = self.home / ".quiver" / "data"
+        data = self.home / ".swe" / "data"
         data.mkdir(parents=True)
         (data / "grok-bot-names.json").write_text(json.dumps({"b9": "Old"}))
         self.assertEqual(cal._grok_names(self.home), {})

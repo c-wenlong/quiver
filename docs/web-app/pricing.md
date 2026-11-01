@@ -76,7 +76,7 @@ Clicking a row (or Enter on it) opens a dialog, the app's `PricingEditSheet`:
 the model, "Price applies to" (monospaced, pre-filled with `key`), Input,
 Output, Cache read and Cache write pre-filled with the row's rates, the
 note "USD per 1M tokens. Blank cache fields count as 0. Saves to
-~/.quiver/config/pricing.json on <machine>.", and Cancel / Save. Save stays
+~/.swe/config/pricing.json on <machine>.", and Cancel / Save. Save stays
 off until the name is set, Input and Output are numbers of 0 or more, and
 the cache fields are blank or such numbers. A row priced by you also gets
 "Remove your price". The dialog lives outside the page panel, so a repaint

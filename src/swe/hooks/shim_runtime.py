@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared-hook shim runtime — copied verbatim to ~/.quiver/hooks/_runtime/shim.py.
+"""Shared-hook shim runtime — copied verbatim to ~/.swe/hooks/_runtime/shim.py.
 
 It is deliberately stdlib-only and imports nothing from swe: a harness
 runs the generated wrapper under whatever ``python3`` it finds, which

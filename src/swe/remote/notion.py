@@ -8,7 +8,7 @@ shows up beside GitHub issues on the phone.
 Notion schemas are whatever the workspace made them, so there is no
 fixed "issue" shape to read: the config names each database and which
 of its properties carry the title, the status, the owner and the url.
-``~/.quiver/config/config.json`` carries a ``notion`` section::
+``~/.swe/config/config.json`` carries a ``notion`` section::
 
     "notion": {
       "token_ref": "${NOTION_TOKEN}",

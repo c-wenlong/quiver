@@ -1,4 +1,4 @@
-"""The shared hook tier: ``~/.quiver/hooks/shared/<name>.py`` for every harness.
+"""The shared hook tier: ``~/.swe/hooks/shared/<name>.py`` for every harness.
 
 A shared hook is one Python script written against the normalized payload
 (``contracts.py`` documents the fields). It declares the events it wants
@@ -9,9 +9,9 @@ shim-able harness whose event map covers at least one declared event.
 The generated pieces all live in the hub, so ``plan_hooks`` links them
 like any other script:
 
-  ~/.quiver/hooks/_runtime/shim.py        the payload translator (a copy
+  ~/.swe/hooks/_runtime/shim.py        the payload translator (a copy
                                           of quiver's shim_runtime.py)
-  ~/.quiver/hooks/<harness>/_generated/   one stub per shared script; the
+  ~/.swe/hooks/<harness>/_generated/   one stub per shared script; the
                                           directory links whole into the
                                           harness's hooks root, so the
                                           declaration is
@@ -158,7 +158,7 @@ class DeployTarget:
 
     harness: str
     source: Path
-    wrapper: Path            # ~/.quiver/hooks/<harness>/_generated/<name>
+    wrapper: Path            # ~/.swe/hooks/<harness>/_generated/<name>
     covered: tuple[str, ...]  # native events whose normalized name is declared
 
 

@@ -29,7 +29,7 @@ setup or init (``blocked_paths``) and the report read again after it,
 since even a failed run may have fixed something.
 
 ``replace`` is the Replace and back up button those blocked paths get:
-``swe init --force``, which copies each one to ~/.quiver/backups and
+``swe init --force``, which copies each one to ~/.swe/backups and
 links the shared copy in its place. It takes no body. The AGENTS.md
 page runs the same two inits through ``run_init_now``.
 """
@@ -181,13 +181,13 @@ def _run_init(home: Path, force: bool = False) -> str | None:
     """A real file in the way is not an error: the reply's ``blocked``
     lists it, with Replace and back up. Only a forced run that still left
     one alone failed, since --force never touches a path that resolves
-    outside the home or into ~/.quiver."""
+    outside the home or into ~/.swe."""
     from swe.init.commands import run_init
 
     blocked = blocked_paths(run_init(home, quiet=True, ask=False, force=force), home)
     if not (force and blocked):
         return None
-    return ("Left alone, since each resolves outside the home folder or into ~/.quiver: "
+    return ("Left alone, since each resolves outside the home folder or into ~/.swe: "
             + ", ".join(blocked) + ".")
 
 

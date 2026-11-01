@@ -7,11 +7,11 @@ writes.
 quiver links a whole skills directory, not single skills, so "which harness
 sees this skill" is derived: a skill is visible to a harness when the skill's
 real folder sits under that harness's real skills root. A shared skill is
-therefore visible to every harness whose root links to ``~/.quiver/skills``,
+therefore visible to every harness whose root links to ``~/.swe/skills``,
 and a skill in a harness's own folder to that harness alone.
 
 A plugin's skills are read from where its harness loads them. Claude runs a
-plugin from a directory marketplace (every one in ``~/.quiver/plugins``)
+plugin from a directory marketplace (every one in ``~/.swe/plugins``)
 straight from the marketplace's folder, so those skills are listed from the
 plugin's source; the copy under ``~/.claude/plugins/cache`` is a snapshot
 it never loads. Plugins claude fetched (github, git, a URL) run from that
@@ -367,7 +367,7 @@ def _plugin_description(plugin) -> str:
 
 
 def hub_plugins(home: Path | None = None) -> dict:
-    """The ``swe skills hub --json`` document: the plugins ``~/.quiver`` offers.
+    """The ``swe skills hub --json`` document: the plugins ``~/.swe`` offers.
 
     ``install`` is keyed by each harness that runs plugins and exists on this
     machine. Its ``state`` is ``installed``, the first gap ``swe find

@@ -6,7 +6,7 @@ import Testing
     let home = URL(fileURLWithPath: "/Users/k")
 
     func directory(_ profiles: [Profile]) -> AccountDirectory {
-        let store = ProfileStore(root: home.appending(path: ".quiver/accounts"), userHome: home)
+        let store = ProfileStore(root: home.appending(path: ".swe/accounts"), userHome: home)
         return AccountDirectory(profiles: profiles, paths: store.paths(for:), home: home)
     }
 
@@ -21,8 +21,8 @@ import Testing
 
     @Test func rootsCoverTheStandardHomesAndEveryExtraProfile() {
         let roots = directory(profiles).roots
-        #expect(roots.claudeHomes.map(\.path) == ["/Users/k/.claude", "/Users/k/.quiver/accounts/claude/claude-work/home"])
-        #expect(roots.codexHomes.map(\.path) == ["/Users/k/.codex", "/Users/k/.quiver/accounts/codex/codex-side/home"])
+        #expect(roots.claudeHomes.map(\.path) == ["/Users/k/.claude", "/Users/k/.swe/accounts/claude/claude-work/home"])
+        #expect(roots.codexHomes.map(\.path) == ["/Users/k/.codex", "/Users/k/.swe/accounts/codex/codex-side/home"])
         #expect(roots.openCodeDatabases.count == 1)
         #expect(roots.devinDatabases.count == 1)
     }
@@ -30,7 +30,7 @@ import Testing
     @Test func homesAreNamedAfterTheirProfile() {
         let names = directory(profiles)
         #expect(names.label(for: "/Users/k/.claude") == "Claude: Default")
-        #expect(names.label(for: "/Users/k/.quiver/accounts/codex/codex-side/home") == "Codex: Side")
+        #expect(names.label(for: "/Users/k/.swe/accounts/codex/codex-side/home") == "Codex: Side")
     }
 
     @Test func homesWithoutAProfileShowTheirHarness() {

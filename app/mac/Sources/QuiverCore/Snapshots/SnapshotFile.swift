@@ -36,7 +36,7 @@ public struct Snapshot<Value: SnapshotValue>: SnapshotContent, Equatable {
     }
 }
 
-/// A snapshot under ~/.quiver/cache, readable only by you. An actor, so
+/// A snapshot under ~/.swe/cache, readable only by you. An actor, so
 /// saves happen off the main thread and one at a time.
 public actor SnapshotFile<Content: SnapshotContent>: SnapshotStoring {
     let url: URL

@@ -26,5 +26,5 @@ public struct SessionSnapshot: SnapshotContent, Equatable {
     }
 }
 
-/// The snapshot file, ~/.quiver/cache/sessions.json, readable only by you.
+/// The snapshot file, ~/.swe/cache/sessions.json, readable only by you.
 public typealias SessionSnapshotFile = SnapshotFile<SessionSnapshot>

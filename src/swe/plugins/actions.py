@@ -306,7 +306,7 @@ def _config_lock(home: Path, by_hand: str):
 
     ``os.replace`` stops a reader seeing half a file, not two writers each
     replacing the file with their own edit of the same original: the second
-    would silently undo the first. The lock lives in ~/.quiver/cache, not
+    would silently undo the first. The lock lives in ~/.swe/cache, not
     beside config.toml, so nothing of swe's is left in ~/.codex.
     """
     try:

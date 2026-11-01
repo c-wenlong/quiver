@@ -51,13 +51,13 @@ class VersionCommandTest(unittest.TestCase):
 
     def test_works_when_config_is_broken(self):
         # Patch the path registry.py actually reads, the way
-        # test_registry_state.py isolates ~/.quiver: the module constants
+        # test_registry_state.py isolates ~/.swe: the module constants
         # are bound at import, so HOME alone proves nothing.
         from swe import cli
         from swe.configuration import ConfigurationError
         from swe.harness import registry
         with tempfile.TemporaryDirectory() as home:
-            harness_file = (pathlib.Path(home) / ".quiver" / "config"
+            harness_file = (pathlib.Path(home) / ".swe" / "config"
                             / "harness.json")
             harness_file.parent.mkdir(parents=True)
             harness_file.write_text("{corrupt")
@@ -79,16 +79,16 @@ class VersionCommandTest(unittest.TestCase):
 
 
 class FirstRunScaffoldingTest(unittest.TestCase):
-    """#68: a failing command must not create ~/.quiver.
+    """#68: a failing command must not create ~/.swe.
 
     Unknown commands fall through to the full help, whose registry count
     used to come from a loader that wrote an empty harness.json as a side
-    effect — so even `swe --bogus` scaffolded ~/.quiver before the user
+    effect — so even `swe --bogus` scaffolded ~/.swe before the user
     asked for anything, and a config restore had to beat the first run.
     """
 
     def _fresh_registry_paths(self, home: pathlib.Path):
-        config = home / ".quiver" / "config"
+        config = home / ".swe" / "config"
         return (
             mock.patch("swe.harness.registry.CONFIG_DIR", config),
             mock.patch("swe.harness.registry.HARNESS_FILE", config / "harness.json"),
@@ -111,7 +111,7 @@ class FirstRunScaffoldingTest(unittest.TestCase):
             status, out, err = self._run_with_fresh_paths(home, ["bogus-cmd"])
             self.assertEqual(status, 1)
             self.assertIn("Unknown command: 'bogus-cmd'", out)
-            self.assertFalse((home / ".quiver").exists())
+            self.assertFalse((home / ".swe").exists())
 
     def test_version_does_not_scaffold_quiver_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -119,7 +119,7 @@ class FirstRunScaffoldingTest(unittest.TestCase):
             status, out, _err = self._run_with_fresh_paths(home, ["--version"])
             self.assertEqual(status, 0)
             self.assertEqual(out, f"swe {swe.__version__}\n")
-            self.assertFalse((home / ".quiver").exists())
+            self.assertFalse((home / ".swe").exists())
 
 
 class VersionCompletionTest(unittest.TestCase):

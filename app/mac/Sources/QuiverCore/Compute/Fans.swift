@@ -133,7 +133,7 @@ public struct FanHelperStatus: Codable, Equatable, Sendable {
     }
 }
 
-/// What the app asks of the fan helper, as JSON in `~/.quiver/fan/control.json`.
+/// What the app asks of the fan helper, as JSON in `~/.swe/fan/control.json`.
 /// A level holds the fans at that share of their range for as long as the
 /// Quiver process `owner` runs; no level (or no file) hands them back to
 /// macOS. `requested` stamps each Set speed, so pressing it again after a

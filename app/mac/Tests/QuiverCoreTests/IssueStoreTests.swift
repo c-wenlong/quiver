@@ -3,7 +3,7 @@ import Testing
 @testable import QuiverCore
 
 /// `IssueStore`: the dedup, re-notify and auto-resolve rules the toasts,
-/// badge and Doctor rows all read from `~/.quiver/data/issues.json`.
+/// badge and Doctor rows all read from `~/.swe/data/issues.json`.
 @Suite struct IssueStoreTests {
     /// This test's own folder, removed with its contents when the test ends.
     let scratch: TempDir

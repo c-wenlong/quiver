@@ -23,7 +23,7 @@ that launch id, the way a ``POST /v1/sessions`` launch does:
 1. read the issue (``github/issues.py``), for the prompt and the title;
 2. ``manage.issue_worktree``: the repo's mirror (cloned on first use),
    then branch ``quiver/issue-<n>`` checked out under
-   ``~/.quiver/worktrees``. A second resolve of the same issue resumes
+   ``~/.swe/worktrees``. A second resolve of the same issue resumes
    in the same checkout;
 3. ``supervise.launch_new`` in that checkout with the client's prompt,
    or ``build_prompt`` when none was sent. ``context`` is added as a

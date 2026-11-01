@@ -78,7 +78,7 @@ if __name__ == "__main__":
 
 
 class HubAsSourceTest(unittest.TestCase):
-    """~/.quiver/mcp.json is a sync source, never a sync target.
+    """~/.swe/mcp.json is a sync source, never a sync target.
 
     Data flows into the hub via `discover --apply` and out of it via `sync`.
     Letting sync write into it would put tool-shaped configs in the one file
@@ -176,8 +176,8 @@ class SecretIndirectionTest(unittest.TestCase):
         from pathlib import Path
 
         home = Path(tmp)
-        (home / ".quiver" / "secrets").mkdir(parents=True)
-        (home / ".quiver" / "secrets" / ".api_keys").write_text(
+        (home / ".swe" / "secrets").mkdir(parents=True)
+        (home / ".swe" / "secrets" / ".api_keys").write_text(
             self.STORE if body is None else body
         )
         return home

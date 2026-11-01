@@ -1,6 +1,6 @@
 """Where each harness declares its hooks, and what it declares.
 
-A script under ``~/.quiver/hooks/<harness>/`` does nothing until the
+A script under ``~/.swe/hooks/<harness>/`` does nothing until the
 harness's own settings file names it: ``~/.claude/settings.json`` carries a
 ``hooks`` map, ``~/.codex/hooks.json`` is that same map at its top level,
 ``~/.cursor/hooks.json`` spells the same idea flat. Two shapes cover them,
@@ -26,7 +26,7 @@ that are not objects) each read as no declarations, never an error.
 The one write is ``drop_script_declarations``: Doctor's "Drop the
 declaration" runs it, and only after ``declaration_managed_elsewhere``
 clears the file (a symlinked or unwritable file is owned by whatever
-manages it) and a backup lands in ~/.quiver/backups. Everything else is
+manages it) and a backup lands in ~/.swe/backups. Everything else is
 read-only.
 """
 

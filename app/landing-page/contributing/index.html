@@ -115,7 +115,7 @@ python3 -m venv .venv &amp;&amp; source .venv/bin/activate
 pip install -e &quot;.[test]&quot;
 HOME=&quot;$(mktemp -d)&quot; python3 -m unittest discover -s tests -p 'test_*.py'
 </code></pre>
-<p>Every command reads and writes <code>~/.quiver</code>, so run the suite — and any manual
+<p>Every command reads and writes <code>~/.swe</code>, so run the suite — and any manual
 <code>swe</code> check — against a throwaway <code>$HOME</code>. Otherwise a test run edits your real
 registry and counts your real sessions. CI does this for every job.</p>
 <p>Nix users can skip the venv entirely: <code>nix develop</code> opens a shell with Python,
@@ -153,7 +153,7 @@ registry and counts your real sessions. CI does this for every job.</p>
 </tr>
 <tr>
   <td><code>mcp/</code></td>
-  <td>The <code>~/.quiver/mcp.json</code> hub, per-tool format handlers, sync/diff/validate/doctor, <code>${NAME}</code> secret refs</td>
+  <td>The <code>~/.swe/mcp.json</code> hub, per-tool format handlers, sync/diff/validate/doctor, <code>${NAME}</code> secret refs</td>
 </tr>
 <tr>
   <td><code>find/</code></td>
@@ -169,7 +169,7 @@ registry and counts your real sessions. CI does this for every job.</p>
 </tr>
 <tr>
   <td><code>hooks/</code></td>
-  <td><code>swe hooks</code>: the hook scripts under <code>~/.quiver/hooks/&lt;harness&gt;/</code> and their drift check</td>
+  <td><code>swe hooks</code>: the hook scripts under <code>~/.swe/hooks/&lt;harness&gt;/</code> and their drift check</td>
 </tr>
 <tr>
   <td><code>reports/</code></td>
@@ -226,7 +226,7 @@ registry and counts your real sessions. CI does this for every job.</p>
 </tbody>
 </table>
 <p>The bottom layer imports nothing above itself: <code>paths.py</code> (every path under
-<code>~/.quiver</code>), <code>console.py</code> (colour, width, truncation), <code>table.py</code> (the table
+<code>~/.swe</code>), <code>console.py</code> (colour, width, truncation), <code>table.py</code> (the table
 renderer), <code>configuration.py</code> (<code>config/config.json</code>), <code>keys.py</code> (the one
 raw-mode key reader) and <code>flags.py</code> (the <code>--name=value</code> argv normaliser).
 <code>json_output.py</code> (the <code>--json</code> envelope), <code>prompt.py</code>, <code>multiselect.py</code> and

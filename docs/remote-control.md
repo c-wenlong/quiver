@@ -213,7 +213,7 @@ The web app's pages import
 of them function-local, and two other packages borrow from it:
 `mcp/gateway_commands.py` uses `remote.launchd` and `ledger/pricing.py`
 uses `remote.agent._urlopen`. State under
-`~/.quiver/data/remote/` (`devices.json` 0600, `inbox_dismissals.json`
+`~/.swe/data/remote/` (`devices.json` 0600, `inbox_dismissals.json`
 0600, `session_reads.json` 0600, `session_meta.json` 0600, `tasks.json` 0600, `cursors/`, `journal/`) —
 gitignored like the rest of `data/`. New commands run the usual
 checklist: `completion.py`, `help_text.py`, `docs/json-contracts.md`.
@@ -519,14 +519,14 @@ changes a task's state, and `tasks.json` itself stays links only.
 settles.
 
 The Linear source is opt-in through a `linear` section in
-`~/.quiver/config/config.json`:
+`~/.swe/config/config.json`:
 
 ```json
 "linear": {"key_ref": "${LINEAR_API_KEY}", "teams": ["QUI"]}
 ```
 
 `key_ref` names a `${NAME}` in the MCP secrets store
-(`~/.quiver/secrets/mcp/.api_keys` — `printf %s "$KEY" | swe mcp secret
+(`~/.swe/secrets/mcp/.api_keys` — `printf %s "$KEY" | swe mcp secret
 set LINEAR_API_KEY` writes it); a literal key is refused because
 `config.json` stays credential-free. It defaults to
 `${LINEAR_API_KEY}`, and `teams` to none, so a bare `"linear": {}`
@@ -1007,7 +1007,7 @@ new-session launch. It reads the issue, then runs `swe gh issue
 worktree`'s `manage.issue_worktree`: the repo's bare mirror (cloned on
 first use), a fetch of its default branch, and branch
 `quiver/issue-<n>` checked out under
-`~/.quiver/worktrees/<owner>__<repo>-issue<n>`. A second resolve of the
+`~/.swe/worktrees/<owner>__<repo>-issue<n>`. A second resolve of the
 same issue resumes in that checkout. The harness then starts there under
 tmux with the client's `prompt`, or the one `swe gh issue view` shows as
 `suggested_prompt` when none was sent. A non-empty `context` is added as
@@ -1093,7 +1093,7 @@ Otherwise `202 {launch_id, state: "pending", note: "preparing
 worktree"}` and the rest runs on a thread: read the PR (for the title
 and the default prompt), `manage.pr_worktree` — the repo's bare mirror
 cloned on first use, `refs/pull/<n>/head` fetched into a detached
-checkout under `~/.quiver/worktrees/<owner>__<repo>-pr<n>`, where a
+checkout under `~/.swe/worktrees/<owner>__<repo>-pr<n>`, where a
 second open of the same PR resumes — then `supervise.launch_new` there
 with the client's `prompt`, or `build_prompt`'s review brief when none
 was sent. The launch's `note` steps through "Cloning mirror…" (first
@@ -1242,7 +1242,7 @@ the first tier it qualifies for: its title holds the query (whole, or
 every word of it); then its details (title, harness, folder, id
 together) do; then its transcript holds the exact phrase, all the words,
 or any word. The transcript tiers come from the FTS5 index at
-`~/.quiver/data/search/search.sqlite` when it exists on the hub machine.
+`~/.swe/data/search/search.sqlite` when it exists on the hub machine.
 The Quiver app writes it on a Mac; anywhere else, `swe session index --on`
 makes the hub index agent transcripts every two minutes
 (`sessions/search_writer.py`; [data-model.md](data-model.md) lists the harnesses).
@@ -1355,7 +1355,7 @@ it. macOS privacy protection blocks a launchd agent from reading
 `.venv/bin/swe` there would fail at every start: `--install` refuses it
 and says to install the app. `install-app.sh` restarts the agent on the
 new bundle. The agent gets the installing shell's `PATH` and logs to
-`~/.quiver/data/remote/serve.log` with timestamped start and stop lines.
+`~/.swe/data/remote/serve.log` with timestamped start and stop lines.
 It runs `serve --tailnet`: with no Tailscale address yet (early in a
 login) the hub exits instead of binding localhost, and launchd retries.
 `--install` again restarts it; `--uninstall` stops and removes it.
@@ -1383,7 +1383,7 @@ Mac and `~/.config/systemd/user/quiver-remote-agent.service` on Linux,
 so installing, restarting or removing it never touches the hub's
 service. It runs `swe remote agent` (the app's bundled `swe` on a Mac,
 under the same protected-folder rule), with the installing shell's
-`PATH`, logging to `~/.quiver/data/remote/agent.log`. The credential
+`PATH`, logging to `~/.swe/data/remote/agent.log`. The credential
 stays in `agent.json`: the service reads it at start, so no secret
 lands in the plist or unit. `--install --hub=URL --token=T` pairs first;
 `--install --hub=URL` alone puts `--hub` on the service's command line.
@@ -1395,12 +1395,12 @@ the service is installed and running, and whether the hub is installed.
 (the hub's plist or unit exists), and the hub's install (`serve
 --install`, `setup --apply`) refuses the other way round: the check sits
 in `install_service`, which every install path goes through. Both
-services run as the same user, so they share `~/.quiver/data/remote/`:
+services run as the same user, so they share `~/.swe/data/remote/`:
 each would read and move the other's tail cursors in `cursors/`, and a
 satellite would send its own hub's sessions back to it. The refusal
 names the other service's file and says which `--uninstall` to run.
 
-Only one `swe remote agent` runs per `~/.quiver`: it holds an `flock`
+Only one `swe remote agent` runs per `~/.swe`: it holds an `flock`
 on `data/remote/agent.lock` (its pid inside) for its lifetime, and a
 second one exits at start, so the hub's commands never run twice. Under
 launchd or systemd that exit is retried, so the service takes over once

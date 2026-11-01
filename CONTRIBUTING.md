@@ -12,7 +12,7 @@ pip install -e ".[test]"
 HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
-Every command reads and writes `~/.quiver`, so run the suite — and any manual
+Every command reads and writes `~/.swe`, so run the suite — and any manual
 `swe` check — against a throwaway `$HOME`. Otherwise a test run edits your real
 registry and counts your real sessions. CI does this for every job.
 
@@ -31,11 +31,11 @@ The CLI is organized by domain under `src/swe/`:
 | `harness/` | The registry (`harness.json`), list/info/add/edit/check/doctor, discover, rate limits, drift checks |
 | `sessions/` | Cross-agent history: three parser engines, per-tool adapters, aggregation, model analytics, the picker |
 | `skills/` | SKILL.md discovery, catalogs, harness symlink layout |
-| `mcp/` | The `~/.quiver/mcp.json` hub, per-tool format handlers, sync/diff/validate/doctor, `${NAME}` secret refs |
+| `mcp/` | The `~/.swe/mcp.json` hub, per-tool format handlers, sync/diff/validate/doctor, `${NAME}` secret refs |
 | `find/` | Read-only views of shared assets — `amd`, `skills`, `plugins`, `mcps` |
 | `init/` | Writes the shared `AGENTS.md` and skills tree, symlinks them into each harness, migrates the old root |
 | `plugins/` | `swe plugins`: every marketplace's plugins with per-harness state, and install/enable/disable through the harness CLIs (Codex enable and disable edit `~/.codex/config.toml` directly) |
-| `hooks/` | `swe hooks`: the hook scripts under `~/.quiver/hooks/<harness>/` and their drift check |
+| `hooks/` | `swe hooks`: the hook scripts under `~/.swe/hooks/<harness>/` and their drift check |
 | `reports/` | Daily and weekly session reports: transcripts, triage, batching, model runners, follow-up ledger |
 | `providers/` | LLM provider metadata and API-key file lookup |
 | `setup/` | The interactive onboarding wizard |
@@ -51,7 +51,7 @@ The CLI is organized by domain under `src/swe/`:
 | `mcp_formats.py` | Compatibility shim re-exporting `mcp/formats.py`; do not add to it |
 
 The bottom layer imports nothing above itself: `paths.py` (every path under
-`~/.quiver`), `console.py` (colour, width, truncation), `table.py` (the table
+`~/.swe`), `console.py` (colour, width, truncation), `table.py` (the table
 renderer), `configuration.py` (`config/config.json`), `keys.py` (the one
 raw-mode key reader) and `flags.py` (the `--name=value` argv normaliser).
 `json_output.py` (the `--json` envelope), `prompt.py`, `multiselect.py` and

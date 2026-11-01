@@ -3,7 +3,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from swe.skills.layout import HARNESS_ROOTS, SHARED_LABEL, SHARED_REL
+from swe.paths import skills_dir_for
+from swe.skills.layout import HARNESS_ROOTS, SHARED_LABEL
 
 # Backward-compatible alias used by setup wizard.
 SYMLINK_TARGETS = tuple((label, rel) for label, rel in HARNESS_ROOTS if label != SHARED_LABEL)
@@ -51,7 +52,7 @@ class SkillsSymlinkHint:
 def skills_symlink_hints(home: Path | None = None) -> list[SkillsSymlinkHint]:
     """Return symlink setup hints when per-tool skill roots diverge from shared tree."""
     home = home or Path.home()
-    shared = home / SHARED_REL
+    shared = skills_dir_for(home)
     hints: list[SkillsSymlinkHint] = []
 
     if not shared.exists():
@@ -61,7 +62,7 @@ def skills_symlink_hints(home: Path | None = None) -> list[SkillsSymlinkHint]:
                 path=shared,
                 action="create_shared",
                 command=f"mkdir -p {shared}",
-                reason="Shared skills root ~/.quiver/skills does not exist yet",
+                reason="Shared skills root ~/.swe/skills does not exist yet",
             )
         )
         return hints
@@ -149,6 +150,7 @@ def apply_skills_symlink_hints(hints: list[SkillsSymlinkHint], home: Path | None
     makes it look installed.
     """
     home = home or Path.home()
+    shared = skills_dir_for(home)
     applied: list[str] = []
 
     for hint in hints:
@@ -168,7 +170,7 @@ def apply_skills_symlink_hints(hints: list[SkillsSymlinkHint], home: Path | None
                 # symlink_to raised FileExistsError on every apply. Nothing
                 # sits behind it to lose.
                 hint.path.unlink()
-            hint.path.symlink_to(home / SHARED_REL)
+            hint.path.symlink_to(shared)
             applied.append(f"symlink {hint.label}")
 
     return applied

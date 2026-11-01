@@ -6,7 +6,7 @@ return (the hub's ``POST /v1/issues/resolve`` calls ``issue_worktree``
 too); the web app's Repositories and Settings pages call
 them in process for the hub's own home. Nothing here prints. Every
 function takes ``home`` (``None`` is the real one) and reads its pins,
-catalog and owner cache from that home's ``~/.quiver``.
+catalog and owner cache from that home's ``~/.swe``.
 
 The caller probes ``gh`` (``gh.probe_env``) and passes the result in, so
 the CLI's one probe per command and the web app's cached probe both
@@ -35,7 +35,7 @@ _SEARCH_FIELDS = "fullName,description,stargazersCount,updatedAt"
 
 # Org membership barely moves, and the sheet re-searches on every typing
 # pause — each `swe` run would otherwise re-fetch `user/orgs`. Cached per
-# login under ~/.quiver/cache so an `gh auth switch` can't leak scopes.
+# login under ~/.swe/cache so an `gh auth switch` can't leak scopes.
 OWNERS_TTL = 600
 
 
@@ -351,7 +351,7 @@ def pr_worktree_path(repo: str, number, home: Path | None = None) -> str:
 
 def pr_worktree(repo: str, number: str, home: Path | None = None) -> gh.GhResult:
     """``swe gh pr worktree``: a detached checkout of PR ``number``'s
-    head under the home's ``~/.quiver/worktrees``.
+    head under the home's ``~/.swe/worktrees``.
 
     The repo's bare mirror lives under ``data/github/mirrors``; the PR
     head is fetched via ``refs/pull/N/head``, GitHub's own ref, so fork

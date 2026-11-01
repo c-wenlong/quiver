@@ -2,7 +2,7 @@
 
 The Tasks page (sidebar id `tasks`, hash route `#/tasks`, a task's
 detail at `#/tasks?task=<id>`): the work items the hub's agents are on —
-the task store (`~/.quiver/tasks.json`) overlaid on the sources' open
+the task store (`~/.swe/tasks.json`) overlaid on the sources' open
 items. It is the web half of the work-items surface the iOS app mirrors;
 GitHub is the first source; Linear and Notion ride along when
 configured.

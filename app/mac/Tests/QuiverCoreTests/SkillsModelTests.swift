@@ -133,7 +133,7 @@ func ok(_ json: String) -> CommandResult {
 }
 
 let inventoryJSON = #"""
-{"shared_dir": "/h/.quiver/skills",
+{"shared_dir": "/h/.swe/skills",
  "harnesses": [
   {"name": "claude", "label": "claude", "path": "/h/.claude/skills", "state": "linked", "detail": ""},
   {"name": "codex", "label": "codex", "path": "/h/.codex/skills", "state": "keep", "detail": "1 of 1 skills exist nowhere else"},
@@ -141,7 +141,7 @@ let inventoryJSON = #"""
   {"name": "droid", "label": "factory", "path": "/h/.factory/skills", "state": "absorb", "detail": "2 skills, all already shared"}
  ],
  "skills": [
-  {"name": "alpha", "description": "Does the alpha thing", "path": "/h/.quiver/skills/alpha",
+  {"name": "alpha", "description": "Does the alpha thing", "path": "/h/.swe/skills/alpha",
    "root": "shared", "source": "shared", "harnesses": ["claude"]},
   {"name": "only-codex", "description": "", "path": "/h/.codex/skills/only-codex",
    "root": "codex", "source": "harness", "harnesses": ["codex"]},
@@ -160,7 +160,7 @@ let inventoryJSON = #"""
 
     @Test func newSkillArgvAndLinkAllSelection() async throws {
         let (model, runner) = model([
-            (["skills", "new"], ok(#"{"name": "s", "path": "/h/.quiver/skills/s/SKILL.md"}"#)),
+            (["skills", "new"], ok(#"{"name": "s", "path": "/h/.swe/skills/s/SKILL.md"}"#)),
             (["skills", "--json"], ok(inventoryJSON)),
         ])
         let reply = try await model.create(name: "s", description: "Use when: x")
@@ -215,7 +215,7 @@ let inventoryJSON = #"""
         #expect(SkillRoot(name: "codex", path: "/h/.codex/skills", state: "keep",
                           detail: "1 of 1 skills exist nowhere else", archived: true).link == .blocked)
         #expect(SkillRoot(name: "pinokio", path: "/h/.pinokio/skills", state: "ignored",
-                          detail: "listed in ~/.quiver/.linkignore").link == .blocked)
+                          detail: "listed in ~/.swe/.linkignore").link == .blocked)
     }
 
     @Test func onlyAFolderOfCopiesNeedsForce() {
@@ -227,7 +227,7 @@ let inventoryJSON = #"""
 
     @Test func linkRunsSweByPathThenReloads() async throws {
         let (model, runner) = model([
-            (["skills", "link"], ok(#"{"action": "link", "harness": "hermes", "source": "/h/.hermes/skills", "target": "/h/.quiver/skills"}"#)),
+            (["skills", "link"], ok(#"{"action": "link", "harness": "hermes", "source": "/h/.hermes/skills", "target": "/h/.swe/skills"}"#)),
             (["skills", "--json"], ok(inventoryJSON)),
         ])
         await model.load()

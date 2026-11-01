@@ -41,7 +41,7 @@ STATEFUL_HINTS = ("playwright", "puppeteer", "browser", "chrome",
 
 
 def log_dir_for(home: Path | None = None) -> Path:
-    """``~/.quiver/cache/mcp-gateway``: the gateway's log and one per server."""
+    """``~/.swe/cache/mcp-gateway``: the gateway's log and one per server."""
     return cache_dir_for(home) / "mcp-gateway"
 
 

@@ -241,7 +241,7 @@ class CliTest(unittest.TestCase):
         self.assertTrue(all(s["error"] is None for s in data["ran"]), data["ran"])
         self.assertEqual(doctor_fix.fixable_left(data), [])
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertTrue((home / ".quiver" / "AGENTS.md").is_file())
+        self.assertTrue((home / ".swe" / "AGENTS.md").is_file())
         # Idempotent: a second run changes nothing. On a machine with no
         # harness on PATH, discovery is offered again and finds nothing;
         # that is a finding for a person, not a failure.
@@ -254,8 +254,8 @@ class CliTest(unittest.TestCase):
 
     def test_no_harness_on_path_still_settles(self):
         home = temp_dir(self)
-        (home / ".quiver").mkdir()
-        (home / ".quiver" / "AGENTS.md").write_text("# shared\n")
+        (home / ".swe").mkdir()
+        (home / ".swe" / "AGENTS.md").write_text("# shared\n")
         env_path = os.environ.get("PATH", "/usr/bin:/bin")
         done = run_swe_on(home, "/nonexistent-bin", "doctor", "--fix", "--json")
         data = decode(done)["data"]
@@ -269,13 +269,13 @@ class CliTest(unittest.TestCase):
         done = run_swe(home, "doctor", "--fix", "--message=x")
         self.assertEqual(done.returncode, 1)
         self.assertIn("--fix=<check>", done.stdout + done.stderr)
-        self.assertFalse((home / ".quiver").exists())
+        self.assertFalse((home / ".swe").exists())
 
     def test_an_unknown_finding_is_refused(self):
         home = temp_dir(self)
         done = run_swe(home, "doctor", "--fix=setup.hub", "--message=rm -rf ~", "--json")
         self.assertEqual((done.returncode, done.stdout), (1, ""))
-        self.assertFalse((home / ".quiver").exists())
+        self.assertFalse((home / ".swe").exists())
 
 
 class RunnerParityTest(unittest.TestCase):

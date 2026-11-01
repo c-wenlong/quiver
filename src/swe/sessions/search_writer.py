@@ -1,6 +1,6 @@
 """Write side of the FTS5 session-search index (ports the Swift writer).
 
-The Quiver app on macOS fills ``~/.quiver/data/search/search.sqlite`` as
+The Quiver app on macOS fills ``~/.swe/data/search/search.sqlite`` as
 it scans transcripts (``QuiverCore/Search``: ``SearchSchema``,
 ``SearchStore``, ``SearchIndexer``). A machine without the app, such as a
 Linux hub, had no index, so ``/v1/search`` and ``swe session --search``

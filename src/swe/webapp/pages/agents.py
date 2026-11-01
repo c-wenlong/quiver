@@ -1,4 +1,4 @@
-"""The AGENTS.md page: the shared ``~/.quiver/AGENTS.md`` with where
+"""The AGENTS.md page: the shared ``~/.swe/AGENTS.md`` with where
 ``swe init --check --json`` says it is linked, and one project folder's
 AGENTS.md and CLAUDE.md.
 

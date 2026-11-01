@@ -228,7 +228,7 @@ private struct MarketplaceCard: View {
     var market: ExploreMarketplace
     /// The display name: Quiver's overlay name or the marketplace id.
     var name: String
-    /// A directory-sourced marketplace under ~/.quiver/plugins can rename.
+    /// A directory-sourced marketplace under ~/.swe/plugins can rename.
     var canRename: Bool
     var catalog: PluginCatalog
     var running: PluginAction?

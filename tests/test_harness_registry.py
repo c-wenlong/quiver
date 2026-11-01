@@ -35,13 +35,13 @@ class HarnessRegistryTest(unittest.TestCase):
         """A missing registry reads as empty and stays missing.
 
         A read used to write {} to disk just so a file existed: every
-        invocation then created ~/.quiver, including a failing unknown
+        invocation then created ~/.swe, including a failing unknown
         command that fell through to the full help — anything wanting to
         place content at that path had to land before the first swe run.
         Only a writer creates the file now, via save_registry.
         """
         with tempfile.TemporaryDirectory() as tmp:
-            config_dir = Path(tmp) / ".quiver" / "config"
+            config_dir = Path(tmp) / ".swe" / "config"
             registry_file = config_dir / "harness.json"
             with patch("swe.harness.registry.CONFIG_DIR", config_dir), patch(
                 "swe.harness.registry.HARNESS_FILE", registry_file
@@ -54,7 +54,7 @@ class HarnessRegistryTest(unittest.TestCase):
     def test_save_registry_is_the_scaffolder(self):
         """load's counterpart: the write path still makes the directory."""
         with tempfile.TemporaryDirectory() as tmp:
-            config_dir = Path(tmp) / ".quiver" / "config"
+            config_dir = Path(tmp) / ".swe" / "config"
             registry_file = config_dir / "harness.json"
             with patch("swe.harness.registry.CONFIG_DIR", config_dir), patch(
                 "swe.harness.registry.HARNESS_FILE", registry_file
@@ -70,7 +70,7 @@ class HarnessRegistryTest(unittest.TestCase):
 
     def test_save_and_reload_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
-            config_dir = Path(tmp) / ".quiver" / "config"
+            config_dir = Path(tmp) / ".swe" / "config"
             registry_file = config_dir / "harness.json"
             custom = dict(HARNESS_CATALOG)
             custom["mytool"] = {
@@ -93,7 +93,7 @@ class RegistryRobustnessTest(unittest.TestCase):
     """#383: malformed entries error cleanly; state-only rows stay readable."""
 
     def _config_dir(self, tmp):
-        config_dir = Path(tmp) / ".quiver" / "config"
+        config_dir = Path(tmp) / ".swe" / "config"
         config_dir.mkdir(parents=True)
         return config_dir
 

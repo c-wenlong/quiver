@@ -18,7 +18,7 @@
 # bundle.
 #
 # The download is pinned by version and checksum and kept in
-# QUIVER_PYTHON_CACHE (default ~/.quiver/cache/build/python), so rebuilds
+# QUIVER_PYTHON_CACHE (default ~/.swe/cache/build/python), so rebuilds
 # don't fetch it again. It matches the host architecture, as the swift build
 # does. build-app.sh signs the binaries afterwards.
 set -euo pipefail
@@ -43,7 +43,14 @@ esac
 archive="cpython-${python_version}+${release}-${triple}-install_only_stripped.tar.gz"
 url="https://github.com/astral-sh/python-build-standalone/releases/download/${release}/${archive//+/%2B}"
 
-cache="${QUIVER_PYTHON_CACHE:-$HOME/.quiver/cache/build/python}"
+cache="${SWE_PYTHON_CACHE:-${QUIVER_PYTHON_CACHE:-$HOME/.swe/cache/build/python}}"
+# See install-app.sh: creating the cache under ~/.swe would block the
+# ~/.quiver -> ~/.swe move, so it runs here first too.
+if [ ! -e "$HOME/.swe" ] && [ ! -L "$HOME/.swe" ] \
+    && [ -d "$HOME/.quiver" ] && [ ! -L "$HOME/.quiver" ]; then
+  mv "$HOME/.quiver" "$HOME/.swe" 2>/dev/null \
+    && ln -s .swe "$HOME/.quiver" 2>/dev/null
+fi
 mkdir -p "$cache"
 tarball="$cache/$archive"
 verify() { [ "$(shasum -a 256 "$1" | cut -d' ' -f1)" = "$sha256" ]; }
@@ -141,7 +148,7 @@ SHIM
 chmod 755 "$dest/bin/swe"
 
 # Fails the build if the bundled swe can't start, in a home of its own so
-# nothing touches the builder's ~/.quiver.
+# nothing touches the builder's ~/.swe.
 probe_home="$(mktemp -d)"
 trap 'rm -rf "$probe_home"' EXIT
 if ! out="$(HOME="$probe_home" "$dest/bin/swe" version --json 2>&1)" \

@@ -22,7 +22,7 @@ class TestCheckDocument(unittest.TestCase):
         from swe.init.commands import check_document
         home = Path(tempfile.mkdtemp())
         doc = check_document(home)
-        self.assertEqual(doc["agents_file"], str(home / ".quiver" / "AGENTS.md"))
+        self.assertEqual(doc["agents_file"], str(home / ".swe" / "AGENTS.md"))
         self.assertFalse(doc["agents_file_exists"])
         self.assertIsInstance(doc["harnesses"], list)
         self.assertEqual(list(home.iterdir()), [])
@@ -110,7 +110,7 @@ class TestLink(_TempHome, unittest.TestCase):
         self.assertEqual((reply["ran"], reply["error"]), ("replace", None))
         self.assertEqual(self.states(reply)["codex"], "linked")
         self.assertEqual(reply["blocked"], [])
-        backups = list((self.home / ".quiver" / "backups").iterdir())
+        backups = list((self.home / ".swe" / "backups").iterdir())
         self.assertEqual([b.read_text() for b in backups], ["mine\n"])
 
     def test_unknown_actions_are_refused(self):
@@ -124,7 +124,7 @@ class TestLink(_TempHome, unittest.TestCase):
 class TestRoute(HubBase):
     def test_global_shows_the_file_and_its_links(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/agents")[0], 401)
-        agents = self.srv.home / ".quiver" / "AGENTS.md"
+        agents = self.srv.home / ".swe" / "AGENTS.md"
         agents.parent.mkdir(parents=True, exist_ok=True)
         agents.write_text("# Shared")
         report = {"agents_file": str(agents), "agents_file_exists": True, "harnesses": [

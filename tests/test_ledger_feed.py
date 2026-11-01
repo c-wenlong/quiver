@@ -172,7 +172,7 @@ class TestFeedPoll(unittest.TestCase):
         self.assertAlmostEqual(self.calls[1][1], T0 + feed.INTERVAL_S - feed.WINDOW_S)
 
     def test_two_profiles_one_account_poll_once(self):
-        accounts_dir = self.home / ".quiver" / "accounts"
+        accounts_dir = self.home / ".swe" / "accounts"
         accounts_dir.mkdir(parents=True)
         profile_desktop = accounts_dir / "cursor" / "p1" / "desktop"
         (accounts_dir / "profiles.json").write_text(json.dumps({"profiles": [
@@ -190,7 +190,7 @@ class TestFeedPoll(unittest.TestCase):
         self.assertEqual(count, 1)
 
     def test_no_write_is_held_across_the_next_accounts_fetch(self):
-        accounts_dir = self.home / ".quiver" / "accounts"
+        accounts_dir = self.home / ".swe" / "accounts"
         accounts_dir.mkdir(parents=True)
         (accounts_dir / "profiles.json").write_text(json.dumps({"profiles": [
             {"id": "p1", "vendor": "cursor", "isDefault": False}]}))

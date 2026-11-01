@@ -5,13 +5,13 @@
 work assigned in Linear without opening the Linear app.
 
 Auth is a personal API key the config names by reference, never in
-plaintext. ``~/.quiver/config/config.json`` carries a ``linear``
+plaintext. ``~/.swe/config/config.json`` carries a ``linear``
 section::
 
     "linear": {"key_ref": "${LINEAR_API_KEY}", "teams": ["QUI"]}
 
 and ``mcp/secrets.py``'s ``${NAME}`` store
-(``~/.quiver/secrets/mcp/.api_keys``, filled by ``swe mcp secret set``)
+(``~/.swe/secrets/mcp/.api_keys``, filled by ``swe mcp secret set``)
 holds the value. The section is opt-in: absent, the source answers
 ``disabled`` and ``/v1/tasks`` lists no Linear rows; a section whose
 key won't resolve or gets refused answers ``auth-required`` — the

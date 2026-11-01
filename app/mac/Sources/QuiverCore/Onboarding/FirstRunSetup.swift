@@ -65,7 +65,7 @@ public struct SetupPreview: Decodable, Sendable, Equatable {
         }
     }
 
-    /// `swe setup --json`'s `hub`: whether `~/.quiver` can still take a
+    /// `swe setup --json`'s `hub`: whether `~/.swe` can still take a
     /// clone of the user's hub repo, and what `--hub` just cloned.
     public struct Hub: Decodable, Sendable, Equatable {
         public struct Marketplace: Decodable, Sendable, Hashable {
@@ -82,7 +82,7 @@ public struct SetupPreview: Decodable, Sendable, Equatable {
             public let marketplaces: [Marketplace]
         }
 
-        /// No hub in `~/.quiver` yet (no AGENTS.md, no .git), so the sheet
+        /// No hub in `~/.swe` yet (no AGENTS.md, no .git), so the sheet
         /// offers its hub URL field.
         public let canClone: Bool
         /// The public demo hub to fork; nil until it exists.
@@ -147,7 +147,7 @@ extension SweClient {
     static let hubCloneTimeout: Duration = .seconds(720)
 
     /// `swe setup --hub=<url> --json --non-interactive`: clone the user's
-    /// hub repo as `~/.quiver`, then the preview of what setup would do
+    /// hub repo as `~/.swe`, then the preview of what setup would do
     /// with it. A refusal (a hub already there, a URL git can't reach, a
     /// timeout) exits 1 with the reason on stderr and no document, which the
     /// error carries. A clone that worked but whose preview then failed also
@@ -185,7 +185,7 @@ public enum FirstRun {
     }
 
     public static func agentsFile(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        home.appending(path: ".quiver/AGENTS.md")
+        home.appending(path: ".swe/AGENTS.md")
     }
 }
 
@@ -265,7 +265,7 @@ public final class FirstRunSetupModel {
     public static let hubForkNote =
         "Fork a hub repo first (or use it as a template for a private copy), then paste your fork's URL."
 
-    /// Offer the hub field: the preview says `~/.quiver` has no hub yet,
+    /// Offer the hub field: the preview says `~/.swe` has no hub yet,
     /// and setup hasn't run (after it, the shared AGENTS.md is there).
     public var offersHub: Bool {
         guard case .loaded(let found) = preview, outcome == nil else { return false }

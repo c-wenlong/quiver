@@ -17,9 +17,9 @@ import Testing
     private var syncedCatalog: PluginCatalog {
         let gone = ["cooking", "garden", "hiking", "music", "poetry", "woodwork"]
         var markets = gone.map { name in
-            PluginMarketplace(name: name, hub: true, path: "/Users/someone/.quiver/plugins/\(name)",
+            PluginMarketplace(name: name, hub: true, path: "/Users/someone/.swe/plugins/\(name)",
                               harnesses: ["claude": .init(sourceType: "directory",
-                                                          location: "/Users/someone/.quiver/plugins/\(name)",
+                                                          location: "/Users/someone/.swe/plugins/\(name)",
                                                           readable: false)],
                               plugins: [])
         }
@@ -98,7 +98,7 @@ import Testing
         // Its folder is gone, but something installed from it is not:
         // that copy can still be turned off or removed.
         let catalog = PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: [
-            PluginMarketplace(name: "mine", hub: true, path: "/h/.quiver/plugins/mine",
+            PluginMarketplace(name: "mine", hub: true, path: "/h/.swe/plugins/mine",
                               harnesses: ["claude": .init(sourceType: "directory", readable: false)],
                               plugins: [CatalogPlugin(name: "tool", marketplace: "mine", harnesses: [
                                   "claude": PluginHarnessState(available: false, installed: true, enabled: true)])]),
@@ -132,7 +132,7 @@ import Testing
         let temp = try TempDir()
         defer { withExtendedLifetime(temp) {} }
         let home = temp.url
-        let hubFolder = home.appending(path: ".quiver/plugins/mine")
+        let hubFolder = home.appending(path: ".swe/plugins/mine")
         try FileManager.default.createDirectory(at: hubFolder, withIntermediateDirectories: true)
         let catalog = PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: [
             PluginMarketplace(name: "mine", hub: true, path: hubFolder.path,

@@ -142,7 +142,7 @@ class ForcedLinkBacksUpTest(unittest.TestCase):
 
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
-        (self.home / ".quiver" / "skills").mkdir(parents=True)
+        (self.home / ".swe" / "skills").mkdir(parents=True)
         self.root = self.home / ".codex" / "skills"
         self.root.mkdir(parents=True)
         (self.root / "only-copy").mkdir()
@@ -178,7 +178,7 @@ class BackupTreeHardeningTest(unittest.TestCase):
 
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
-        (self.home / ".quiver" / "backups").mkdir(parents=True)
+        (self.home / ".swe" / "backups").mkdir(parents=True)
         self.tree = self.home / ".h" / "skills"
         self.tree.mkdir(parents=True)
         (self.tree / "ok").mkdir()
@@ -289,7 +289,7 @@ class UnknownRootRefTest(unittest.TestCase):
 
         self.error = SkillLayoutError
         self.home = Path(tempfile.mkdtemp())
-        (self.home / ".quiver" / "skills").mkdir(parents=True)
+        (self.home / ".swe" / "skills").mkdir(parents=True)
         self.work = Path(tempfile.mkdtemp())
         (self.work / "codx").mkdir()
         self._old = os.getcwd()

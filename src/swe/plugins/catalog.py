@@ -1,7 +1,7 @@
 """Every plugin in every marketplace a harness has registered, installed or not.
 
 ``swe find plugins`` lists what is installed and ``swe skills hub`` what
-``~/.quiver/plugins`` offers. This is the third view the app's Plugins page
+``~/.swe/plugins`` offers. This is the third view the app's Plugins page
 needs: the whole catalog of every marketplace Claude Code, Codex or Cursor
 knows about, each plugin with its install and enable state per harness.
 
@@ -370,7 +370,7 @@ def read_views(home: Path, errors: list, harnesses=HARNESSES) -> dict:
 
 
 def _hub_markets(home: Path, errors: list) -> list[Market]:
-    """Each marketplace directory under ~/.quiver/plugins, registered or not."""
+    """Each marketplace directory under ~/.swe/plugins, registered or not."""
     root = plugins_dir_for(home)
     try:
         dirs = sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
@@ -665,7 +665,7 @@ def _render_plugin(rec: _Record, plugin: _Plugin, views: dict, hub_drift: dict,
     mcp = mcp_server_count(primary) or mcp_server_count(source)
     if mcp:
         components = {**components, "mcp_servers": mcp}
-    # The hub cards key their drift by the plugin's folder in ~/.quiver,
+    # The hub cards key their drift by the plugin's folder in ~/.swe,
     # which is not `source` when another harness registered a clone of the
     # same marketplace under the same name.
     hub_source = next((plugin.local[o] for o in (*HARNESSES, "hub")

@@ -160,7 +160,7 @@
     document.getElementById("panel").innerHTML = `<div class="page qp-page">${header(false)}
       <div class="stack">${notes}${body}
         <p class="caption footer">Click a model to set your own price. It saves to
-          <code>~/.quiver/config/pricing.json</code> on ${esc(d.machine || "the hub")}, which the Mac app reads too.</p>
+          <code>~/.swe/config/pricing.json</code> on ${esc(d.machine || "the hub")}, which the Mac app reads too.</p>
       </div></div>`;
     bindHeader();
     for (const el of document.querySelectorAll(".qp-row")) {
@@ -330,7 +330,7 @@
         <span class="caption muted">${state.harness.length ? "Price applies to every harness, filter or not." : "Covers every harness's usage of this name."}</span></label>
       <div class="qp-fields">${field("qp-in", "Input", rates.input)}${field("qp-out", "Output", rates.output)}
         ${field("qp-cr", "Cache read", rates.cache_read)}${field("qp-cw", "Cache write", rates.cache_write)}</div>
-      <p class="caption muted">USD per 1M tokens. Blank cache fields count as 0. Saves to ~/.quiver/config/pricing.json on ${esc(where)}.</p>
+      <p class="caption muted">USD per 1M tokens. Blank cache fields count as 0. Saves to ~/.swe/config/pricing.json on ${esc(where)}.</p>
       <p class="error" id="qp-error" role="alert" hidden></p>
       <div class="sheet-actions qp-actions">
         ${r.source === "yours" ? '<button type="button" class="qp-button danger-text" id="qp-remove">Remove your price</button>' : ""}

@@ -28,7 +28,7 @@ class McpSyncIntegrationTest(unittest.TestCase):
         self.home = pathlib.Path(self.tmp.name)
 
         # Registry
-        swe_cfg = self.home / ".quiver" / "config"
+        swe_cfg = self.home / ".swe" / "config"
         swe_cfg.mkdir(parents=True, exist_ok=True)
         (swe_cfg / "tools.json").write_text(
             json.dumps(
@@ -212,10 +212,10 @@ class McpSyncLocalOnlyTargetTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = pathlib.Path(self.tmp.name)
-        (self.home / ".quiver" / "config").mkdir(parents=True)
-        (self.home / ".quiver" / "config" / "tools.json").write_text(
+        (self.home / ".swe" / "config").mkdir(parents=True)
+        (self.home / ".swe" / "config" / "tools.json").write_text(
             json.dumps({"claude": {"aliases": ["cc"]}}) + "\n")
-        (self.home / ".quiver" / "mcp.json").write_text(json.dumps({"mcpServers": {
+        (self.home / ".swe" / "mcp.json").write_text(json.dumps({"mcpServers": {
             "remote": {"url": "https://mcp.example.com/mcp"},
             "local": {"command": "npx", "args": ["-y", "local-mcp"]},
         }}) + "\n")
@@ -252,7 +252,7 @@ class McpSyncLocalOnlyTargetTest(unittest.TestCase):
         self.assertNotIn("type", claude["local"])
 
     def test_an_unset_secret_on_a_remote_server_does_not_block_claude_desktop(self):
-        hub = self.home / ".quiver" / "mcp.json"
+        hub = self.home / ".swe" / "mcp.json"
         data = json.loads(hub.read_text())
         data["mcpServers"]["remote"]["headers"] = {"Authorization": "Bearer ${MISSING_TOKEN}"}
         hub.write_text(json.dumps(data) + "\n")
@@ -307,7 +307,7 @@ class McpSyncCodexPeerTest(unittest.TestCase):
 
         # Minimal registry (just opencode + claude), codex is registered
         # via _EXTRA_ALIASES so it does not need a tools.json entry.
-        swe_cfg = self.home / ".quiver" / "config"
+        swe_cfg = self.home / ".swe" / "config"
         swe_cfg.mkdir(parents=True, exist_ok=True)
         (swe_cfg / "tools.json").write_text(
             json.dumps({
@@ -626,7 +626,7 @@ class McpSyncDroidPeerTest(unittest.TestCase):
         self.home = pathlib.Path(self.tmp.name)
 
         # Registry: opencode + droid (with its `df` alias).
-        swe_cfg = self.home / ".quiver" / "config"
+        swe_cfg = self.home / ".swe" / "config"
         swe_cfg.mkdir(parents=True, exist_ok=True)
         (swe_cfg / "tools.json").write_text(
             json.dumps({
@@ -724,7 +724,7 @@ class McpSyncUnverifiedHarnessTest(unittest.TestCase):
         self.home = pathlib.Path(self.tmp.name)
 
         # Registry: opencode (verified MCP) + hermes (no MCP_CONFIG_MAP entry).
-        swe_cfg = self.home / ".quiver" / "config"
+        swe_cfg = self.home / ".swe" / "config"
         swe_cfg.mkdir(parents=True, exist_ok=True)
         (swe_cfg / "tools.json").write_text(
             json.dumps({

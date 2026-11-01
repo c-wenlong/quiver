@@ -18,11 +18,11 @@ import Testing
         let bytes = buffer(
             argc: 3, exec: "/Applications/Claude.app/Contents/MacOS/Claude",
             arguments: ["/Applications/Claude.app/Contents/MacOS/Claude",
-                        "--user-data-dir=/Users/me/.quiver/accounts/claude/claude-cortex/desktop",
+                        "--user-data-dir=/Users/me/.swe/accounts/claude/claude-cortex/desktop",
                         "--foo"])
         #expect(ProcessArguments.parse(bytes) == [
             "/Applications/Claude.app/Contents/MacOS/Claude",
-            "--user-data-dir=/Users/me/.quiver/accounts/claude/claude-cortex/desktop",
+            "--user-data-dir=/Users/me/.swe/accounts/claude/claude-cortex/desktop",
             "--foo",
         ])
     }

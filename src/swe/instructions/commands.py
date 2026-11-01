@@ -37,14 +37,14 @@ def cmd_instructions(args) -> int:
 
     def report(changed: bool) -> None:
         action = "Built" if changed else "Unchanged:"
-        print(f"{action} ~/.quiver/AGENTS.md", flush=True)
+        print(f"{action} ~/.swe/AGENTS.md", flush=True)
 
     def report_error(exc: Exception) -> None:
         print(f"Instructions: {exc}", file=sys.stderr, flush=True)
 
     try:
         if sub == "watch":
-            print("Watching ~/.quiver/AGENTS_MD (Ctrl-C to stop)", flush=True)
+            print("Watching ~/.swe/AGENTS_MD (Ctrl-C to stop)", flush=True)
             watcher.watch(on_result=report, on_error=report_error)
             return 0
         if sub == "init":
@@ -67,16 +67,16 @@ def cmd_instructions(args) -> int:
     if sub == "init":
         if json_view:
             return emit(result)
-        print(f"Created ~/.quiver/AGENTS_MD/{result['chapter']} from {result['source']}")
+        print(f"Created ~/.swe/AGENTS_MD/{result['chapter']} from {result['source']}")
         report(result["built"])
         return 0
     if sub == "build" and json_view:
         return emit({"changed": changed})
     if sub == "check":
         if changed:
-            print("Stale or missing: ~/.quiver/AGENTS.md. Run swe instructions build.")
+            print("Stale or missing: ~/.swe/AGENTS.md. Run swe instructions build.")
             return 1
-        print("Current: ~/.quiver/AGENTS.md")
+        print("Current: ~/.swe/AGENTS.md")
     else:
         report(changed)
     return 0

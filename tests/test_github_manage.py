@@ -1,6 +1,6 @@
 """swe.github.manage: pin, repo search and the catalog sync, against a
 throwaway home and a fake ``gh`` on PATH. Every store they touch lives
-under that home's ~/.quiver, never the real one."""
+under that home's ~/.swe, never the real one."""
 
 import json
 import tempfile

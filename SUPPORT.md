@@ -6,7 +6,7 @@ Thanks for using `swe`. Here is where to go, in order.
 
 - [README.md](README.md) — install, the command tour, and the flags for each one.
 - `swe help` and `swe help <command>` — the same reference, offline.
-- [ARCHITECTURE.md](ARCHITECTURE.md) — the `~/.quiver` layout, registry states, and how sessions are parsed. Read this before filing anything about a harness being miscounted or missing.
+- [ARCHITECTURE.md](ARCHITECTURE.md) — the `~/.swe` layout, registry states, and how sessions are parsed. Read this before filing anything about a harness being miscounted or missing.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to set up a development checkout and open a pull request.
 
 ## 2. Run the self-check

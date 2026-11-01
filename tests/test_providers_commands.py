@@ -1227,7 +1227,7 @@ class CmdStoreWordingTest(unittest.TestCase):
     """Printed key-store instructions must match the layout that is read.
 
     The default store is one shell-export file
-    (``~/.quiver/secrets/providers/.api_keys``); a directory of
+    (``~/.swe/secrets/providers/.api_keys``); a directory of
     bare-key files only exists under ``--api-keys-dir=DIR`` or a legacy
     ``~/.api_keys/`` directory.
     """
@@ -1244,7 +1244,7 @@ class CmdStoreWordingTest(unittest.TestCase):
         # cannot write.
         with TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            missing_store = tmp_path / ".quiver" / "secrets" / "providers" / ".api_keys"
+            missing_store = tmp_path / ".swe" / "secrets" / "providers" / ".api_keys"
             patches = self._patches(tmp_path) + (
                 patch(
                     "swe.providers.commands.default_keys_dir",

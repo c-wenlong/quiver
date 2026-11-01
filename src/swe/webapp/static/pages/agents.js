@@ -1,5 +1,5 @@
 /* AGENTS.md: a port of the Mac app's AgentsMdPage. Saving stays in swe and
- * the Mac app. Global shows the shared ~/.quiver/AGENTS.md and where
+ * the Mac app. Global shows the shared ~/.swe/AGENTS.md and where
  * swe init --check says it is linked, with Link with swe init and, for
  * real files in the way, Replace and back up (swe init --force, after an
  * inline confirm); Project shows one folder's AGENTS.md and CLAUDE.md.
@@ -171,7 +171,7 @@ function agentsGlobal(d) {
 function agentsConfirm(d, blocked) {
   const machine = d.machine || "the hub";
   return `<div class="ag-confirm" role="group" aria-label="Run swe init --force?">
-    <p class="caption">This runs swe init --force on ${esc(machine)}. Each of these is copied to ~/.quiver/backups, then replaced with a link to the shared copy:</p>
+    <p class="caption">This runs swe init --force on ${esc(machine)}. Each of these is copied to ~/.swe/backups, then replaced with a link to the shared copy:</p>
     <ul class="ag-confirm-paths">${blocked.map((path) => `<li><code>${esc(path)}</code></li>`).join("")}</ul>
     <div class="ag-confirm-buttons">
       <button class="sk-button" data-agents="cancel">Cancel</button>

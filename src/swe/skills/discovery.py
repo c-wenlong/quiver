@@ -4,7 +4,7 @@ import os
 import re
 from pathlib import Path
 
-from swe.paths import expand_user
+from swe.paths import expand_user, skills_dir_for
 from swe.skills.catalogs import load_skill_catalogs
 from swe.skills.layout import SHARED_REL, shared_scopes_for_skill
 
@@ -27,7 +27,7 @@ def skill_roots(home: Path | None = None, cwd: Path | None = None) -> list[tuple
     home = home or Path.home()
     cwd = cwd or Path.cwd()
 
-    candidates: list[tuple[str, Path]] = [("shared", home / SHARED_REL)]
+    candidates: list[tuple[str, Path]] = [("shared", skills_dir_for(home))]
 
     # Every ~/.<harness>/skills and ~/.config/<harness>/skills on disk.
     for path in discover_skill_roots(home):

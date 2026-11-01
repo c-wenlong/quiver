@@ -62,7 +62,7 @@ _HELP_NAME = {"-v": "version", "-V": "version", "--version": "version"}
 
 def cmd_version(args):
     """swe version / -v / -V / --version. Reads no config, so it works even
-    when ~/.quiver is unparseable."""
+    when ~/.swe is unparseable."""
     args, json_view = take_json_flag(args)
     if args:
         print(c("red", f"Unexpected args: {' '.join(args)}"),
@@ -110,7 +110,7 @@ def cmd_autocomplete(args):
     config = SHELL_CONFIGS[shell]
     import os
 
-    # 1. Write completion script to ~/.quiver/completions/
+    # 1. Write completion script to ~/.swe/completions/
     script_dir = os.path.expanduser(str(COMPLETION_DIR))
     os.makedirs(script_dir, exist_ok=True)
     script_path = os.path.join(script_dir, config["filename"])

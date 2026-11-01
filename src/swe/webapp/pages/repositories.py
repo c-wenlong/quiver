@@ -360,7 +360,7 @@ def _worktree_args(home, body: dict) -> tuple[str, str]:
 
 def worktree(ctx, repo: str, number: str) -> dict:
     """Check PR ``number``'s head out under the hub's
-    ``~/.quiver/worktrees``, as ``swe gh pr worktree``: a bare mirror
+    ``~/.swe/worktrees``, as ``swe gh pr worktree``: a bare mirror
     per repo, the head fetched from ``refs/pull/N/head`` (fork PRs too),
     a detached checkout reused on the next ask. Answers ``{"repo",
     "number", "path", "head", "created", "machine"}``. Checkouts of one

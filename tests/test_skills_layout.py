@@ -24,7 +24,7 @@ class SkillsLayoutTest(unittest.TestCase):
     def test_enumerate_shows_symlinks_not_deduped(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             self._write_skill(shared, "alpha", "alpha")
             codex = home / ".codex" / "skills"
@@ -40,7 +40,7 @@ class SkillsLayoutTest(unittest.TestCase):
     def test_link_and_unlink_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             self._write_skill(shared, "shared-skill", "shared-skill")
             codex = home / ".codex" / "skills"
@@ -59,7 +59,7 @@ class SkillsLayoutTest(unittest.TestCase):
         # though the path was only a broken link.
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             codex = home / ".codex" / "skills"
             codex.parent.mkdir(parents=True)
@@ -116,7 +116,7 @@ class SkillsLayoutTest(unittest.TestCase):
         # link's own path.
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             codex = home / ".codex" / "skills"
             shared.mkdir(parents=True)
             codex.mkdir(parents=True)
@@ -153,7 +153,7 @@ class SkillsLayoutTest(unittest.TestCase):
         # never fire: a dangling --to root read as "does not exist".
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             self._write_skill(shared, "move-me", "move-me")
             codex = home / ".codex" / "skills"
@@ -168,7 +168,7 @@ class SkillsLayoutTest(unittest.TestCase):
     def test_move_reports_a_missing_destination_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             self._write_skill(shared, "move-me", "move-me")
 
@@ -190,7 +190,7 @@ class SkillsLayoutTest(unittest.TestCase):
     def test_move_skill_between_unlinked_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             codex = home / ".codex" / "skills"
             shared.mkdir(parents=True)
             codex.mkdir(parents=True)
@@ -203,7 +203,7 @@ class SkillsLayoutTest(unittest.TestCase):
     def test_move_rejects_same_resolved_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             self._write_skill(shared, "x", "x")
             codex = home / ".codex" / "skills"
@@ -219,7 +219,7 @@ class SkillsLayoutTest(unittest.TestCase):
         # about to move). The check is unconditional now.
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             self._write_skill(shared, "x", "x")
             codex = home / ".codex" / "skills"
@@ -233,7 +233,7 @@ class SkillsLayoutTest(unittest.TestCase):
     def test_move_refuses_existing_destination_without_force(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             codex = home / ".codex" / "skills"
             shared.mkdir(parents=True)
             codex.mkdir(parents=True)
@@ -247,7 +247,7 @@ class SkillsLayoutTest(unittest.TestCase):
     def test_move_force_backs_up_and_replaces_destination(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             codex = home / ".codex" / "skills"
             shared.mkdir(parents=True)
             codex.mkdir(parents=True)
@@ -260,7 +260,7 @@ class SkillsLayoutTest(unittest.TestCase):
             self.assertFalse(src.exists())
             self.assertTrue((dest / "SKILL.md").exists())
             # The replaced destination was backed up, not deleted.
-            backups = list((home / ".quiver" / "backups").glob("**/extra.txt"))
+            backups = list((home / ".swe" / "backups").glob("**/extra.txt"))
             self.assertEqual(len(backups), 1)
 
     def test_sync_link_records(self):
@@ -268,7 +268,7 @@ class SkillsLayoutTest(unittest.TestCase):
             home = Path(tmp)
             config_dir = home / ".config" / "swe"
             links_file = config_dir / "skill_links.json"
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             codex = home / ".codex" / "skills"
             codex.parent.mkdir(parents=True)
@@ -289,11 +289,11 @@ class SkillsLayoutTest(unittest.TestCase):
             home = Path(tmp)
             config_dir = home / ".config" / "swe"
             links_file = config_dir / "skill_links.json"
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             codex = home / ".codex" / "skills"
             codex.parent.mkdir(parents=True)
-            codex.symlink_to(Path("../.quiver/skills"))
+            codex.symlink_to(Path("../.swe/skills"))
 
             with patch("swe.skills.layout.SKILL_LINKS_FILE", links_file), patch(
                 "swe.skills.layout.CONFIG_DIR", config_dir
@@ -317,7 +317,7 @@ class SkillsLayoutTest(unittest.TestCase):
                             {
                                 "label": "codex",
                                 "path": str(home / ".codex" / "skills"),
-                                "target": str(home / ".quiver" / "skills"),
+                                "target": str(home / ".swe" / "skills"),
                                 "kind": "symlink",
                             }
                         ]
@@ -366,7 +366,7 @@ class SkillsLayoutTest(unittest.TestCase):
             config_dir.mkdir(parents=True)
             links_file = config_dir / "skill_links.json"
             links_file.write_text("{corrupt", encoding="utf-8")
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             codex = home / ".codex" / "skills"
             codex.parent.mkdir(parents=True)

@@ -45,11 +45,11 @@ package; their allowed ordering and what each owns is in
 
 ## The layout
 
-`~/.quiver` is split by lifecycle, so the versioned half and the disposable
+`~/.swe` is split by lifecycle, so the versioned half and the disposable
 half never mix:
 
 ```
-~/.quiver/
+~/.swe/
   AGENTS.md          canonical instructions, symlinked into every harness
   AGENTS_MD/         optional authored chapters and their ordered index.txt
   .linkignore        paths `swe init` must leave alone
@@ -75,11 +75,11 @@ there.
 ## Data plane vs control plane
 
 Two repos, two lifecycles. This repo is the control plane: code, in git,
-public. `~/.quiver` is the data plane: state, in its own private git repo,
+public. `~/.swe` is the data plane: state, in its own private git repo,
 versioned separately from the CLI that reads it. Cloning this repo and
 building it gets you a `swe` with no harnesses, no stars, nothing archived —
 that state lives on the machine, or in whichever private repo the operator
-points `~/.quiver` at.
+points `~/.swe` at.
 
 The boundary is a rule, not just a directory split: code in this repo never
 hardcodes what `harness.json` can say. `skills/layout.py` and
@@ -93,7 +93,7 @@ does it support plugins, where do its skills live — is a question for
 `.gitignore` enforces the boundary mechanically: `harness.json`, `mcp.json`,
 `tools.json`, `providers.json`, `stars.json`, and the caches are all listed,
 so a machine's actual state can never land in this repo by accident.
-`~/.quiver` carries its own `.gitignore` — written by `swe init` from
+`~/.swe` carries its own `.gitignore` — written by `swe init` from
 `paths.GITIGNORE_BODY`, and listing `cache/`, `backups/`, `data/ledger/` (the
 app's usage ledger: personal and ~30 MB), `data/devin-cloud/` (your Devin
 session titles and links), `data/search/` (the app's FTS index of session
@@ -102,7 +102,7 @@ values) and `mcp/servers/` —
 plus its own git history, independent of this one. `swe init` writes that
 file only when there is none, so it never rewrites one the operator has
 edited; a root created before `secrets/` joined the list has to add the line
-by hand before versioning `~/.quiver`.
+by hand before versioning `~/.swe`.
 
 Both credential stores are shell-style `export NAME=value` files, each in
 its own folder under `secrets/`. Provider keys used to sit at `~/.api_keys`
@@ -125,17 +125,17 @@ Every harness wants its own instruction filename (`CLAUDE.md`, `AGENTS.md`,
 each name, so editing one changes all of them.
 
 With chapter mode, `swe instructions build` generates that complete shared
-file from `~/.quiver/AGENTS_MD/index.txt`. `check` detects stale output and
+file from `~/.swe/AGENTS_MD/index.txt`. `check` detects stale output and
 `watch` keeps rebuilding after edits. Edit chapters in this mode: direct
 changes to the generated file are overwritten. See
 [docs/instructions.md](docs/instructions.md).
 
-The same trick covers skills: one tree at `~/.quiver/skills`, symlinked into
+The same trick covers skills: one tree at `~/.swe/skills`, symlinked into
 every harness's `skills/` directory.
 
 Hooks do not fit that shape, so they get their own. A Claude Code Stop hook
 and a Codex hook speak different contracts and most harnesses have none, so
-nothing is shared: `~/.quiver/hooks/<harness>/` holds one harness's scripts,
+nothing is shared: `~/.swe/hooks/<harness>/` holds one harness's scripts,
 named by its `harness.json` key, and a harness only takes part once that
 directory exists. Each script is linked on its own into the harness's hooks
 directory rather than linking the directory, because installers keep their
@@ -160,12 +160,12 @@ Link state is a small vocabulary shared by `swe init`, `swe list` and
 | `keep` | a real directory holding files that exist nowhere else |
 | `conflict` | a real file where the link should go |
 | `skipped` | harness not installed (`swe init` lists it only when `harness.json` has the harness), or a new skills folder nobody has reviewed yet |
-| `ignored` | listed in `~/.quiver/.linkignore`, archived in `harness.json`, or owned by a known non-harness app (`NOT_HARNESSES` in `init/layout.py`); never touched or counted |
+| `ignored` | listed in `~/.swe/.linkignore`, archived in `harness.json`, or owned by a known non-harness app (`NOT_HARNESSES` in `init/layout.py`); never touched or counted |
 
 `keep` is the safety valve. It is never overwritten on a plain run, because
 absorbing it would hide the only copy of something behind the shared tree.
 
-`ignored` is the opt-out. `~/.quiver/.linkignore` holds home-relative
+`ignored` is the opt-out. `~/.swe/.linkignore` holds home-relative
 patterns (`fnmatch`, `*` crosses `/`, naming a directory covers its
 contents), and `init/layout.plan` stamps every matching target with that
 state before classifying it. `swe init` and `swe list` show it; `swe find`
@@ -175,7 +175,7 @@ plan.
 ## Registry: harness.json
 
 One file says everything the CLI knows about a harness:
-`~/.quiver/config/harness.json`, keyed by name. `registry.py` is the only
+`~/.swe/config/harness.json`, keyed by name. `registry.py` is the only
 module that touches it — `load_registry()`, `save_registry()`,
 `state_of()`, `is_active()`, `starred_names()`, `archived_names()`,
 `active_names()`, and the read-only `load_registry_if_present()` that
@@ -215,7 +215,7 @@ A fresh machine, or one upgrading from before this consolidation, gets a
 lazy migration the first time `load_registry()` runs: `tools.json` plus
 whichever of `stars.json` / `archived.json` exist get merged into
 `harness.json`, and the legacy files are moved — never deleted — into
-`~/.quiver/.backup/registry-migration-<date>/`. Once `harness.json` exists
+`~/.swe/.backup/registry-migration-<date>/`. Once `harness.json` exists
 on disk, it is authoritative; the migration never runs again, even if the
 legacy files are still sitting there.
 
@@ -289,8 +289,8 @@ directories behind them.
 ## Find: the harness activity filter
 
 `swe find plugins` also reports plugin drift. Claude Code and Codex both
-register a `~/.quiver/plugins` marketplace in place. Codex runs an installed
-cached copy, so an edit under `~/.quiver` reaches it only after a reinstall.
+register a `~/.swe/plugins` marketplace in place. Codex runs an installed
+cached copy, so an edit under `~/.swe` reaches it only after a reinstall.
 Claude Code reads a directory-marketplace plugin from its folder, so its
 cache is never compared. `swe skills --json` follows the same rule: such a
 Claude plugin's skills are listed from the source path its marketplace
@@ -367,8 +367,8 @@ TTLs and the app's ledger schema lives in
 
 ## MCP
 
-`~/.quiver/mcp.json` is the hub. Credentials are stored as `${NAME}`
-references; values live in `~/.quiver/secrets/mcp/.api_keys` (mode 600,
+`~/.swe/mcp.json` is the hub. Credentials are stored as `${NAME}`
+references; values live in `~/.swe/secrets/mcp/.api_keys` (mode 600,
 gitignored). Resolution happens when a harness config is written, not by
 exporting to the environment, because Claude and Cursor launch from the Dock
 and never read a shell profile.
@@ -424,7 +424,7 @@ enough to run on every invocation:
 | help vs dispatch | `help_text.py`'s HELP topics against `cli.py`'s COMMANDS |
 | registry schema | every `harness.json` entry's shape (state, pin, archived, capabilities) |
 | code-table vs data | `HARNESS_ROOTS` / `PLUGIN_FALLBACK` against the registry's capabilities |
-| dangling symlinks | top-level symlinks in the repo root and `~/.quiver` pointing nowhere |
+| dangling symlinks | top-level symlinks in the repo root and `~/.swe` pointing nowhere |
 
 Every check exists as a pure `check_*` function (plain data in, findings
 out, no I/O) for unit testing, and `run_drift_checks()` wires the real

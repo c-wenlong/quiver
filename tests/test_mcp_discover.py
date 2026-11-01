@@ -22,7 +22,7 @@ class McpDiscoverTest(unittest.TestCase):
     def test_discovers_servers_not_in_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             config_dir.mkdir(parents=True)
             registry_file = config_dir / "harness.json"
             mcp_file = config_dir / "mcp.json"
@@ -81,7 +81,7 @@ class McpDiscoverTest(unittest.TestCase):
     def test_apply_writes_to_mcp_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             config_dir.mkdir(parents=True)
             registry_file = config_dir / "harness.json"
             mcp_file = config_dir / "mcp.json"
@@ -379,6 +379,84 @@ class DiscoverReadsTheDiskTest(unittest.TestCase):
         self.assertNotIn("orphaned", [f.status for f in found])
 
 
+class ScannedServersTest(unittest.TestCase):
+    """_scanned_servers must not report the hub file itself as an
+    unmanaged config: after the ~/.quiver -> ~/.swe move the hub can show
+    up under either dir name, so the skip is by resolved path."""
+
+    def _scan(self, configs, mcp_file):
+        import contextlib
+        from unittest.mock import patch
+
+        from swe.mcp import discover as D
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch.object(D, "MCP_SOURCE_FILE", mcp_file))
+            stack.enter_context(
+                patch("swe.find.mcps.scan_configs", return_value=configs))
+            return D._scanned_servers({})
+
+    def test_the_hub_file_is_skipped_by_path_and_name(self):
+        import tempfile
+        from pathlib import Path
+
+        from swe.find.mcps import FoundConfig
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            mcp_file = home / ".swe" / "mcp.json"
+            mcp_file.parent.mkdir()
+            mcp_file.write_text('{"mcpServers": {}}')
+            configs = [
+                # The hub scanned at its real path.
+                FoundConfig(path=mcp_file,
+                            servers={"hub_srv": {"command": "x"}},
+                            harness="swe"),
+                # The hub seen through the compat symlink's name.
+                FoundConfig(path=home / ".quiver" / "mcp.json",
+                            servers={"old_srv": {"command": "x"}},
+                            harness="quiver"),
+                # A dir merely named .swe elsewhere is also not a finding.
+                FoundConfig(path=home / ".config" / "swe" / "mcp.json",
+                            servers={"name_srv": {"command": "x"}},
+                            harness="swe"),
+                FoundConfig(path=home / ".cursor" / "mcp.json",
+                            servers={"stray": {"command": "cur"}},
+                            harness="cursor"),
+            ]
+            out = self._scan(configs, mcp_file)
+        self.assertEqual(sorted(out), ["stray"])
+        self.assertEqual(out["stray"]["tool"], "cursor")
+
+    def test_an_unresolvable_path_is_skipped(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import MagicMock
+
+        from swe.find.mcps import FoundConfig
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mcp_file = Path(tmp) / "mcp.json"
+            dead = MagicMock()
+            dead.resolve.side_effect = OSError("gone")
+            bad = MagicMock()
+            # First resolve (registered-path check) answers, second fails.
+            bad.resolve.side_effect = [Path("/elsewhere"), OSError("gone")]
+            configs = [FoundConfig(path=dead,
+                                   servers={"d": {"command": "x"}},
+                                   harness="dead"),
+                       FoundConfig(path=bad,
+                                   servers={"x": {"command": "x"}},
+                                   harness="x"),
+                       FoundConfig(path=Path(tmp) / "mcp2.json",
+                                   servers={"y": {"command": "y"},
+                                            "weird": "not-a-dict"},
+                                   harness="y")]
+            out = self._scan(configs, mcp_file)
+        self.assertEqual(sorted(out), ["y"])
+
+
 class ShieldCredentialsTest(unittest.TestCase):
     """A literal credential in a harness config must never reach mcp.json.
 
@@ -397,7 +475,7 @@ class ShieldCredentialsTest(unittest.TestCase):
 
         tmp = stack.enter_context(tempfile.TemporaryDirectory())
         home = Path(tmp)
-        path = home / ".quiver" / "mcp.json"
+        path = home / ".swe" / "mcp.json"
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps({"mcpServers": {}}))
         stack.enter_context(patch.object(D, "MCP_SOURCE_FILE", path))

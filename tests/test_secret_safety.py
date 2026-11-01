@@ -1,7 +1,7 @@
 """`mcp edit` temp file secrecy + providers --file containment.
 
 The old edit flow wrote resolved secrets to a predictable
-``~/.quiver/config/.mcp-edit-tmp.json``: symlink-following, umask-mode,
+``~/.swe/config/.mcp-edit-tmp.json``: symlink-following, umask-mode,
 left behind on a crashed editor, inside the versioned git tree. And
 ``providers add --file=../../x`` stored a path that ``find_key_file``
 joined verbatim — a masked-read oracle for any file on the box.
@@ -68,8 +68,8 @@ class McpEditTmpFileTest(unittest.TestCase):
         rc, seen, _ = self._run_edit("true")
         self.assertEqual(rc, 0)
         path = seen["path"]
-        # Outside ~/.quiver entirely, unpredictable name, mode 0600.
-        self.assertNotIn(".quiver", str(path))
+        # Outside ~/.swe entirely, unpredictable name, mode 0600.
+        self.assertNotIn(".swe", str(path))
         self.assertIn("quiver-mcp-edit-", path.name)
         self.assertEqual(seen["mode"], 0o600)
         # Resolved secret content reached the editor...

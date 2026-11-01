@@ -3,7 +3,7 @@ in the period, grouped by provider, with the price its name resolves to
 and where that price came from. Ports ``PricingModel.swift``.
 
 Writes: the Mac app's price form (``PricingEditSheet``), which saves a
-price in ``~/.quiver/config/pricing.json`` or removes the saved ones for a
+price in ``~/.swe/config/pricing.json`` or removes the saved ones for a
 model (``post``). The web ledger reads that file, so a saved price shows
 here as "yours" and reprices past usage, as in the app.
 """

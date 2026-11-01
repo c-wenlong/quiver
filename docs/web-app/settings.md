@@ -117,7 +117,7 @@ stay in the Mac app.
 ### Experimental › Session index
 
 The switch is the hub's own setting, `enabled` in
-`~/.quiver/data/search/indexer.json`: while it is on, the hub's
+`~/.swe/data/search/indexer.json`: while it is on, the hub's
 `remote-search-index` thread runs a pass over every transcript swe can
 decode (the list is in [data-model.md](../data-model.md)) every two minutes (`sessions/search_writer.py`). Turning it
 on also starts a pass at once, so the line under the switch reads
@@ -168,15 +168,15 @@ app loads, not only when Settings is open, so `app.js` needs no change.
     "token_ttl_s": 300
   },
   "providers": {
-    "path": "~/.quiver/secrets/providers/.api_keys", "exists": true, "error": null,
+    "path": "~/.swe/secrets/providers/.api_keys", "exists": true, "error": null,
     "stamp": "9f2c…",
     "keys": [{"name": "OPENAI_API_KEY", "provider": "OpenAI", "has_value": true,
               "masked": "sk-proj-••••••••1234"}],
     "catalog": [{"id": "openai", "name": "OpenAI", "env_vars": ["OPENAI_API_KEY"],
                  "url": "https://platform.openai.com/api-keys", "has_key": true}]
   },
-  "paths": {"swe": "~/.local/bin/swe", "api_keys": "~/.quiver/secrets/providers/.api_keys",
-            "mcp_servers": "~/.quiver/mcp/servers"},
+  "paths": {"swe": "~/.local/bin/swe", "api_keys": "~/.swe/secrets/providers/.api_keys",
+            "mcp_servers": "~/.swe/mcp/servers"},
   "session_search": {"enabled": true, "running": false, "exists": true, "schema_version": "1",
                      "files": {"current": 909}, "sessions_by_agent": {"claude": 850, "codex": 58},
                      "sessions": 908, "messages": 326558, "last_error": null,
@@ -248,9 +248,9 @@ replaces the line in place, or adds the key where Add key says above.
 `POST /v1/app/settings/key_remove`, body `{"name", "stamp"}`: drops the
 line, and its heading once nothing is left under it. Both write as the
 Mac app's `APIKeysStore` does: the previous file copied to
-`~/.quiver/backups/api-keys/api_keys.bak` (folder mode 700), the new one
+`~/.swe/backups/api-keys/api_keys.bak` (folder mode 700), the new one
 written mode 600 through a temp file and a rename (through a symlink to
-its target), `~/.quiver/secrets` given its own `.gitignore` of `*`, and
+its target), `~/.swe/secrets` given its own `.gitignore` of `*`, and
 the file checked again just before the swap. They answer `{"providers"}`
 in the `get` shape, never a value. `stamp` is an HMAC of the file's bytes
 keyed per hub process; a file that no longer matches it is a 409

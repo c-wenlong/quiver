@@ -38,14 +38,14 @@ function rootExplanation(root) {
   switch (root.state) {
     case "linked": return root.archived
       ? "Reads the shared skills. Archived in swe, so swe init won't relink it if you unlink it, but you can link it here."
-      : "Reads the shared skills in ~/.quiver/skills.";
+      : "Reads the shared skills in ~/.swe/skills.";
     case "create": return root.archived
       ? "No skills folder yet. Archived in swe, so swe init leaves it alone; linking here creates it."
       : "No skills folder yet. Linking creates it.";
     case "relink": return d ? `Points somewhere else: ${d.replace("points at ", "")}.` : "Points somewhere else.";
     case "absorb": return d === "empty" ? "An empty folder. Linking replaces it."
       : `Holds only copies of shared skills (${d}). Linking backs it up and replaces it.`;
-    case "keep": return `Holds skills that exist nowhere else (${d}). Move them into ~/.quiver/skills before linking.`;
+    case "keep": return `Holds skills that exist nowhere else (${d}). Move them into ~/.swe/skills before linking.`;
     case "ignored": return d ? `Ignored: ${d}.` : "Ignored by swe init.";
     case "skipped": return "The harness isn't installed.";
     default: return d ? `${root.state}: ${d}` : root.state;
@@ -129,7 +129,7 @@ function skillsConfirmText(c, d) {
     case "create": return `Creates ${path} as a link to ${shared}, so ${name} loads every shared skill.`;
     case "relink": return `Points ${path} at ${shared} instead of where it points now, so ${name} loads every shared skill.`;
     default: return rootNeedsForce(root)
-      ? `Copies ${path} into ~/.quiver/backups, then replaces it with a link to ${shared}. The skills in it (${root.detail}) are all in the shared library already.`
+      ? `Copies ${path} into ~/.swe/backups, then replaces it with a link to ${shared}. The skills in it (${root.detail}) are all in the shared library already.`
       : `Removes ${path}, which holds no files, and puts a link to ${shared} in its place.`;
   }
 }
@@ -196,7 +196,7 @@ function skillsHeader(busy) {
     </div>`;
   }
   const add = p.onDetail ? "" : `<button class="sk-button primary sk-new-button" id="sk-new" type="button"
-      title="Write a new SKILL.md into ~/.quiver/skills on ${esc(where)}">${SKILLS_PLUS}New skill</button>`;
+      title="Write a new SKILL.md into ~/.swe/skills on ${esc(where)}">${SKILLS_PLUS}New skill</button>`;
   return pageHeader("Skills", `Every skill on ${where} outside a plugin, and which harnesses load it.`,
     `${links}${add}<button class="icon-button${busy ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Refresh">${icon("rescan")}</button>`);
 }
@@ -346,7 +346,7 @@ function openNewSkill() {
   const sync = () => {
     const name = $("sk-new-name").value.trim(), problem = newSkillProblem(name);
     $("sk-new-hint").textContent = problem || "";
-    $("sk-new-where").textContent = `Writes ~/.quiver/skills/${problem ? "<name>" : name}/SKILL.md on ${where}.`;
+    $("sk-new-where").textContent = `Writes ~/.swe/skills/${problem ? "<name>" : name}/SKILL.md on ${where}.`;
     $("sk-new-create").disabled = !!problem || sheet.dataset.working === "1";
     $("sk-new-error").hidden = true;
   };
@@ -707,7 +707,7 @@ function paintSkillDetail(d) {
   const chips = skillChips(s, d.harnesses).map(([r, link]) => skillsChip(r.name, link, { compact: true })).join("");
   const lock = d.editable
     ? `The web app shows skills read only. Edit ${s.name} in the Mac app, or its files on the hub.`
-    : `Only skills that live under ~/.quiver can be edited, so ${s.name} is read-only.`;
+    : `Only skills that live under ~/.swe can be edited, so ${s.name} is read-only.`;
   const header = `<div class="card sk-head">
     <div class="sk-title"><span class="name">${esc(s.name)}</span><span class="badge">${esc(skillSourceTitle(s.source))}</span></div>
     <code class="sk-mono">${esc(skillsPath(s.path, home))}</code>

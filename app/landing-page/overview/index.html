@@ -273,12 +273,12 @@ python -m swe.mcp_server
 swe setup --quick            # only missing or actionable setup stages
 swe setup report             # configure coding-session report models only
 swe setup --apply            # apply safe defaults and link AGENTS.md and skills, no prompts
-swe setup --hub=&lt;git url&gt;    # clone your hub repo as ~/.quiver first (fork one to start)
+swe setup --hub=&lt;git url&gt;    # clone your hub repo as ~/.swe first (fork one to start)
 swe --version                # print the swe version (also: swe -v, swe version)
 swe bug                      # open a GitHub bug report with your versions filled in
 swe harness discover         # scan PATH for unregistered AI CLIs
-swe mcp discover             # find MCP servers not in ~/.quiver/mcp.json
-swe init                     # create ~/.quiver and link every harness to it
+swe mcp discover             # find MCP servers not in ~/.swe/mcp.json
+swe init                     # create ~/.swe and link every harness to it
 
 swe list                     # all registered tools, starred first
 swe list agentic             # filter by tag
@@ -348,7 +348,7 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 <tr>
   <td><code>swe init [--check\|--force\|--full\|--migrate]</code></td>
   <td></td>
-  <td>Create <code>~/.quiver</code> and symlink every harness to it</td>
+  <td>Create <code>~/.swe</code> and symlink every harness to it</td>
 </tr>
 <tr>
   <td><code>swe setup [section] [--quick]</code></td>
@@ -533,7 +533,7 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 <tr>
   <td><code>swe hooks [list\|info\|new\|edit\|enable\|disable\|delete\|check\|sync] …</code></td>
   <td></td>
-  <td>Manage the hook scripts under <code>~/.quiver/hooks</code></td>
+  <td>Manage the hook scripts under <code>~/.swe/hooks</code></td>
 </tr>
 <tr>
   <td><code>swe tags</code></td>
@@ -593,7 +593,7 @@ token limits require typing the exact phrase <code>process all</code>.</p>
 <p>The first run opens <code>swe config setup report</code>. Configure an inexpensive Claude
 or Codex model for project/session summaries and a stronger model for the final
 report. Credentials remain in the harness's existing login or environment.</p>
-<p>Reports omit empty sections and persist under <code>~/.quiver/reports/</code> with
+<p>Reports omit empty sections and persist under <code>~/.swe/reports/</code> with
 their manifests, session-summary cache, exclusions, cadence cursors, and
 follow-up ledger. Follow-up status is always manual:</p>
 <pre><code class="language-bash">swe report followup done fu_1234
@@ -634,7 +634,7 @@ the normal daily or weekly cursor.</p>
 </tr>
 <tr>
   <td><code>swe providers add &lt;name&gt; [desc] [--url URL] [--env ENV, …] [--file NAME]</code></td>
-  <td>Register a provider in <code>~/.quiver/config/providers.json</code></td>
+  <td>Register a provider in <code>~/.swe/config/providers.json</code></td>
 </tr>
 <tr>
   <td><code>swe providers remove &lt;name&gt;</code></td>
@@ -642,7 +642,7 @@ the normal daily or weekly cursor.</p>
 </tr>
 </tbody>
 </table>
-<p>Keys live in <code>~/.quiver/secrets/providers/.api_keys</code>, a shell-style file of <code>export NAME=value</code> lines (gitignored, mode 600). <code>swe init</code> moves an existing <code>~/.api_keys</code> there and leaves a symlink behind, so a shell profile that sources it keeps working. quiver stores <strong>metadata only</strong> — never the key string itself. Mask format: <code>first8 + *** + last4 + (len=N)</code>; short keys fall back to <code>first3 + *** + (len=N)</code>; missing keys render as <code>-</code>. Override the store per-invocation with <code>--api-keys-dir=DIR</code>, a shell-style file or a directory of per-provider files named by slug.</p>
+<p>Keys live in <code>~/.swe/secrets/providers/.api_keys</code>, a shell-style file of <code>export NAME=value</code> lines (gitignored, mode 600). <code>swe init</code> moves an existing <code>~/.api_keys</code> there and leaves a symlink behind, so a shell profile that sources it keeps working. quiver stores <strong>metadata only</strong> — never the key string itself. Mask format: <code>first8 + *** + last4 + (len=N)</code>; short keys fall back to <code>first3 + *** + (len=N)</code>; missing keys render as <code>-</code>. Override the store per-invocation with <code>--api-keys-dir=DIR</code>, a shell-style file or a directory of per-provider files named by slug.</p>
 <p>Built-in providers (27): <code>openai</code>, <code>anthropic</code>, <code>gemini</code>, <code>deepseek</code>, <code>zai</code>, <code>minimax</code>, <code>kimi</code>, <code>qwen</code>, <code>mimo</code>, <code>xai</code>, <code>stepfun</code>, <code>groq</code>, <code>upstage</code>, <code>cerebras</code>, <code>mistral</code>, <code>routing_run</code>, <code>opencode_zen</code>, <code>openrouter</code>, <code>together_ai</code>, <code>fireworks_ai</code>, <code>vercel_gateway</code>, <code>nebius</code>, <code>featherless</code>, <code>cohere</code>, <code>perplexity</code>, <code>github</code>, <code>huggingface</code>. Add your own with <code>swe providers add</code>.</p>
 <h3 id="swe-mcp-subcommands"><a class="anchor" href="#swe-mcp-subcommands"></a><code>swe mcp</code> subcommands</h3>
 <table>
@@ -705,7 +705,7 @@ or loopback behind <code>tailscale serve</code>, so no LAN or WAN port ever open
 phone pairs by opening the URL or QR <code>swe remote pair</code> prints (<code>--app</code> for
 the iOS deep link), or by posting a pair request an owner approves with
 <code>swe remote devices --approve=&lt;code&gt;</code>; both paths mint a per-device
-credential in <code>~/.quiver/data/remote/devices.json</code> (mode 600).
+credential in <code>~/.swe/data/remote/devices.json</code> (mode 600).
 <code>swe remote devices --revoke=&lt;id&gt;</code> cuts one device's access without
 touching the rest.</p>
 <p>Threat model, in one paragraph: the hub executes commands on your machines
@@ -719,7 +719,7 @@ forwarded headers, SSH console keys) is in
 <p>Agent skills are folders containing a <code>SKILL.md</code> file. quiver scans built-in harness roots (shared, Cursor, Claude, Codex, plugins) plus any catalogs you register.</p>
 <h3 id="typical-layout"><a class="anchor" href="#typical-layout"></a>Typical layout</h3>
 <p>Most setups symlink every harness to one shared tree:</p>
-<pre><code>~/.quiver/skills          ← canonical shared skills
+<pre><code>~/.swe/skills          ← canonical shared skills
 ~/.codex/skills    → shared
 ~/.claude/skills   → shared
 ~/.cursor/skills   → shared
@@ -727,7 +727,7 @@ forwarded headers, SSH console keys) is in
 <p>Run <code>swe find skills -r</code> to inspect this layout — it walks the filesystem, so it
 sees roots a fixed candidate list would miss. <code>swe skills tree</code> and
 <code>swe skills scope list</code> forward to the same view. <code>swe skills link</code> and
-<code>swe skills unlink</code> record what they did in <code>~/.quiver/config/skill_links.json</code>.</p>
+<code>swe skills unlink</code> record what they did in <code>~/.swe/config/skill_links.json</code>.</p>
 <h3 id="discover-and-register-catalogs"><a class="anchor" href="#discover-and-register-catalogs"></a>Discover and register catalogs</h3>
 <p>Project skill folders outside the default roots can be registered manually or discovered automatically:</p>
 <pre><code class="language-bash">swe skills discover              # scan ~/Desktop and ~/Documents for */skills/
@@ -735,7 +735,7 @@ swe skills discover --apply      # register new catalogs
 cd ~/Projects/my-app/skills &amp;&amp; swe skills catalog .
 swe skills catalog list
 </code></pre>
-<p>Catalogs live in <code>~/.quiver/config/skill_catalogs.json</code>. Nested catalogs (e.g. <code>gbrain/skills</code> inside <code>ai-engineering/skills</code>) are collapsed to the outermost match.</p>
+<p>Catalogs live in <code>~/.swe/config/skill_catalogs.json</code>. Nested catalogs (e.g. <code>gbrain/skills</code> inside <code>ai-engineering/skills</code>) are collapsed to the outermost match.</p>
 <h3 id="symlinks-and-moving-skills"><a class="anchor" href="#symlinks-and-moving-skills"></a>Symlinks and moving skills</h3>
 <p>Link all harnesses to shared (what <code>swe setup</code> step 4 does):</p>
 <pre><code class="language-bash">swe skills link codex
@@ -764,17 +764,17 @@ swe find skills -r               # every root with symlink kind + counts
     P[MCP sync]
   end
 
-  R --&gt; TJ[&quot;~/.quiver/config/harness.json&quot;]
+  R --&gt; TJ[&quot;~/.swe/config/harness.json&quot;]
   S --&gt; Logs[&quot;Tool session logs\n(read-only)&quot;]
   RP --&gt; Logs
-  RP --&gt; Reports[&quot;~/.quiver/reports\n(manifests + follow-ups)&quot;]
+  RP --&gt; Reports[&quot;~/.swe/reports\n(manifests + follow-ups)&quot;]
   M --&gt; Logs
-  K --&gt; Roots[&quot;Skill roots\n~/.quiver/skills, plugins, …&quot;]
+  K --&gt; Roots[&quot;Skill roots\n~/.swe/skills, plugins, …&quot;]
   P --&gt; MCP[&quot;Per-tool MCP configs&quot;]
   L --&gt; Bin[&quot;Real CLI binaries\nclaude, codex, …&quot;]
 </code></pre>
 <ul>
-<li><strong>Registry</strong> — your tool list lives in <code>~/.quiver/config/harness.json</code>. It starts empty: <code>swe discover</code> matches what is actually on your PATH against a built-in recognition table, and only what it finds gets registered, so the file describes this machine rather than a wish list. Every entry carries its own <code>state</code> (<code>active</code>, <code>starred</code>, or <code>archived</code>) instead of splitting favourites and shelved tools into separate files. Edited by <code>swe add</code> / <code>remove</code> / <code>check</code> / <code>swe harness star</code> / <code>swe harness archive</code>. Not shipped with the package (see <code>examples/tools.example.json</code>).</li>
+<li><strong>Registry</strong> — your tool list lives in <code>~/.swe/config/harness.json</code>. It starts empty: <code>swe discover</code> matches what is actually on your PATH against a built-in recognition table, and only what it finds gets registered, so the file describes this machine rather than a wish list. Every entry carries its own <code>state</code> (<code>active</code>, <code>starred</code>, or <code>archived</code>) instead of splitting favourites and shelved tools into separate files. Edited by <code>swe add</code> / <code>remove</code> / <code>check</code> / <code>swe harness star</code> / <code>swe harness archive</code>. Not shipped with the package (see <code>examples/tools.example.json</code>).</li>
 <li><strong>Launching</strong> — <code>swe use</code> resolves a name or alias and replaces the current process via <code>os.execvp</code>, so the tool behaves exactly as if you'd typed it directly.</li>
 <li><strong>Analytics</strong> — <code>swe session</code> and <code>swe models</code> parse each tool's on-disk logs (e.g. <code>~/.claude/projects</code>, <code>~/.codex/sessions</code>, <code>~/.local/share/opencode/opencode.db</code>). quiver <strong>never writes</strong> to those files.</li>
 <li><strong>Reports</strong> — normalizes those logs into semantic messages, filters startup noise, batches useful sessions by project, and invokes configured Claude/Codex models only after a local cost preview is approved.</li>
@@ -783,7 +783,7 @@ swe find skills -r               # every root with symlink kind + counts
 <li><strong>Rate limits</strong> — <code>swe list</code> shows the percentage of quota remaining and fetches usage data only for starred harnesses that expose a rate limit API; Freebuff instead shows remaining/total referral-unlocked GLM 5.2 sessions. Starring is the explicit opt-in for provider traffic. Unstarred harnesses still show registry details and local 100-day session counts without running usage scripts. Codex, Copilot, Claude, Droid, Freebuff, Cursor, and Devin use their authenticated provider endpoints; Cursor shows the more exhausted of its included Auto-mode and named-model (API) usage for the current billing cycle. Antigravity is read through the running app or CLI's loopback-only quota RPC, so quiver never reads its Google OAuth credential directly; the last successful value remains available from the outage cache when Antigravity is closed. Results are cached in <code>rate_limits_cache.json</code> (5-minute TTL); <code>swe list --refresh</code>, <code>swe list -r</code>, and <code>swe list -n</code> bypass the fresh cache for starred harnesses only. The architecture is pluggable — additional fetchers can be registered in <code>harness/rate_limits.py</code>. On macOS python.org builds that lack CA certificates, remote fetchers retry with the operating system's own CA bundle (or <code>certifi</code> if installed), still fully verified; with no bundle at all they send nothing and print how to fix it.</li>
 </ul>
 <h2 id="configuration"><a class="anchor" href="#configuration"></a>Configuration</h2>
-<p>Everything quiver persists lives under one root, <code>~/.quiver/</code>. It is split by
+<p>Everything quiver persists lives under one root, <code>~/.swe/</code>. It is split by
 lifecycle so the directory can be a git repo: <code>config/</code> and the shared
 <code>AGENTS.md</code> / <code>skills/</code> are worth versioning, <code>cache/</code> and <code>backups/</code> are not
 (a generated <code>.gitignore</code> covers them).</p>
@@ -939,7 +939,7 @@ PR process, one concern per PR, and what CI will check. By taking part you agree
 </tr>
 <tr>
   <td><a href="https://github.com/c-wenlong/quiver/blob/main/ARCHITECTURE.md">ARCHITECTURE.md</a></td>
-  <td>Layering rules, <code>~/.quiver</code> layout, registry and link states, session engines</td>
+  <td>Layering rules, <code>~/.swe</code> layout, registry and link states, session engines</td>
 </tr>
 <tr>
   <td><a href="../contributing/">CONTRIBUTING.md</a></td>

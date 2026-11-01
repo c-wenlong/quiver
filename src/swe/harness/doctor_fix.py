@@ -138,8 +138,8 @@ def _run_plugin_fix(home: Path, finding: dict, remedy: dict | None) -> str | Non
 
 
 def _run_dangling_link(home: Path, finding: dict, remedy: dict | None) -> str | None:
-    """Remove one broken top-level symlink in ~/.quiver or its skills
-    folder, after copying the link itself to ~/.quiver/backups.
+    """Remove one broken top-level symlink in ~/.swe or its skills
+    folder, after copying the link itself to ~/.swe/backups.
 
     Refuses anything that is not still a broken link sitting directly in
     one of those two folders, so a report gone stale never removes a
@@ -161,7 +161,7 @@ def _run_dangling_link(home: Path, finding: dict, remedy: dict | None) -> str | 
     except OSError:
         parent = None
     if parent not in allowed:
-        raise FixRefused(f"{raw} is not directly in ~/.quiver or its skills folder")
+        raise FixRefused(f"{raw} is not directly in ~/.swe or its skills folder")
     if not path.is_symlink():
         raise FixRefused(f"{raw} is not a symlink any more")
     if path.exists():

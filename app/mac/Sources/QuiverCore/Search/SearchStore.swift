@@ -259,7 +259,7 @@ public final class SearchStore: @unchecked Sendable {
     deinit { statements.removeAll() }
 
     /// - Parameter directory: where `search.sqlite` lives; production uses
-    ///   `SearchLocation.directory(under:)` (`~/.quiver/data/search/`).
+    ///   `SearchLocation.directory(under:)` (`~/.swe/data/search/`).
     public init(directory: URL) throws {
         self.directory = directory
         url = directory.appending(path: SearchLocation.fileName)

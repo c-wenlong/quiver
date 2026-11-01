@@ -524,7 +524,7 @@ public struct APIKeysStore: Sendable {
     /// and swap; tests use it to edit the file at the worst moment.
     var beforeReplace: (@Sendable () -> Void)?
 
-    /// A folder that must never be versioned, such as ~/.quiver/secrets.
+    /// A folder that must never be versioned, such as ~/.swe/secrets.
     /// A save into it first gives it its own `.gitignore` of `*`, which git
     /// lets win over whatever the hub's root `.gitignore` says.
     public let sealedFolder: URL?
@@ -538,16 +538,16 @@ public struct APIKeysStore: Sendable {
     /// The same text `swe init` writes (`paths.SECRETS_GITIGNORE_BODY`).
     static let sealBody = "# Credential values. Never versioned, whatever ../.gitignore says.\n*\n"
 
-    /// ~/.quiver/secrets, where the default keys file lives.
+    /// ~/.swe/secrets, where the default keys file lives.
     public static func secretsFolder(home: URL) -> URL {
-        home.appending(path: ".quiver/secrets")
+        home.appending(path: ".swe/secrets")
     }
 
-    /// ~/.quiver/secrets/providers/.api_keys, or ~/.api_keys on a machine
+    /// ~/.swe/secrets/providers/.api_keys, or ~/.api_keys on a machine
     /// `swe init` has not migrated yet. After the move ~/.api_keys is a
     /// symlink to the new file, so either path edits the same keys.
     public static func defaultURL(home: URL) -> URL {
-        let current = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        let current = home.appending(path: ".swe/secrets/providers/.api_keys")
         let legacy = home.appending(path: ".api_keys")
         let manager = FileManager.default
         let currentIsThere = manager.fileExists(atPath: current.path)
@@ -635,7 +635,7 @@ public struct APIKeysStore: Sendable {
     /// readable by others even for a moment.
     private func preparePrivately(_ data: Data, beside destination: URL) throws -> URL {
         let temp = destination.deletingLastPathComponent()
-            .appendingPathComponent(".\(destination.lastPathComponent).quiver-\(UUID().uuidString)")
+            .appendingPathComponent(".\(destination.lastPathComponent).swe-\(UUID().uuidString)")
         guard FileManager.default.createFile(atPath: temp.path, contents: nil,
                                              attributes: [.posixPermissions: 0o600]) else {
             throw APIKeysError.unwritable("couldn't create a temporary file in \(temp.deletingLastPathComponent().path)")

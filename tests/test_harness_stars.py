@@ -21,7 +21,7 @@ class HarnessStarsTest(unittest.TestCase):
     stars.json, since swe.harness.stars is a thin shim over it."""
 
     def _patch_paths(self, tmp: str):
-        config_dir = Path(tmp) / ".quiver" / "config"
+        config_dir = Path(tmp) / ".swe" / "config"
         return patch.multiple(
             "swe.harness.registry",
             CONFIG_DIR=config_dir,
@@ -52,7 +52,7 @@ class HarnessStarsTest(unittest.TestCase):
                 save_stars(["droid", "claude", "droid", ""])
                 self.assertEqual(load_stars(), ["droid", "claude"])
                 raw = json.loads(
-                    (Path(tmp) / ".quiver" / "config" / "harness.json").read_text())
+                    (Path(tmp) / ".swe" / "config" / "harness.json").read_text())
                 self.assertEqual(raw["droid"]["pin"], 1)
                 self.assertEqual(raw["claude"]["pin"], 2)
                 self.assertEqual(raw["droid"]["state"], "starred")

@@ -36,9 +36,9 @@ import Testing
     }
 
     @Test func sourceLineUsesHomeWhenInsideAndEscapesOtherwise() {
-        let inside = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        let inside = home.appending(path: ".swe/secrets/providers/.api_keys")
         #expect(ShellStartup.sourceLine(for: inside, home: home)
-            == #"[ -f "$HOME/.quiver/secrets/providers/.api_keys" ] && source "$HOME/.quiver/secrets/providers/.api_keys""#)
+            == #"[ -f "$HOME/.swe/secrets/providers/.api_keys" ] && source "$HOME/.swe/secrets/providers/.api_keys""#)
         let odd = URL(fileURLWithPath: "/opt/we$ird/k`.api_keys")
         #expect(ShellStartup.sourceLine(for: odd, home: home)
             == #"[ -f "/opt/we\$ird/k\`.api_keys" ] && source "/opt/we\$ird/k\`.api_keys""#)
@@ -66,11 +66,11 @@ import Testing
         let temp = try TempDir()
         defer { withExtendedLifetime(temp) {} }
         let root = temp.url
-        let keys = root.appending(path: ".quiver/secrets/providers/.api_keys")
+        let keys = root.appending(path: ".swe/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
         try "K=1".write(to: keys, atomically: true, encoding: .utf8)
-        let rel = ".quiver/secrets/providers/.api_keys"
+        let rel = ".swe/secrets/providers/.api_keys"
         for line in [#"(source "$HOME/\#(rel)")"#,
                      #"source "\$HOME/\#(rel)""#,
                      #"source '$HOME/\#(rel)'"#,
@@ -96,7 +96,7 @@ import Testing
         let temp = try TempDir()
         defer { withExtendedLifetime(temp) {} }
         let root = temp.url
-        let keys = root.appending(path: ".quiver/secrets/providers/.api_keys")
+        let keys = root.appending(path: ".swe/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
         try "K=1".write(to: keys, atomically: true, encoding: .utf8)
@@ -106,8 +106,8 @@ import Testing
             withDestinationPath: keys.path)
         for rc in [
             "source ~/.api_keys\n",
-            ". \"$HOME/.quiver/secrets/providers/.api_keys\"\n",
-            ". \"${HOME}/.quiver/secrets/providers/.api_keys\"\n",
+            ". \"$HOME/.swe/secrets/providers/.api_keys\"\n",
+            ". \"${HOME}/.swe/secrets/providers/.api_keys\"\n",
             "[ -f ~/.api_keys ] && source ~/.api_keys\n",
             "export A=1\nsource \(keys.path)\n",
         ] {
@@ -150,7 +150,7 @@ import Testing
         let root = temp.url
         let home = root.appending(path: "home")
         let backups = root.appending(path: "backups")
-        let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        let keys = home.appending(path: ".swe/secrets/providers/.api_keys")
         let rc = home.appending(path: ".zshrc")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)

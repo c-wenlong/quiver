@@ -99,10 +99,10 @@ class ConfigurationIOTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), malformed)
 
     def test_default_path_uses_config_dir(self):
-        # ~/.quiver/config/config.json since the roots merged in 0.2.7.
+        # ~/.swe/config/config.json since the roots merged in 0.2.7.
         self.assertEqual(CONFIG_FILE.name, "config.json")
         self.assertEqual(CONFIG_FILE.parent.name, "config")
-        self.assertEqual(CONFIG_FILE.parent.parent.name, ".quiver")
+        self.assertEqual(CONFIG_FILE.parent.parent.name, ".swe")
 
 
 class ConfigurationValidationTests(unittest.TestCase):

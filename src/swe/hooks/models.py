@@ -36,7 +36,7 @@ class HookRow:
     ``tier`` is "harness" for a hub script linked per harness, "shared"
     for a ``hooks/shared/`` script deployed through a generated wrapper,
     and "foreign" for a script in a hooks root (or named by a settings
-    command) that no ``~/.quiver`` source claims. ``enabled`` is False
+    command) that no ``~/.swe`` source claims. ``enabled`` is False
     only for a quiver-owned script with a ``.disabled`` marker — foreign
     rows are not ours to switch, so they always read True.
     """

@@ -2,7 +2,7 @@ import Foundation
 import os
 
 /// Where to look for usage. Each list can name several homes because Quiver
-/// keeps extra accounts under `~/.quiver/accounts/<vendor>/<id>/home`.
+/// keeps extra accounts under `~/.swe/accounts/<vendor>/<id>/home`.
 public struct LedgerRoots: Sendable, Equatable {
     /// Claude config homes; transcripts are under `<home>/projects`.
     public var claudeHomes: [URL]
@@ -243,7 +243,7 @@ public actor Ledger {
 
     /// - Parameters:
     ///   - directory: where the ledger database lives; production uses
-    ///     `~/.quiver/data/ledger/` (see `LedgerLocation`).
+    ///     `~/.swe/data/ledger/` (see `LedgerLocation`).
     ///   - backups: where the daily copies go; defaults to `directory/backups`.
     ///   - pricing: defaults to the bundled LiteLLM snapshot.
     ///   - maxLineBytes: longer lines are skipped rather than buffered.

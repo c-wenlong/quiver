@@ -1,7 +1,7 @@
 """The hub's MCP servers merged into Quiver's extra account homes (#888).
 
 ``accounts.sync.mcp`` in config.json, off by default. When on, ``swe init``
-writes each server in ``~/.quiver/mcp.json`` into every extra account,
+writes each server in ``~/.swe/mcp.json`` into every extra account,
 rendered the way ``swe mcp sync quiver`` renders it for the default home
 (secrets resolved, shared servers as the gateway URL):
 
@@ -26,7 +26,7 @@ The rules match the link pass in ``accounts.py``:
   secrets and ``data/`` is versioned.
 - A file that can't be read or parsed is reported and never written. Each
   write re-parses the result and checks that everything but the servers
-  reads back unchanged, keeps a backup in ``~/.quiver/backups``, and goes
+  reads back unchanged, keeps a backup in ``~/.swe/backups``, and goes
   through a temp file and rename, retried when the harness rewrote the file
   in the meantime.
 """
@@ -288,7 +288,7 @@ def _render(vendor: str, text: str, doc: dict, servers: dict,
 
 
 def _backup(path: Path, data: bytes, home: Path) -> Path:
-    """``data`` into ~/.quiver/backups under ``backup_tree``'s naming, but
+    """``data`` into ~/.swe/backups under ``backup_tree``'s naming, but
     always 0600: these files hold a login and resolved tokens, and the
     backups folder is not private the way an account home is."""
     from datetime import datetime

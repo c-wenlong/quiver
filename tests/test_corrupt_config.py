@@ -428,7 +428,7 @@ class McpSyncCorruptTargetIntegrationTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = pathlib.Path(self.tmp.name)
-        swe_cfg = self.home / ".quiver" / "config"
+        swe_cfg = self.home / ".swe" / "config"
         swe_cfg.mkdir(parents=True, exist_ok=True)
         (swe_cfg / "tools.json").write_text(
             json.dumps({
@@ -452,7 +452,7 @@ class McpSyncCorruptTargetIntegrationTest(unittest.TestCase):
         self.claude_path = self.home / ".claude.json"
         # Precious non-MCP content that must survive.
         self.claude_path.write_text('{corrupt "oauth": "token"')
-        (self.home / ".quiver" / "mcp.json").write_text(
+        (self.home / ".swe" / "mcp.json").write_text(
             json.dumps({"mcpServers": {}}, indent=2) + "\n"
         )
 
@@ -483,7 +483,7 @@ class McpSyncCorruptTargetIntegrationTest(unittest.TestCase):
     def test_discover_warns_on_corrupt_hub_and_apply_refuses(self):
         # --apply only ever writes the hub file, so refusal kicks in when
         # mcp.json itself is malformed.
-        hub = self.home / ".quiver" / "mcp.json"
+        hub = self.home / ".swe" / "mcp.json"
         hub.write_text("{corrupt")
         r = self.run_mcp("discover")
         self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
@@ -493,7 +493,7 @@ class McpSyncCorruptTargetIntegrationTest(unittest.TestCase):
         self.assertEqual(hub.read_text(), "{corrupt")
 
     def _seed_ghost_hub(self):
-        hub = self.home / ".quiver" / "mcp.json"
+        hub = self.home / ".swe" / "mcp.json"
         hub.write_text(
             json.dumps({"mcpServers": {"ghost": {"command": "ghostd"}}},
                        indent=2) + "\n"
@@ -534,7 +534,7 @@ class CorruptRegistryIntegrationTest(unittest.TestCase):
     def test_list_fails_cleanly(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = pathlib.Path(tmp)
-            swe_cfg = home / ".quiver" / "config"
+            swe_cfg = home / ".swe" / "config"
             swe_cfg.mkdir(parents=True, exist_ok=True)
             (swe_cfg / "harness.json").write_text("{corrupt")
             env = os.environ.copy()

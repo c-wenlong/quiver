@@ -10,7 +10,7 @@ The core CLI is stdlib-only with no runtime dependencies. Optional extras: `serv
 
 | Doc | Read it before you touch |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | layering, the `~/.quiver` layout, registry and link states, `swe init` and archived harnesses, session engines, caches, drift checks |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | layering, the `~/.swe` layout, registry and link states, `swe init` and archived harnesses, session engines, caches, drift checks |
 | [docs/backend-architecture.md](docs/backend-architecture.md) | what each package owns, adding a command / `--json` payload / parser / fetcher / MCP format, the Python [gotchas](docs/backend-architecture.md#gotchas) |
 | [docs/app-architecture.md](docs/app-architecture.md) | the macOS app's structure and conventions, the app [gotchas](docs/app-architecture.md#gotchas) |
 | [docs/testing.md](docs/testing.md) | every test suite, coverage, fixtures, the end-to-end checks CI runs |
@@ -40,7 +40,7 @@ The web app stays inside the Python package because pipx installs and the `swe` 
 
 `app/mac/` replaces Switchboard, TokenTracker, AIUsage and OpenUsage ([app/mac/ROADMAP.md](app/mac/ROADMAP.md)).
 
-- **Share no data with those apps.** Never read or write `~/.switchboard`, `~/.tokentracker`, `~/.config/aiusage`, OpenUsage's Application Support folder, or their caches, settings or keychain items, not even to import. Everything Quiver keeps lives under `~/.quiver`. The harnesses' own files (`~/.claude`, `~/.codex`, ...) are not another app's data; reading them is the point.
+- **Share no data with those apps.** Never read or write `~/.switchboard`, `~/.tokentracker`, `~/.config/aiusage`, OpenUsage's Application Support folder, or their caches, settings or keychain items, not even to import. Everything Quiver keeps lives under `~/.swe`. The harnesses' own files (`~/.claude`, `~/.codex`, ...) are not another app's data; reading them is the point.
 - **Borrow ideas and code, not state.** Their source is a reference; Quiver re-implements against its own files. Keep the licence notices for any code copied.
 - **Never write to `~/Applications/Quiver.app` by hand.** Several sessions work on this repo at once, so the installed app is built only from `origin/main` by `app/mac/script/install-app.sh`. Check your change with your own build: `./script/build-app.sh debug` in your worktree, then `open -n build/Quiver.app`.
 - **Reinstall the app after every push to `main`**, not only `app/mac/` changes. Once your PR merges, run `app/mac/script/install-app.sh` from any checkout, `git fetch`, then confirm `git merge-base --is-ancestor <your merge commit> "$(defaults read ~/Applications/Quiver.app/Contents/Info QuiverCommit)"`. A newer commit is fine. If the script reports another install running, wait and run it again, since that one may have built an older `main`. Nothing to install after a push to a PR branch.

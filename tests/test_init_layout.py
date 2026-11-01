@@ -142,7 +142,7 @@ class InspectTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = _fake_home(tmp)
             (home / ".claude/CLAUDE.md").write_text("rules\n")
-            loop = home / ".quiver/loop"
+            loop = home / ".swe/loop"
             agents_file(home).parent.mkdir(parents=True, exist_ok=True)
             agents_file(home).symlink_to(loop)
             loop.symlink_to(agents_file(home))
@@ -199,7 +199,7 @@ class CmdInitTest(unittest.TestCase):
                 self.assertTrue((swe_dir(home) / name).is_dir(), name)
 
     def test_init_repairs_a_half_built_hub(self):
-        # #696: a second machine had ~/.quiver with only AGENTS.md and an
+        # #696: a second machine had ~/.swe with only AGENTS.md and an
         # empty skills/. Init adds the missing folders and keeps the rest.
         with tempfile.TemporaryDirectory() as tmp:
             home = _fake_home(tmp)
@@ -456,7 +456,7 @@ class ChainLandsOnCanonicalTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            canonical = home / ".quiver" / "AGENTS.md"
+            canonical = home / ".swe" / "AGENTS.md"
             canonical.parent.mkdir(parents=True)
             canonical.write_text("# canon\n")
             store = home / "nix-store" / "hm-files"
@@ -475,7 +475,7 @@ class ChainLandsOnCanonicalTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            canonical = home / ".quiver" / "AGENTS.md"
+            canonical = home / ".swe" / "AGENTS.md"
             canonical.parent.mkdir(parents=True)
             canonical.write_text("# canon\n")
             other = home / "elsewhere.md"
@@ -507,7 +507,7 @@ class InstalledByBinaryTest(unittest.TestCase):
     def test_binary_on_path_plans_create_with_no_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / ".quiver" / "skills").mkdir(parents=True)
+            (home / ".swe" / "skills").mkdir(parents=True)
             with mock.patch("swe.init.layout.shutil.which",
                             side_effect=self._which):
                 instructions, skills = plan(home, registry={})
@@ -540,7 +540,7 @@ class InstalledByBinaryTest(unittest.TestCase):
         # "harness not installed", never a littered directory.
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / ".quiver" / "skills").mkdir(parents=True)
+            (home / ".swe" / "skills").mkdir(parents=True)
             with mock.patch("swe.init.layout.shutil.which", return_value=None):
                 instructions, skills = plan(home, registry={})
             inst = {s.label: s for s in instructions}
@@ -627,7 +627,7 @@ class InitRegistryReadTest(unittest.TestCase):
 
     def _home_with_registry(self, tmp: str, body: str) -> Path:
         home = Path(tmp)
-        cfg = home / ".quiver" / "config"
+        cfg = home / ".swe" / "config"
         cfg.mkdir(parents=True)
         (cfg / "harness.json").write_text(body, encoding="utf-8")
         return home

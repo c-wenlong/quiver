@@ -67,8 +67,8 @@ entry, as in the app, where it is a Settings section.
 ## Data on the hub machine
 
 The web app shows the machine the hub runs on. Its ledger lives in
-`~/.quiver/data/web-ledger/`, apart from the Mac app's
-`~/.quiver/data/ledger/`, so the two never write the same file even when
+`~/.swe/data/web-ledger/`, apart from the Mac app's
+`~/.swe/data/ledger/`, so the two never write the same file even when
 both run on one Mac. Other machines' usage reaches the hub the way limits
 already do, through satellites; that is a later step.
 
@@ -152,4 +152,4 @@ Nothing in `app/mac/` changes. To drop the web app, delete `src/swe/webapp/`,
 `docs/web-app/`,
 `src/swe/ledger/`, the root static handler (`_serve_static`) and the
 `/v1/app/` branches in `hub.py`, and
-`~/.quiver/data/web-ledger/`.
+`~/.swe/data/web-ledger/`.

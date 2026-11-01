@@ -19,13 +19,13 @@ from tests.test_remote_hub import HubBase
 
 
 class _TempHome:
-    """A real temp home: ~/.quiver and harness.json live there, and every
+    """A real temp home: ~/.swe and harness.json live there, and every
     fix writes there for real. Scans of the real machine are stubbed."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.home = Path(self._tmp.name)
-        self.config = self.home / ".quiver" / "config"
+        self.config = self.home / ".swe" / "config"
         self.registry = self.config / "harness.json"
         self.ctx = SimpleNamespace(home=self.home, machine={"name": "hub-box"})
         self._patches = [
@@ -66,8 +66,8 @@ class _TempHome:
 
     def seed(self, registry=None):
         """A home with the hub and shared AGENTS.md, as after swe setup."""
-        (self.home / ".quiver").mkdir(exist_ok=True)
-        (self.home / ".quiver" / "AGENTS.md").write_text("# shared\n")
+        (self.home / ".swe").mkdir(exist_ok=True)
+        (self.home / ".swe" / "AGENTS.md").write_text("# shared\n")
         if registry is not None:
             self.config.mkdir(parents=True, exist_ok=True)
             self.registry.write_text(json.dumps(registry))
@@ -101,7 +101,7 @@ class TestRun(_TempHome, unittest.TestCase):
     def test_setup_makes_the_hub_and_the_shared_agents_md(self):
         reply = self.fix(self.finding("setup.hub"))
         self.assertEqual((reply["ran"], reply["error"]), ("setup", None))
-        self.assertTrue((self.home / ".quiver" / "AGENTS.md").is_file())
+        self.assertTrue((self.home / ".swe" / "AGENTS.md").is_file())
         self.assertNotIn("setup.hub", self.checks(reply["report"]))
         self.assertNotIn("setup.agents-md", self.checks(reply["report"]))
 
@@ -112,7 +112,7 @@ class TestRun(_TempHome, unittest.TestCase):
         self.assertEqual((reply["ran"], reply["error"]), ("init", None))
         link = self.home / ".claude" / "CLAUDE.md"
         self.assertTrue(link.is_symlink())
-        self.assertEqual(link.resolve(), (self.home / ".quiver" / "AGENTS.md").resolve())
+        self.assertEqual(link.resolve(), (self.home / ".swe" / "AGENTS.md").resolve())
         self.assertNotIn("setup.unlinked", self.checks(reply["report"]))
 
     def test_init_leaves_a_real_file_and_lists_it(self):
@@ -135,8 +135,8 @@ class TestRun(_TempHome, unittest.TestCase):
         self.assertNotIn("~/.codex/AGENTS.md", reply["blocked"])
         link = self.home / ".codex" / "AGENTS.md"
         self.assertTrue(link.is_symlink())
-        self.assertEqual(link.resolve(), (self.home / ".quiver" / "AGENTS.md").resolve())
-        backups = list((self.home / ".quiver" / "backups").iterdir())
+        self.assertEqual(link.resolve(), (self.home / ".swe" / "AGENTS.md").resolve())
+        backups = list((self.home / ".swe" / "backups").iterdir())
         self.assertEqual([b.read_text() for b in backups], ["mine\n"])
         self.assertIn("report", reply)
 
@@ -185,7 +185,7 @@ class TestRun(_TempHome, unittest.TestCase):
         self.assertEqual((reply["ran"], reply["error"]), ("undeclare", None))
         hooks = json.loads(settings.read_text())["hooks"]
         self.assertEqual(hooks, {"Stop": [{"hooks": [{"command": "keep.py"}]}]})
-        backups = list((self.home / ".quiver" / "backups").iterdir())
+        backups = list((self.home / ".swe" / "backups").iterdir())
         self.assertEqual(len(backups), 1)
         self.assertNotIn("gone.py", json.dumps(
             [f["message"] for f in reply["report"]["findings"]]))
@@ -429,7 +429,7 @@ class TestRoute(_TempHome, HubBase):
         self.assertEqual(status, 200, data)
         report = json.loads(data)
         self.assertEqual(report["machine"], self.srv.state.machine["name"])
-        # The hub's own ~/.quiver holds its pairing store, but no AGENTS.md.
+        # The hub's own ~/.swe holds its pairing store, but no AGENTS.md.
         finding = report["findings"][0]
         self.assertEqual((finding["check"], finding["action"]), ("setup.agents-md", "setup"))
         ran = []
@@ -448,7 +448,7 @@ class TestRoute(_TempHome, HubBase):
                 body={"check": finding["check"], "message": finding["message"]})
         self.assertEqual(status, 403)
         self.assertIn("bad_origin", data.decode())
-        self.assertFalse((self.srv.home / ".quiver" / "AGENTS.md").exists())
+        self.assertFalse((self.srv.home / ".swe" / "AGENTS.md").exists())
 
     def test_refusals_carry_their_status(self):
         auth = self.auth()

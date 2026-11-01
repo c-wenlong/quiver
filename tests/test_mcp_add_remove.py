@@ -27,13 +27,13 @@ class McpAddRemoveTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = pathlib.Path(self.tmp.name)
-        cfg = self.home / ".quiver" / "config"
+        cfg = self.home / ".swe" / "config"
         cfg.mkdir(parents=True, exist_ok=True)
         (cfg / "tools.json").write_text(
             json.dumps({"claude": {"aliases": ["cc"]}, "codex": {"aliases": ["cx"]}})
             + "\n"
         )
-        (self.home / ".quiver" / "mcp.json").write_text('{"mcpServers": {}}\n')
+        (self.home / ".swe" / "mcp.json").write_text('{"mcpServers": {}}\n')
         (self.home / ".claude.json").write_text('{"mcpServers": {}}\n')
         (self.home / ".codex").mkdir()
         (self.home / ".codex" / "config.toml").write_text('model = "x"\n')
@@ -51,7 +51,7 @@ class McpAddRemoveTest(unittest.TestCase):
         )
 
     def hub(self):
-        return json.loads((self.home / ".quiver" / "mcp.json").read_text())["mcpServers"]
+        return json.loads((self.home / ".swe" / "mcp.json").read_text())["mcpServers"]
 
     def claude(self):
         return json.loads((self.home / ".claude.json").read_text())["mcpServers"]
@@ -183,7 +183,7 @@ class McpAddRemoveTest(unittest.TestCase):
 
         return mock.patch.multiple(
             cli,
-            MCP_SOURCE_FILE=self.home / ".quiver" / "mcp.json",
+            MCP_SOURCE_FILE=self.home / ".swe" / "mcp.json",
         ), mock.patch.dict(os.environ, {"HOME": str(self.home)})
 
     def test_to_without_a_backend_refuses_before_writing(self):
@@ -261,7 +261,7 @@ class McpAddRemoveTest(unittest.TestCase):
         self.assertEqual(self.hub()["s"]["command"], "c2")
 
     def test_remove_accepts_existing_names_with_spaces_or_underscore(self):
-        hub = self.home / ".quiver" / "mcp.json"
+        hub = self.home / ".swe" / "mcp.json"
         hub.write_text(json.dumps(
             {"mcpServers": {"my server": {"command": "x"}, "_local": {"command": "y"}}}))
         r = self.run_mcp("remove", "my server", "--from=quiver")
@@ -272,7 +272,7 @@ class McpAddRemoveTest(unittest.TestCase):
         self.assertEqual(self.hub(), {})
 
     def test_sse_refuses_a_format_that_cannot_express_it(self):
-        cfg = self.home / ".quiver" / "config"
+        cfg = self.home / ".swe" / "config"
         tools = json.loads((cfg / "tools.json").read_text())
         tools["opencode"] = {"aliases": ["oc"]}
         (cfg / "tools.json").write_text(json.dumps(tools))
@@ -290,7 +290,7 @@ class McpAddRemoveTest(unittest.TestCase):
         self.assertEqual(self.hub()["r"]["type"], "sse")
 
     def test_sync_of_an_sse_hub_server_keeps_the_transport(self):
-        hub = self.home / ".quiver" / "mcp.json"
+        hub = self.home / ".swe" / "mcp.json"
         hub.write_text(json.dumps({"mcpServers": {
             "r": {"url": "https://x/sse", "type": "sse"}}}))
         r = self.run_mcp("sync", "quiver", "claude", "--no-interactive")

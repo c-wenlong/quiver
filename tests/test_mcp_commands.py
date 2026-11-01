@@ -360,6 +360,32 @@ class CmdStatusEmptyTest(McpMatrixFixtureMixin, unittest.TestCase):
         self.assertNotIn("servers across", output)
 
 
+class HubDescriptorTest(unittest.TestCase):
+    """The hub is a name, not a ``~/.<tool>`` convention: ``quiver`` and its
+    aliases resolve to ``~/.swe/mcp.json`` no matter what the hub dir is
+    called."""
+
+    def test_hub_names_share_one_descriptor(self):
+        for name in ("quiver", "hub", "mcp.json", "."):
+            cfg = cli_mod.get_tool_config(name)
+            self.assertEqual(cfg["path"], cli_mod.MCP_SOURCE_FILE, name)
+            self.assertEqual(cfg["key"], "mcpServers", name)
+            self.assertEqual(cfg["format"], "standard", name)
+            self.assertNotIn("unverified", cfg, name)
+        self.assertIsNone(cli_mod.get_tool_config(""))
+
+    def test_hub_servers_read_the_hub_file(self):
+        with TemporaryDirectory() as tmp:
+            hub = Path(tmp) / ".swe" / "mcp.json"
+            hub.parent.mkdir()
+            hub.write_text('{"mcpServers": {"gh": {"command": "ghd"}}}')
+            with patch.object(cli_mod, "MCP_SOURCE_FILE", hub):
+                cfg = cli_mod.get_tool_config("quiver")
+                self.assertEqual(cfg["path"], hub)
+                self.assertEqual(cli_mod.get_tool_servers("quiver"),
+                                 {"gh": {"command": "ghd"}})
+
+
 class KiloMcpConfigTest(unittest.TestCase):
     """Kilo keeps opencode's mcp schema in ~/.config/kilo/kilo.jsonc."""
 

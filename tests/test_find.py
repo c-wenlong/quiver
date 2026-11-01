@@ -45,9 +45,9 @@ def _in_home(home: Path):
 
 def _home(tmp: str) -> Path:
     home = Path(tmp)
-    shared = home / ".quiver" / "skills"
+    shared = home / ".swe" / "skills"
     _skill(shared, "alpha")
-    (home / ".quiver" / "AGENTS.md").write_text("rules\n")
+    (home / ".swe" / "AGENTS.md").write_text("rules\n")
     for rel in (".claude", ".codex"):
         (home / rel).mkdir(parents=True)
     return home
@@ -57,9 +57,9 @@ class AgentsTreeTest(unittest.TestCase):
     def test_reports_linked_and_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            (home / ".claude/CLAUDE.md").symlink_to(home / ".quiver/AGENTS.md")
+            (home / ".claude/CLAUDE.md").symlink_to(home / ".swe/AGENTS.md")
             canonical, nodes = agents_tree(home)
-            self.assertEqual(canonical, home / ".quiver/AGENTS.md")
+            self.assertEqual(canonical, home / ".swe/AGENTS.md")
             by = {n.label: n for n in nodes}
             self.assertEqual(by["claude"].state, "linked")
             self.assertEqual(by["claude"].kind, "symlink")
@@ -70,10 +70,10 @@ class AgentsTreeTest(unittest.TestCase):
     def test_symlink_target_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            (home / ".claude/CLAUDE.md").symlink_to(home / ".quiver/AGENTS.md")
+            (home / ".claude/CLAUDE.md").symlink_to(home / ".swe/AGENTS.md")
             _, nodes = agents_tree(home)
             claude = next(n for n in nodes if n.label == "claude")
-            self.assertEqual(claude.target, home / ".quiver/AGENTS.md")
+            self.assertEqual(claude.target, home / ".swe/AGENTS.md")
 
 
 class SkillsTreeTest(unittest.TestCase):
@@ -109,7 +109,7 @@ class SkillsTreeTest(unittest.TestCase):
 class PluginTreeTest(unittest.TestCase):
     def _build(self, home: Path) -> None:
         for market, name in (("dv", "eng"), ("dv", "cloudflare"), ("rf", "reasoning")):
-            plug = home / ".quiver" / "plugins" / market / name
+            plug = home / ".swe" / "plugins" / market / name
             (plug / ".claude-plugin").mkdir(parents=True)
             _skill(plug / "skills", f"{name}-one")
 
@@ -127,7 +127,7 @@ class PluginTreeTest(unittest.TestCase):
         # Before the marketplace split, plugins sat directly under plugins/.
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            plug = home / ".quiver" / "plugins" / "solo"
+            plug = home / ".swe" / "plugins" / "solo"
             (plug / ".claude-plugin").mkdir(parents=True)
             _skill(plug / "skills", "solo-one")
             plugins = plugin_tree(home)
@@ -151,7 +151,7 @@ class CmdFindTest(unittest.TestCase):
     def test_amd_renders_the_agents_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            (home / ".claude/CLAUDE.md").symlink_to(home / ".quiver/AGENTS.md")
+            (home / ".claude/CLAUDE.md").symlink_to(home / ".swe/AGENTS.md")
             code, out = self._run(home, ["amd", "--root", "--full"])
             self.assertEqual(code, 0)
             self.assertIn("AGENTS.md", out)
@@ -167,7 +167,7 @@ class CmdFindTest(unittest.TestCase):
     def test_skills_renders_plugins_and_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            plug = home / ".quiver" / "plugins" / "dv" / "eng"
+            plug = home / ".swe" / "plugins" / "dv" / "eng"
             (plug / ".claude-plugin").mkdir(parents=True)
             _skill(plug / "skills", "tdd")
             code, out = self._run(home, ["skills", "--root", "--full"])
@@ -246,7 +246,7 @@ if __name__ == "__main__":
 
 
 class ScopeTest(unittest.TestCase):
-    """--root scans from where ~/.quiver lives; default scans the cwd."""
+    """--root scans from where ~/.swe lives; default scans the cwd."""
 
     def _tree(self, tmp: str) -> Path:
         home = _home(tmp)
@@ -295,14 +295,14 @@ class ScopeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = self._tree(tmp)
             found = scan_agents(home, home)
-            self.assertNotIn(home / ".quiver" / "AGENTS.md", [n.path for n in found])
+            self.assertNotIn(home / ".swe" / "AGENTS.md", [n.path for n in found])
 
     def test_symlink_to_canonical_reads_as_linked(self):
         from swe.find.tree import scan_agents
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._tree(tmp)
-            (home / ".claude/CLAUDE.md").symlink_to(home / ".quiver/AGENTS.md")
+            (home / ".claude/CLAUDE.md").symlink_to(home / ".swe/AGENTS.md")
             found = {n.path: n for n in scan_agents(home, home)}
             self.assertEqual(found[home / ".claude/CLAUDE.md"].state, "linked")
 

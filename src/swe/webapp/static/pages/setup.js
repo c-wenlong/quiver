@@ -486,13 +486,13 @@ function linksStep() {
   html += hubCard();
   html += `<div class="card setup-rows">
     ${row("agents", "Shared instructions",
-      "~/.quiver/AGENTS.md, linked into each agent as its own file (CLAUDE.md, AGENTS.md, GEMINI.md…).",
+      "~/.swe/AGENTS.md, linked into each agent as its own file (CLAUDE.md, AGENTS.md, GEMINI.md…).",
       instructionsExtra(preview.instructions))}
     ${row("skills", "Skills",
-      "~/.quiver/skills becomes every agent's skills folder, so a skill you add shows up in all of them.")}
+      "~/.swe/skills becomes every agent's skills folder, so a skill you add shows up in all of them.")}
     ${row("mcp", "MCP servers", mcpDetail(preview.mcp || []))}
   </div>
-  <p class="caption">Anything replaced is backed up to ~/.quiver/backups first. A real file that would be lost stays where it is.</p>`;
+  <p class="caption">Anything replaced is backed up to ~/.swe/backups first. A real file that would be lost stays where it is.</p>`;
   return `<div class="setup-step">${html}</div>`;
 }
 
@@ -507,7 +507,7 @@ function cloning() {
   return hubJob().state === "cloning";
 }
 
-/* swe setup's hub step: shown while ~/.quiver has no hub yet, and after a
+/* swe setup's hub step: shown while ~/.swe has no hub yet, and after a
  * clone this page started, to say how it went. */
 function hubCard() {
   const hub = page.data.hub;
@@ -516,7 +516,7 @@ function hubCard() {
   if (job.state === "done" && !hub.can_clone) {
     const failed = ((job.cloned && job.cloned.marketplaces) || []).filter((m) => m.error);
     return `<div class="card setup-hub" role="status">
-      <div class="setup-done-title">${CHECK}<span>Cloned ${esc(job.url)} into ~/.quiver.</span></div>
+      <div class="setup-done-title">${CHECK}<span>Cloned ${esc(job.url)} into ~/.swe.</span></div>
       <p class="caption">Its AGENTS.md, skills, plugins and MCP servers are on ${esc(machineName())} now. Set up links them into each agent.</p>
       ${failed.map((m) => `<p class="caption note">${esc(m.marketplace)} isn't registered in ${esc(agentName(m.harness))}: ${esc(m.error)}</p>`).join("")}
     </div>`;
@@ -529,7 +529,7 @@ function hubCard() {
     ? `<p class="caption">Demo hub: <a href="${safeHref(hub.demo_url)}" target="_blank" rel="noopener noreferrer">${esc(hub.demo_url)}</a></p>` : "";
   return `<div class="card setup-hub">
     <div class="card-title">Start from your hub repo</div>
-    <p class="setup-text">Optional. Clone your own hub repo into ~/.quiver on ${esc(machineName())}, so its AGENTS.md, skills,
+    <p class="setup-text">Optional. Clone your own hub repo into ~/.swe on ${esc(machineName())}, so its AGENTS.md, skills,
       plugins and MCP servers come with it. Leave it empty to start an empty hub.</p>
     <p class="caption">${esc(FORK_NOTE)}</p>
     ${demo}
@@ -624,7 +624,7 @@ function row(iconName, title, detail, extra = "") {
 function mcpDetail(servers) {
   if (!servers.length) return "None found in your agents yet. Add servers later on the MCP servers page.";
   const names = servers.map((s) => s.name).join(", ");
-  return `Copies ${servers.length} server${servers.length === 1 ? "" : "s"} your agents already use into ~/.quiver/mcp.json: ${names}.`;
+  return `Copies ${servers.length} server${servers.length === 1 ? "" : "s"} your agents already use into ~/.swe/mcp.json: ${names}.`;
 }
 
 function instructionsExtra(ins) {

@@ -16,7 +16,7 @@ def print_skills_overview():
   {c('cyan', 'swe skills --json')}             Every skill, and which harnesses see it
 
 {c('bold', 'Quiver hub')}
-  {c('cyan', 'swe skills hub')}               Plugins in ~/.quiver/plugins and where they are installed
+  {c('cyan', 'swe skills hub')}               Plugins in ~/.swe/plugins and where they are installed
 
 {c('bold', 'Where skills live')}
   {c('cyan', 'swe find skills -r')}           Every root on disk, and what it links to
@@ -91,7 +91,7 @@ def print_skills_new_help():
         f"""
   {c('bold', 'swe skills new')} — Create a SKILL.md in the shared skills root
 
-  {c('cyan', 'swe skills new my-skill')}                        Skeleton at ~/.quiver/skills/my-skill/SKILL.md
+  {c('cyan', 'swe skills new my-skill')}                        Skeleton at ~/.swe/skills/my-skill/SKILL.md
   {c('cyan', 'swe skills new my-skill --description="Use when: X"')}
   {c('cyan', '--json')}                          Print the result as JSON (errors go to stderr)
 
@@ -159,7 +159,7 @@ def print_skills_hub_help():
         f"""
   {c('bold', 'swe skills hub')} — What the quiver hub offers
 
-  Lists every plugin in the marketplaces under {c('dim', '~/.quiver/plugins')}, the
+  Lists every plugin in the marketplaces under {c('dim', '~/.swe/plugins')}, the
   skills each one ships, and whether Claude Code and Codex have it installed.
 
   {c('cyan', 'swe skills hub')}           One line per plugin

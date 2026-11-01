@@ -1,4 +1,4 @@
-"""Harness hook scripts: ~/.quiver/hooks/<harness>/<script> into each harness.
+"""Harness hook scripts: ~/.swe/hooks/<harness>/<script> into each harness.
 
 Hooks do not share the shape of instructions or skills. One AGENTS.md can be
 linked to nine destinations because every harness reads plain Markdown, but a
@@ -10,14 +10,14 @@ linked anywhere else.
 Each script is linked on its own, never the whole directory. A harness hooks
 directory also holds scripts other installers write and rewrite (herdr keeps
 one in ~/.claude/hooks), and replacing the directory with a link would pull
-those into ~/.quiver or break them.
+those into ~/.swe or break them.
 
 Only the file is linked. Declaring the hook, in ~/.claude/settings.json or
 ~/.codex/hooks.json, stays with whatever manages that file: the event, matcher
 and timeout are harness-specific, and on a Nix machine the settings file is a
 read-only link into the store that swe must not fight.
 
-Opt-in by presence: a harness gets hooks only once ~/.quiver/hooks/<harness>/
+Opt-in by presence: a harness gets hooks only once ~/.swe/hooks/<harness>/
 exists. Where they go comes from ``capabilities.hooks.root`` in harness.json,
 then ``HOOK_FALLBACK`` for a harness the registry does not describe. A hub dir
 named after no harness at all (a hook bundle a plugin runs straight from the
@@ -93,7 +93,7 @@ DISABLED_DETAIL = "disabled via swe hooks disable"
 
 NO_ROOT_DETAIL = "no hooks root, set capabilities.hooks.root in harness.json"
 UNSUPPORTED_DETAIL = "harness.json says this harness has no hooks"
-INSIDE_SWE_DETAIL = "hooks root is inside ~/.quiver, would link a script to itself"
+INSIDE_SWE_DETAIL = "hooks root is inside ~/.swe, would link a script to itself"
 UNKNOWN_HARNESS_DETAIL = "not a known harness"
 
 
@@ -155,7 +155,7 @@ def hook_root(registry: dict, name: str, home: Path) -> tuple[Path | None, str]:
 
 
 def hook_sources(harness_dir: Path) -> list[Path]:
-    """The scripts in one ~/.quiver/hooks/<harness>/, top level only.
+    """The scripts in one ~/.swe/hooks/<harness>/, top level only.
 
     A subdirectory counts as one entry and is linked whole, so a hook with
     helper modules can keep them beside it. Dotfiles and build litter are
@@ -253,7 +253,7 @@ def plan_hooks(
     patterns: list[str] | None = None,
     registry: dict | None = None,
 ) -> list[LinkStatus]:
-    """One status per hook script under ~/.quiver/hooks/.
+    """One status per hook script under ~/.swe/hooks/.
 
     ``.linkignore`` patterns match the destination, the same as for
     instructions and skills, so ``.claude/hooks/prose-guard.py`` leaves that
@@ -307,7 +307,7 @@ def plan_hooks(
                 statuses.append(LinkStatus(name, source, "skipped", why, source))
                 continue
             if _inside(root, _paths.swe_dir_for(home)):
-                # A root inside ~/.quiver would make the destination the
+                # A root inside ~/.swe would make the destination the
                 # source itself: "absorbing" it deletes the only copy.
                 statuses.append(LinkStatus(name, source, "skipped", INSIDE_SWE_DETAIL, source))
                 continue
@@ -324,7 +324,7 @@ def plan_hooks(
 
 
 def _safe_to_replace(path: Path, home: Path) -> bool:
-    """Same guard as init/commands._apply: inside $HOME, outside ~/.quiver.
+    """Same guard as init/commands._apply: inside $HOME, outside ~/.swe.
 
     Duplicated here because init/commands imports this module — the check
     itself is two lines and moving it down would churn every caller.

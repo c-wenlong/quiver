@@ -142,15 +142,15 @@ class TestBuilt(_CatalogHome, unittest.TestCase):
 
     def test_a_missing_folder_is_written_from_home(self):
         inside = {"harness": "claude", "marketplace": "nus", "detail": "x",
-                  "path": str(self.home / ".quiver" / "plugins" / "nus")}
-        self.assertEqual(page._error(inside, self.home)["short_path"], "~/.quiver/plugins/nus")
+                  "path": str(self.home / ".swe" / "plugins" / "nus")}
+        self.assertEqual(page._error(inside, self.home)["short_path"], "~/.swe/plugins/nus")
         outside = {**inside, "path": "/srv/plugins/nus"}
         self.assertEqual(page._error(outside, self.home)["short_path"], "/srv/plugins/nus")
         plain = {"harness": "codex", "marketplace": None, "detail": "unreadable"}
         self.assertEqual(page._error(plain, self.home), plain)
 
     def test_display_names_overlay_names_rows(self):
-        cfg = self.home / ".quiver" / "config" / "plugin-display-names.json"
+        cfg = self.home / ".swe" / "config" / "plugin-display-names.json"
         _write(cfg, json.dumps({"marketplaces": {"official": "Official"},
                                 "plugins": {"lsp@official": "Language", "x@y": ""}}))
         body = page.explore(self.home)

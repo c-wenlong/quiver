@@ -1,7 +1,7 @@
 /* MCP servers: a port of the Mac app's McpServersPage. Every server the
  * hub machine's harnesses configure, as a server × harness grid split into
  * Local (launched with a command on the hub; a folder in
- * ~/.quiver/mcp/servers it runs from shows as a checkout tag) and Remote
+ * ~/.swe/mcp/servers it runs from shows as a checkout tag) and Remote
  * (reached at a URL), with the
  * definitions that disagree lettered. A server's sheet syncs it, with a
  * Preview first, through POST /v1/app/mcp/preview and /sync, removes it
@@ -598,7 +598,7 @@ function mcpSecretsHtml(s, st) {
     <div class="card-title">${missing ? (missing === 1 ? "Needs a value" : "Needs values") : "Secrets"}</div>
     <div class="mcp-secret-rows">${rows}</div>
     ${st.secretError ? `<p class="error" role="alert">${esc(st.secretError)}</p>` : ""}
-    <p class="caption">Saved to ~/.quiver/secrets/mcp/.api_keys on ${esc((mcpPage.data && mcpPage.data.machine) || "the hub")}, never versioned. Sync fills these in when it writes a harness config.</p>`;
+    <p class="caption">Saved to ~/.swe/secrets/mcp/.api_keys on ${esc((mcpPage.data && mcpPage.data.machine) || "the hub")}, never versioned. Sync fills these in when it writes a harness config.</p>`;
 }
 
 /* One value, fetched only when asked for. */
@@ -1130,7 +1130,7 @@ function mcpAddHtml() {
   const variables = `<hr class="mcp-rule"><div class="card-title">${command ? "Env vars" : "Other headers"}</div>
     <div class="mcp-add-vars">${vars}</div>
     <div><button type="button" class="mcp-sheet-button" id="mcp-add-var"${dis}>${mcpSvg("plus")}<span>${command ? "Add variable" : "Add header"}</span></button></div>
-    <p class="caption mcp-muted">Secret values go to ~/.quiver/secrets/mcp/.api_keys${where}. The Quiver hub keeps a \${NAME} reference; the harnesses you add it to get the value, as a sync gives them.</p>`;
+    <p class="caption mcp-muted">Secret values go to ~/.swe/secrets/mcp/.api_keys${where}. The Quiver hub keeps a \${NAME} reference; the harnesses you add it to get the value, as a sync gives them.</p>`;
   const fits = (h) => mcpAddFits(a, h);
   const picked = d.harnesses.filter((h) => a.targets.has(h) && fits(h)).length;
   const face = `${picked} of ${d.harnesses.length} ${d.harnesses.length === 1 ? "harness" : "harnesses"}`;

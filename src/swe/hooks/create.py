@@ -1,7 +1,7 @@
 """`swe hooks new`: write a Python hook skeleton into the hub.
 
 The skeleton follows the house contract the other hooks under
-``~/.quiver/hooks`` keep (prose-guard.py is the reference): read the event
+``~/.swe/hooks`` keep (prose-guard.py is the reference): read the event
 payload as JSON on stdin, exit 0 to let the call through, exit 2 to block
 it and feed stderr back to the model, and fail open — an internal error
 exits 0 because a crashing hook wedges every session it guards.
@@ -154,7 +154,7 @@ def _publish(target: Path, text: str, name: str) -> Path:
 
 def create(harness: str, name: str,
            home: Path | None = None) -> Path:
-    """Write ``~/.quiver/hooks/<harness>/<name>.py``, executable, atomically.
+    """Write ``~/.swe/hooks/<harness>/<name>.py``, executable, atomically.
 
     Raises ValueError for anything the user can fix (bad names, existing
     file, missing hub); the command turns it into exit 1.
@@ -174,7 +174,7 @@ def create(harness: str, name: str,
 
 
 def create_shared(name: str, home: Path | None = None) -> Path:
-    """Write ``~/.quiver/hooks/shared/<name>.py`` — the normalized contract.
+    """Write ``~/.swe/hooks/shared/<name>.py`` — the normalized contract.
 
     The template carries the ``events:`` header the deploy step reads and
     the normalized payload spec as its docstring. Same rules as

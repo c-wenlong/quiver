@@ -2,11 +2,11 @@
 existing hub onto a new machine.
 
 A hub is the user's own git repository (a fork of the demo hub, or one that
-grew on their first machine). Cloning it as ``~/.quiver`` gives a second
+grew on their first machine). Cloning it as ``~/.swe`` gives a second
 machine the same AGENTS.md, skills, plugins, hooks and MCP config, with the
 user's URL as ``origin`` so they push to their own hub from day one (#696).
 
-swe never clones over a hub or over a file: ``~/.quiver`` has to be absent,
+swe never clones over a hub or over a file: ``~/.swe`` has to be absent,
 or a folder with no hub in it yet (no ``AGENTS.md``, no ``.git``). What the
 app, the remote hub and earlier swe runs write there on their own (caches,
 the usage ledgers, pairing state) does not count, since a hub's
@@ -65,29 +65,29 @@ def public_url(url: str) -> str:
 _USERINFO = re.compile(r"(?<=://)[^/?#]*@")
 
 
-# Either one means ~/.quiver already holds a hub: the seed or cloned
+# Either one means ~/.swe already holds a hub: the seed or cloned
 # AGENTS.md, or a repository of its own.
 HUB_MARKERS = ("AGENTS.md", ".git")
 
 
 def check_target(home: Path) -> None:
-    """Raise unless ``~/.quiver`` can take a clone: absent, or a folder with
+    """Raise unless ``~/.swe`` can take a clone: absent, or a folder with
     no hub in it yet. Machine-local state already there is fine."""
     root = swe_dir_for(home)
     if not os.path.lexists(root):
         return
     if root.is_symlink():
-        raise HubError("~/.quiver is a symlink; swe will not clone through it")
+        raise HubError("~/.swe is a symlink; swe will not clone through it")
     if not root.is_dir():
-        raise HubError("~/.quiver is a file, not a folder")
+        raise HubError("~/.swe is a file, not a folder")
     try:
         names = {entry.name for entry in root.iterdir()}
     except OSError as exc:
-        raise HubError(f"can't read ~/.quiver: {exc.strerror or exc}") from None
+        raise HubError(f"can't read ~/.swe: {exc.strerror or exc}") from None
     found = [name for name in HUB_MARKERS if name in names]
     if found:
         raise HubError(
-            f"~/.quiver already has a hub (it has {' and '.join(found)}), so swe will "
+            f"~/.swe already has a hub (it has {' and '.join(found)}), so swe will "
             "not clone over it. Run swe init without --hub to repair it, or move it "
             "aside first.")
 
@@ -108,13 +108,13 @@ def _plan_merge(src: Path, dest: Path, rel: str = "") -> list[tuple[Path, Path]]
             moves += _plan_merge(entry, there, f"{shown}/")
         else:
             raise HubError(
-                f"~/.quiver/{shown} is on this machine and in the hub, so swe will "
+                f"~/.swe/{shown} is on this machine and in the hub, so swe will "
                 "not clone over it. Move it aside, then try again.")
     return moves
 
 
 def _move_in(clone: Path, root: Path) -> None:
-    """Move the finished clone into ``~/.quiver``: a plain rename while it
+    """Move the finished clone into ``~/.swe``: a plain rename while it
     is absent, else entry by entry around what is already there. Every
     collision is found before anything moves, and a rename that fails puts
     back the ones before it, so no half-merged hub is left behind."""
@@ -134,12 +134,12 @@ def _move_in(clone: Path, root: Path) -> None:
                 dest.rename(src)
             except OSError:
                 stuck.append(dest)
-        reason = f"can't move the clone into ~/.quiver: {exc.strerror or exc}"
+        reason = f"can't move the clone into ~/.swe: {exc.strerror or exc}"
         if not stuck:
             raise HubError(reason) from None
-        # Some of the clone is in ~/.quiver and won't come back out: say
+        # Some of the clone is in ~/.swe and won't come back out: say
         # exactly what, and keep the rest of it where the user can see it.
-        names = ", ".join(f"~/.quiver/{p.relative_to(root)}" for p in reversed(stuck))
+        names = ", ".join(f"~/.swe/{p.relative_to(root)}" for p in reversed(stuck))
         raise HubError(
             f"{reason}. These couldn't be moved back and are still there: {names}. "
             f"The rest of the clone is in {clone}; remove both before trying again.",
@@ -180,7 +180,7 @@ def _exclude_local_state(root: Path) -> None:
 
 
 def can_clone(home: Path) -> bool:
-    """Whether a hub can be cloned as ``~/.quiver`` now. Setup asks for a
+    """Whether a hub can be cloned as ``~/.swe`` now. Setup asks for a
     hub URL only then."""
     try:
         check_target(home)
@@ -201,7 +201,7 @@ def _git(args: list[str], timeout: int, run) -> subprocess.CompletedProcess:
 
 
 def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
-    """Clone ``url`` as ``~/.quiver`` and return the path; HubError otherwise."""
+    """Clone ``url`` as ``~/.swe`` and return the path; HubError otherwise."""
     url = url.strip()
     if not url:
         raise HubError("--hub needs a git URL: swe init --hub=<url>")
@@ -215,12 +215,12 @@ def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
         detail = (reach.stderr or "").strip().splitlines()
         reason = f": {detail[-1]}" if detail else ""
         raise HubError(public_url(f"can't reach {shown}{reason}"))
-    # Clone beside ~/.quiver and move it into place only once git is done,
+    # Clone beside ~/.swe and move it into place only once git is done,
     # so a failed or timed-out clone never leaves a half-written hub that
     # the next --hub run would refuse.
     root = swe_dir_for(home)
     try:
-        staging = Path(tempfile.mkdtemp(prefix=".quiver-clone-", dir=home))
+        staging = Path(tempfile.mkdtemp(prefix=".swe-clone-", dir=home))
     except OSError as exc:
         raise HubError(f"can't make a folder to clone into: {exc.strerror or exc}") from None
     target = staging / "hub"
@@ -238,7 +238,7 @@ def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
             keep = exc.keep_staging
             raise
         except OSError as exc:
-            raise HubError(f"can't move the clone into ~/.quiver: {exc.strerror or exc}") from None
+            raise HubError(f"can't move the clone into ~/.swe: {exc.strerror or exc}") from None
     finally:
         if not keep:
             shutil.rmtree(staging, ignore_errors=True)
@@ -252,7 +252,7 @@ def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
 
 
 def clone_and_register(home: Path, url: str, run=subprocess.run) -> dict:
-    """Clone ``url`` as ``~/.quiver``, then register its marketplaces.
+    """Clone ``url`` as ``~/.swe``, then register its marketplaces.
 
     What ``swe setup --hub`` runs; ``swe init --hub`` does the same with
     its linking pass in between. Returns ``{"url", "path",

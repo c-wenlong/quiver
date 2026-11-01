@@ -489,7 +489,7 @@ class TestPoller(PollerBase):
     def test_poller_for_is_one_per_home(self):
         home = Path(tempfile.mkdtemp())
         self.assertIs(poller.poller_for(home), poller.poller_for(home))
-        self.assertEqual(poller.poller_for(home).cache_path, home / ".quiver" / "cache" / "web-service-status.json")
+        self.assertEqual(poller.poller_for(home).cache_path, home / ".swe" / "cache" / "web-service-status.json")
 
 
 class TestRetryAfter(unittest.TestCase):
@@ -687,7 +687,7 @@ class TestTracked(unittest.TestCase):
         self.path = tracked.tracked_file_for(self.home)
 
     def test_path_is_under_the_quiver_data_dir(self):
-        self.assertEqual(self.path, self.home / ".quiver" / "data" / "web-status-services.json")
+        self.assertEqual(self.path, self.home / ".swe" / "data" / "web-status-services.json")
 
     def test_add_load_remove(self):
         entry = catalogue.entry("groq")
@@ -831,7 +831,7 @@ class TestTrackRoute(HubBase):
         return status, json.loads(data)
 
     def store(self):
-        return self.srv.home / ".quiver" / "data" / "web-status-services.json"
+        return self.srv.home / ".swe" / "data" / "web-status-services.json"
 
     def card(self, body, id):
         return next((s for g in body["groups"] for s in g["services"] if s["id"] == id), None)

@@ -122,7 +122,7 @@ public enum APIKeyCheckResult: Sendable, Equatable {
 }
 
 /// A check's answer, when it ran, and a fingerprint of what it ran
-/// against. Persisted under ~/.quiver/cache; the fingerprint is a hash
+/// against. Persisted under ~/.swe/cache; the fingerprint is a hash
 /// of the machine's salt then the value, so the value itself is never
 /// written down.
 public struct APIKeyCheck: Sendable, Equatable, Codable {
@@ -229,7 +229,7 @@ public enum APIKeyCheckStyle: Equatable, Sendable {
     }
 }
 
-/// `~/.quiver/cache/api-key-checks.json`, shaped `{version: 2, files:
+/// `~/.swe/cache/api-key-checks.json`, shaped `{version: 2, files:
 /// {"<standardized keys-file path>": {checks: {NAME: {fingerprint,
 /// result, checkedAt}}}}}`: each keys file owns one section, so models
 /// over different files never clobber each other. A missing, damaged or

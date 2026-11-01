@@ -36,7 +36,7 @@ extension ProfileStoreError: LocalizedError {
 /// tree under `<root>/<vendor>/<id>/`, so its CLI login, desktop session and
 /// history never touch another profile's.
 ///
-/// `root` is `~/.quiver/accounts` in production. Nothing outside `root` and
+/// `root` is `~/.swe/accounts` in production. Nothing outside `root` and
 /// `userHome` is ever read or written, and `userHome` is only ever used to
 /// compute the default profiles' paths.
 public final class ProfileStore: @unchecked Sendable {
@@ -290,7 +290,7 @@ public final class ProfileStore: @unchecked Sendable {
         }
     }
 
-    /// Creates the accounts root, mode 0700. Its parents (`~/.quiver`) are
+    /// Creates the accounts root, mode 0700. Its parents (`~/.swe`) are
     /// shared with `swe`, so they keep the default mode.
     /// The lock every running copy of Quiver takes around a whole read,
     /// change and save of profiles.json, so two copies never overwrite each

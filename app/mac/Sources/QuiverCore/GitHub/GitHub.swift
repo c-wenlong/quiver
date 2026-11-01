@@ -477,7 +477,7 @@ public struct GhIssueDetail: Decodable, Equatable, Sendable, Identifiable {
     public let comments: [GhIssueComment]
     /// `quiver/issue-<n>`, off the repo's default branch.
     public let branch: String?
-    /// The checkout's absolute path under ~/.quiver/worktrees.
+    /// The checkout's absolute path under ~/.swe/worktrees.
     public let worktree: String?
     public let suggestedPrompt: String?
 
@@ -622,7 +622,7 @@ extension SweClient {
 
     /// `swe gh pr worktree <n> --repo=<repo> --json` — fetch the PR head
     /// into a shared mirror and keep a detached checkout under
-    /// ~/.quiver/worktrees. A failed reply still decodes (path nil, the
+    /// ~/.swe/worktrees. A failed reply still decodes (path nil, the
     /// error in `error`), so `allowFailure` stays on.
     public func ghPrWorktree(repo: String, pr: Int) async throws -> GhPrWorktree {
         try await call(["gh", "pr", "worktree", "\(pr)", "--repo=\(repo)", "--json"],

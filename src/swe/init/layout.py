@@ -1,4 +1,4 @@
-"""Declarative map of what ~/.quiver owns and where each harness expects it.
+"""Declarative map of what ~/.swe owns and where each harness expects it.
 
 The premise: every harness wants the same global instructions and the same
 skill tree, but each insists on its own filename and location. Quiver keeps one
@@ -264,7 +264,7 @@ def discover_skill_roots(
         try:
             # Same guard as the glob branch: a declared root that resolves
             # to the shared tree is the target, never a link site — letting
-            # it through would let init replace ~/.quiver/skills itself.
+            # it through would let init replace ~/.swe/skills itself.
             if path.resolve() == shared.resolve() and not path.is_symlink():
                 continue
         except OSError:
@@ -559,7 +559,7 @@ def classify_skill_root(path: Path, home: Path | None = None) -> tuple[str, str]
 SEED_AGENTS_MD = """# Agent instructions
 
 Canonical global instructions for every coding harness. Lives at
-`~/.quiver/AGENTS.md` and is symlinked into each harness under that harness's
+`~/.swe/AGENTS.md` and is symlinked into each harness under that harness's
 own filename, so editing this one file changes all of them.
 
 Run `swe init --check` to see the link status.
@@ -604,7 +604,7 @@ skills_dir = _paths.skills_dir_for
 hooks_dir = _paths.hooks_dir_for
 backups_dir = _paths.backups_dir_for
 
-IGNORED_DETAIL = "listed in ~/.quiver/.linkignore"
+IGNORED_DETAIL = "listed in ~/.swe/.linkignore"
 ARCHIVED_DETAIL = "archived in harness.json"
 
 
@@ -677,7 +677,7 @@ SEED_LINKIGNORE = """# Paths swe init leaves alone, one per line, relative to yo
 
 
 class LinkIgnoreError(OSError):
-    """~/.quiver/.linkignore exists but cannot be read.
+    """~/.swe/.linkignore exists but cannot be read.
 
     Deliberately not swallowed: a plan built without the user's ignore list
     would let ``swe init --force`` replace exactly the paths they asked it to
@@ -686,7 +686,7 @@ class LinkIgnoreError(OSError):
 
 
 def load_linkignore(home: Path | None = None) -> list[str]:
-    """Patterns from ~/.quiver/.linkignore, normalised to home-relative form."""
+    """Patterns from ~/.swe/.linkignore, normalised to home-relative form."""
     path = linkignore_file(home)
     try:
         text = path.read_text(encoding="utf-8")
@@ -866,7 +866,7 @@ def plan(
 ) -> tuple[list[LinkStatus], list[LinkStatus]]:
     """Return (instruction statuses, skill statuses) for the current machine.
 
-    A path listed in ~/.quiver/.linkignore is still in the plan, as
+    A path listed in ~/.swe/.linkignore is still in the plan, as
     ``ignored``, so the report can say it was seen and deliberately left out.
     Nothing acts on that state. ``patterns`` lets a caller that has already
     loaded (and validated) the ignore file pass it in; otherwise it is read

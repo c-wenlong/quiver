@@ -4,7 +4,7 @@ import Observation
 // MARK: - The catalog
 
 /// `swe plugins catalog --json`: every plugin in every marketplace a harness
-/// has registered or `~/.quiver/plugins` holds, installed or not, with each
+/// has registered or `~/.swe/plugins` holds, installed or not, with each
 /// harness's state.
 public struct PluginCatalog: SnapshotValue {
     /// 2: version 1 was a catalog bundled with the skills, never released.
@@ -79,7 +79,7 @@ public struct PluginCatalog: SnapshotValue {
 public struct PluginMarketplace: Codable, Sendable, Equatable, Identifiable {
     public var id: String { name }
     public let name: String
-    /// A marketplace in `~/.quiver/plugins`.
+    /// A marketplace in `~/.swe/plugins`.
     public let hub: Bool
     /// Its folder in the hub; nil elsewhere.
     public let path: String?
@@ -809,14 +809,14 @@ public final class PluginCatalogModel {
     private let indexBuild = LatestBuild<PluginExploreIndex>()
     /// What the index on show, or the one being built, is worked out from.
     private var indexedFrom: (catalog: PluginCatalog, skills: [Skill])?
-    /// Whose `~/.quiver/plugins` makes a marketplace editable.
+    /// Whose `~/.swe/plugins` makes a marketplace editable.
     private let home: URL
 
     /// - Parameters:
     ///   - snapshots: where the last catalog is kept between launches.
     ///   - work: shared with `PluginsModel`, so an action and a fix never
     ///     run at once.
-    ///   - home: whose `~/.quiver/plugins` makes a marketplace editable.
+    ///   - home: whose `~/.swe/plugins` makes a marketplace editable.
     public init(snapshots: (any SnapshotStoring<Snapshot<PluginCatalog>>)? = nil, maxAge: TimeInterval = 60,
                 timeout: Duration = .seconds(60), now: @escaping @Sendable () -> Date = Date.init,
                 work: PluginWork = PluginWork(),

@@ -1,12 +1,12 @@
 import Foundation
 import Observation
 
-/// `swe find plugins --json`: where the plugins in `~/.quiver/plugins` have
+/// `swe find plugins --json`: where the plugins in `~/.swe/plugins` have
 /// not reached Claude Code or Codex.
 public struct PluginDriftReport: SnapshotValue {
     public static let snapshotVersion = 1
 
-    /// Plugins under `~/.quiver/plugins`; 0 means there is nothing to reach.
+    /// Plugins under `~/.swe/plugins`; 0 means there is nothing to reach.
     public let sources: Int
     public let drift: [PluginDrift]
 

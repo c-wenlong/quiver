@@ -399,7 +399,7 @@ if __name__ == "__main__":
 class MarketplaceGroupingTest(_NoRegistry, unittest.TestCase):
     """Plugins group by marketplace, mirroring the on-disk layout.
 
-    ~/.quiver/plugins/dv/cloudflare, and claude's cache mirrors it at
+    ~/.swe/plugins/dv/cloudflare, and claude's cache mirrors it at
     ~/.claude/plugins/cache/dv/cloudflare/0.1.0.
     """
 

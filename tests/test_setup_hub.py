@@ -56,8 +56,8 @@ class SetupHubCloneTest(_HubHarness):
         code, out, err = self._run_json([f"--hub={src}"])
         self.assertEqual(code, 0, err)
         data = json.loads(out)["data"]  # stdout is the one document
-        self.assertEqual((self.home / ".quiver" / "AGENTS.md").read_text(), "# from the hub\n")
-        self.assertTrue((self.home / ".quiver" / ".git").is_dir())
+        self.assertEqual((self.home / ".swe" / "AGENTS.md").read_text(), "# from the hub\n")
+        self.assertTrue((self.home / ".swe" / ".git").is_dir())
         self.assertEqual(data["hub"]["cloned"]["url"], str(src))
         self.assertEqual(data["hub"]["cloned"]["marketplaces"], [])
         self.assertFalse(data["hub"]["can_clone"])
@@ -71,7 +71,7 @@ class SetupHubCloneTest(_HubHarness):
         code, out, err = self._run_json(["--apply", "--hub", str(src)])
         self.assertEqual(code, 0, err)
         data = json.loads(out)["data"]
-        self.assertEqual(data["hub"]["cloned"]["path"], str(self.home / ".quiver"))
+        self.assertEqual(data["hub"]["cloned"]["path"], str(self.home / ".swe"))
         link = self.home / ".claude" / "CLAUDE.md"
         self.assertTrue(link.is_symlink())
         self.assertEqual(link.read_text(), "# from the hub\n")
@@ -83,11 +83,11 @@ class SetupHubCloneTest(_HubHarness):
                                       ("codex", "mine", "codex is not on PATH")]
         code, out, _ = self._run([f"--hub={src}"])
         self.assertEqual(code, 0, out)
-        self.assertIn(f"Cloning {src} into ~/.quiver", out)
+        self.assertIn(f"Cloning {src} into ~/.swe", out)
         self.assertIn("Cloned.", out)
         self.assertIn("mine registered in claude", out)
         self.assertIn("mine not registered in codex: codex is not on PATH", out)
-        # ~/.quiver has a hub now, so the dry run no longer points at --hub.
+        # ~/.swe has a hub now, so the dry run no longer points at --hub.
         self.assertNotIn("swe setup --hub=<git url>", out)
 
     def test_an_unreachable_url_writes_nothing_and_keeps_stdout_clean(self):
@@ -95,7 +95,7 @@ class SetupHubCloneTest(_HubHarness):
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
         self.assertIn("can't reach", err)
-        self.assertFalse((self.home / ".quiver").exists())
+        self.assertFalse((self.home / ".swe").exists())
         self.register.assert_not_called()
 
     def test_a_token_in_the_url_never_reaches_the_output(self):
@@ -115,13 +115,13 @@ class SetupHubCloneTest(_HubHarness):
 
     def test_an_existing_quiver_is_refused_and_left_alone(self):
         src = _hub_repo(self.scratch)
-        (self.home / ".quiver").mkdir()
-        (self.home / ".quiver" / "AGENTS.md").write_text("mine\n")
+        (self.home / ".swe").mkdir()
+        (self.home / ".swe" / "AGENTS.md").write_text("mine\n")
         code, out, err = self._run_json(["--apply", f"--hub={src}"])
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
         self.assertIn("already has a hub", err)
-        self.assertEqual((self.home / ".quiver" / "AGENTS.md").read_text(), "mine\n")
+        self.assertEqual((self.home / ".swe" / "AGENTS.md").read_text(), "mine\n")
 
 
 class SetupHubRefusalTest(_HubHarness):
@@ -147,8 +147,8 @@ class SetupHubRefusalTest(_HubHarness):
         self.assertEqual(code, 0, err)
         hub = json.loads(out)["data"]["hub"]
         self.assertEqual(hub, {"can_clone": True, "demo_url": None, "cloned": None})
-        (self.home / ".quiver").mkdir()
-        (self.home / ".quiver" / "AGENTS.md").write_text("x")
+        (self.home / ".swe").mkdir()
+        (self.home / ".swe" / "AGENTS.md").write_text("x")
         hub = json.loads(self._run_json([])[1])["data"]["hub"]
         self.assertFalse(hub["can_clone"])
 
@@ -160,8 +160,8 @@ class SetupHubRefusalTest(_HubHarness):
         with patch.object(hub_repo, "DEMO_HUB_URL", "https://github.com/x/demo-hub"):
             _, out, _ = self._run([])
         self.assertIn("Demo hub: https://github.com/x/demo-hub", out)
-        (self.home / ".quiver").mkdir()
-        (self.home / ".quiver" / "AGENTS.md").write_text("x")
+        (self.home / ".swe").mkdir()
+        (self.home / ".swe" / "AGENTS.md").write_text("x")
         _, out, _ = self._run([])
         self.assertNotIn("--hub", out)
 
@@ -204,21 +204,21 @@ class WizardHubStageTest(unittest.TestCase):
         def clone(home, url):
             if url == "bad":
                 raise hub_repo.HubError("can't reach bad: not found")
-            return {"url": url, "path": str(home / ".quiver"),
+            return {"url": url, "path": str(home / ".swe"),
                     "marketplaces": [{"harness": "claude", "marketplace": "mine", "error": None}]}
 
         outcome, out = self._stage(["bad", "good"], clone)
         self.assertEqual(outcome.status, "changed")
         self.assertEqual(outcome.changed, ("good",))
         self.assertIn("can't reach bad", out)
-        self.assertIn("Cloned good into ~/.quiver", out)
+        self.assertIn("Cloned good into ~/.swe", out)
         self.assertIn("mine registered in claude", out)
 
     def test_a_failure_that_left_a_hub_behind_stops_asking(self):
         def clone(home, url):
-            (home / ".quiver").mkdir()
-            (home / ".quiver" / "AGENTS.md").write_text("x")
-            raise hub_repo.HubError("~/.quiver already has a hub")
+            (home / ".swe").mkdir()
+            (home / ".swe" / "AGENTS.md").write_text("x")
+            raise hub_repo.HubError("~/.swe already has a hub")
 
         outcome, _ = self._stage(["bad"], clone)
         self.assertEqual(outcome.status, "attention")
@@ -239,8 +239,8 @@ class WizardHubStageTest(unittest.TestCase):
             run_setup_wizard(input_fn=lambda _p: "", home=self.home)
             self.assertEqual(seen[0], ("hub", 1, 7))
             seen.clear()
-            (self.home / ".quiver").mkdir()
-            (self.home / ".quiver" / "AGENTS.md").write_text("x")
+            (self.home / ".swe").mkdir()
+            (self.home / ".swe" / "AGENTS.md").write_text("x")
             run_setup_wizard(input_fn=lambda _p: "", home=self.home)
             self.assertEqual([k for k, *_ in seen], list(keys[1:]))
 
