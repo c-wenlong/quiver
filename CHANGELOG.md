@@ -990,9 +990,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   landing site gets the same favicons. The mascot banner, the README's
   mascot picture and the landing page's mascot figure are removed. The
   source art (square, rounded and a transparent mark for dark
-  backgrounds) lives in `assets/`. The new set has no light variant, so
-  the Mac app's Light and Dark icon choices in Settings show the same
-  icon for now.
+  backgrounds) lives in `assets/`. The new mark has one look, so the Mac
+  app's Settings › App icon choice (Light or Dark) is gone, along with
+  its placeholder row on the web Settings page: the app builds one
+  `AppIcon.icns` and the Dock always shows it. The DMG window's
+  background now scatters the mark's three arrowheads instead of the
+  old icon's five glyphs.
 - **Mac app: Artificial Analysis moves to its V2 API.** AA retires the
   legacy `/api/v2/data/*` routes on November 4, 2026, so the Models page
   refresh and the Settings › Services "Test" probe now call

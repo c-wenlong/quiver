@@ -317,7 +317,6 @@ function generalSection() {
     ])}
     ${setGroup("Display", "", setCard([
       setRow("Appearance", "System follows this browser's setting. Saved in this browser.", appearance),
-      macRow("App icon", "The Dock shows this one. Finder keeps the light icon."),
       macRow("Hide accidental sessions", "Sessions with no responses, no tokens, or a one-shot probe drop out of Sessions and the calendar."),
     ]))}
     ${setGroup("Updates", "", setCard([

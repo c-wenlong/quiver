@@ -19,7 +19,7 @@ app's saved value does).
 
 | Section | On the web |
 |---|---|
-| General | Open at login, Terminal, Show in Dock: Mac app only. First-run setup links to `#/setup` ("Set up this machine"). Display › Appearance (System, Light, Dark) works, per browser. App icon and Hide accidental sessions: Mac app only. Updates › Version shows the hub's swe version; Latest release and Automatic checks are Mac app only. |
+| General | Open at login, Terminal, Show in Dock: Mac app only. First-run setup links to `#/setup` ("Set up this machine"). Display › Appearance (System, Light, Dark) works, per browser. Hide accidental sessions: Mac app only. Updates › Version shows the hub's swe version; Latest release and Automatic checks are Mac app only. |
 | Sidebar | A switch per page in every group, Enable all / Disable all, Overview, Accounts and Settings locked on ("Always on"), per browser. |
 | Notifications | All three rows Mac app only. |
 | Providers | Harnesses tab: Provider visibility is Mac app only, with a link to the Harnesses page. Inference tab: the API keys file, with Add key, the provider Catalogue, edit, delete, reveal and copy (below). |

@@ -82,7 +82,7 @@ every key below is live.
 | key | holds |
 |---|---|
 | `swePath`, `apiKeysPath`, `mcpServersPath`, `codeEditor`, `terminalApp` | user-set paths and app choices |
-| `appearance`, `appIcon`, `showsInDock`, `lastSection`, `settingsSection`, `menuBarPageTab`, `desktopWidgetTab`, `agentsMdView` | window and page state |
+| `appearance`, `showsInDock`, `lastSection`, `settingsSection`, `menuBarPageTab`, `desktopWidgetTab`, `agentsMdView` | window and page state |
 | `agentsProjectFolder` | last Agents.md project |
 | `limitNotifications` | notification opt-in |
 | `menuBarVisible`, `menuBarPrimary`, `menuBarSecondary`, `menuBarWatchedLimit` | menu bar display |
