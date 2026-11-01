@@ -129,6 +129,34 @@ class OrderTest(unittest.TestCase):
         self.assertTrue(doctor_fix.in_scope({"check": "setup.unlinked"}, "setup"))
         self.assertFalse(doctor_fix.in_scope({"check": "setupx"}, "setup"))
 
+    def test_a_fix_that_clears_nothing_needs_a_person_not_a_retry(self):
+        # An empty discovery, or init leaving a real hook file in place:
+        # the runner worked, the finding stays, and --fix must settle.
+        stuck = [finding("setup.registry", "none", "discover"),
+                 finding("drift.hooks", "real file", "init")]
+        calls = []
+        with mock.patch.dict(doctor_fix.RUNNERS, {
+                "discover": lambda h, f, r: calls.append("discover"),
+                "init": lambda h, f, r: calls.append("init")}):
+            result = run_fixes(Path("/h"), lambda: [dict(f) for f in stuck])
+        self.assertEqual(calls, ["discover", "init"])
+        self.assertEqual(doctor_fix.fixable_left(result), [])
+        self.assertEqual([f["check"] for f in result["not_cleared"]],
+                         ["setup.registry", "drift.hooks"])
+
+    def test_findings_revealed_mid_run_are_counted(self):
+        click = finding("setup.marketplace-missing", "m", remedies=[
+            {"kind": "action", "action": "marketplace-drop", "settings_entries": ["x"]}])
+        machine = FakeMachine(
+            [finding("setup.registry", "r", "discover")],
+            reveals={"discover": [finding("setup.unlinked", "u", "init"), click]})
+        with machine.patch():
+            result = run_fixes(Path("/h"), machine.report)
+        self.assertEqual([f["check"] for f in result["fixed"]],
+                         ["setup.registry", "setup.unlinked"])
+        self.assertEqual([f["check"] for f in result["skipped"]],
+                         ["setup.marketplace-missing"])
+
     def test_running_twice_runs_nothing_the_second_time(self):
         machine = FakeMachine([finding("setup.unlinked", "x", "init")])
         with machine.patch():
@@ -166,6 +194,17 @@ class OneFindingTest(unittest.TestCase):
             result = run_fixes(Path("/h"), lambda: [f], check="off-path", message="codex")
         install.assert_not_called()
         self.assertIn("names no harness or method", result["ran"][0]["error"])
+
+
+def run_swe_on(home: Path, path: str, *args: str):
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")}
+    env.update({"HOME": str(home), "PATH": path, "NO_COLOR": "1",
+                "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")})
+    return subprocess.run([sys.executable, "-m", "quiver.cli", *args],
+                          capture_output=True, text=True, env=env, timeout=60)
 
 
 class CliTest(unittest.TestCase):
@@ -206,6 +245,18 @@ class CliTest(unittest.TestCase):
         # Idempotent: a second run has nothing to do.
         again = decode(run_swe(home, "doctor", "--fix", "--json"))["data"]
         self.assertEqual(again["ran"], [])
+
+    def test_no_harness_on_path_still_settles(self):
+        home = temp_dir(self)
+        (home / ".quiver").mkdir()
+        (home / ".quiver" / "AGENTS.md").write_text("# shared\n")
+        env_path = os.environ.get("PATH", "/usr/bin:/bin")
+        done = run_swe_on(home, "/nonexistent-bin", "doctor", "--fix", "--json")
+        data = decode(done)["data"]
+        self.assertEqual(doctor_fix.fixable_left(data), [], env_path)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        again = decode(run_swe_on(home, "/nonexistent-bin", "doctor", "--fix", "--json"))["data"]
+        self.assertEqual(doctor_fix.fixable_left(again), [])
 
     def test_message_needs_a_check(self):
         home = temp_dir(self)

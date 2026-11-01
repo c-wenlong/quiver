@@ -1,0 +1,287 @@
+import Foundation
+import UIKit
+import UniformTypeIdentifiers
+
+/// One thing another app handed the share sheet, read and ready to send.
+/// Text and links go in the message; images and files upload first.
+enum SharedPayload: Equatable {
+    case text(String)
+    case link(URL)
+    /// An image on disk (copied into the extension's temp folder), sent
+    /// as a downscaled JPEG.
+    case image(name: String, file: URL)
+    /// An image the other app handed over already as a JPEG (it shared a
+    /// decoded image rather than a file).
+    case imageData(name: String, data: Data)
+    /// Any other file on disk, streamed to the hub as it is.
+    case file(name: String, file: URL, size: Int)
+
+    var isUpload: Bool {
+        switch self {
+        case .text, .link: false
+        case .image, .imageData, .file: true
+        }
+    }
+
+    /// The name it uploads under (`photo.heic` goes up as `photo.jpg`).
+    var uploadName: String? {
+        switch self {
+        case .text, .link: nil
+        case .image(let name, _), .imageData(let name, _), .file(let name, _, _): name
+        }
+    }
+}
+
+/// How the share sheet reads an item provider: the first matching kind
+/// wins, so a photo that also offers a file URL is still a photo, and a
+/// web page that also offers its title as text is still a link.
+enum SharedKind: Equatable {
+    case image(String)
+    case fileURL
+    case link
+    case text
+    case file(String)
+    case unsupported
+
+    static func of(_ typeIdentifiers: [String]) -> SharedKind {
+        let types = typeIdentifiers.compactMap(UTType.init)
+        if let t = types.first(where: { $0.conforms(to: .image) }) { return .image(t.identifier) }
+        if types.contains(where: { $0.conforms(to: .fileURL) }) { return .fileURL }
+        if types.contains(where: { $0.conforms(to: .url) }) { return .link }
+        if types.contains(where: { $0.conforms(to: .plainText) }) { return .text }
+        if let t = types.first(where: { $0.conforms(to: .data) }) { return .file(t.identifier) }
+        return .unsupported
+    }
+}
+
+/// Builds the message the share sheet sends and says why Send is off.
+enum ShareDraft {
+    /// The typed message first, then each shared text and link on its own
+    /// paragraph. A link Safari also sent as text appears once.
+    static func text(message: String, payloads: [SharedPayload]) -> String {
+        var parts: [String] = []
+        func add(_ s: String) {
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty, !parts.contains(t) { parts.append(t) }
+        }
+        add(message)
+        for payload in payloads {
+            switch payload {
+            case .text(let s): add(s)
+            case .link(let url): add(url.absoluteString)
+            default: break
+            }
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
+    /// Keeps at most the phone's per-message cap of files, in order;
+    /// texts and links all stay. The second value names what was cut.
+    static func capped(_ payloads: [SharedPayload]) -> ([SharedPayload], String?) {
+        var kept: [SharedPayload] = []
+        var files = 0, dropped = 0
+        for payload in payloads {
+            if payload.isUpload {
+                files += 1
+                if files > AttachmentRules.maxPerMessage { dropped += 1; continue }
+            }
+            kept.append(payload)
+        }
+        guard dropped > 0 else { return (kept, nil) }
+        return (kept, "Only the first \(AttachmentRules.maxPerMessage) files are sent: \(dropped) left out.")
+    }
+}
+
+/// Reads the share sheet's item providers into payloads, one at a time.
+/// Files are copied into `folder` (the provider's own copy is gone once
+/// its callback returns), checked against the hub's caps by size alone
+/// and never read into memory here.
+enum ShareInbox {
+    static func load(_ providers: [NSItemProvider], into folder: URL) async -> (payloads: [SharedPayload], notices: [String]) {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var payloads: [SharedPayload] = []
+        var notices: [String] = []
+        for (i, provider) in providers.enumerated() {
+            // Cancel while reading: nothing more is copied in.
+            guard !Task.isCancelled else { break }
+            switch await load(provider, index: i, into: folder) {
+            case .success(let payload): payloads.append(payload)
+            case .failure(let refusal): notices.append(refusal.message)
+            }
+        }
+        return (payloads, notices)
+    }
+
+    struct Refusal: Error, Equatable { let message: String }
+
+    static func load(_ provider: NSItemProvider, index: Int, into folder: URL) async -> Result<SharedPayload, Refusal> {
+        let fallbackName = provider.suggestedName ?? "item-\(index + 1)"
+        switch SharedKind.of(provider.registeredTypeIdentifiers) {
+        case .image(let type):
+            if case .success(let url) = await copyFile(provider, type: type, into: folder, index: index, check: false) {
+                return .success(.image(name: AttachmentRules.jpegName(url.lastPathComponent), file: url))
+            }
+            // Some apps share a decoded image, its bytes or a file URL
+            // instead of a file representation.
+            switch await loadItem(provider, type: type) {
+            case let image as UIImage:
+                if let data = PhotoPrep.jpeg(from: image) {
+                    return .success(.imageData(name: AttachmentRules.jpegName(fallbackName), data: data))
+                }
+            case let data as Data:
+                if let jpeg = PhotoPrep.jpeg(from: data) {
+                    return .success(.imageData(name: AttachmentRules.jpegName(fallbackName), data: jpeg))
+                }
+            case let url as URL where url.isFileURL:
+                return copyLocal(url, into: folder, index: index)
+            default:
+                break
+            }
+            return .failure(Refusal(message: "\(fallbackName) couldn't be read as an image."))
+        case .fileURL:
+            guard let url = await loadURL(provider, conformingTo: .fileURL) else {
+                return .failure(Refusal(message: "\(fallbackName) couldn't be read."))
+            }
+            return copyLocal(url, into: folder, index: index)
+        case .link:
+            guard let url = await loadURL(provider, conformingTo: .url) else {
+                return .failure(Refusal(message: "That link couldn't be read."))
+            }
+            return url.isFileURL ? copyLocal(url, into: folder, index: index) : .success(.link(url))
+        case .text:
+            switch await loadItem(provider, conformingTo: .plainText) {
+            case let s as String: return .success(.text(s))
+            case let s as NSAttributedString: return .success(.text(s.string))
+            case let url as URL where url.isFileURL: return copyLocal(url, into: folder, index: index)
+            case let data as Data: return .success(.text(String(decoding: data, as: UTF8.self)))
+            default: return .failure(Refusal(message: "That text couldn't be read."))
+            }
+        case .file(let type):
+            return await copyFile(provider, type: type, into: folder, index: index, check: true)
+                .flatMap(checked)
+        case .unsupported:
+            return .failure(Refusal(message: "\(fallbackName) can't be attached: images, PDFs and text files only."))
+        }
+    }
+
+    /// A file that's on disk in `folder` as the payload it uploads as,
+    /// or why the hub would refuse it. Images become JPEGs on the way up,
+    /// so only their type matters, never their original size.
+    static func checked(_ url: URL) -> Result<SharedPayload, Refusal> {
+        let name = url.lastPathComponent
+        let ext = AttachmentRules.ext(name)
+        if AttachmentRules.readableImages.contains(ext) || AttachmentRules.needsConversion(name) {
+            return .success(.image(name: AttachmentRules.jpegName(name), file: url))
+        }
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        if let why = AttachmentRules.refusal(name: name, size: size) { return .failure(Refusal(message: why)) }
+        return .success(.file(name: name, file: url, size: size))
+    }
+
+    /// Why the hub would refuse a file that isn't an image yet, from its
+    /// name and size alone, so a big PDF or an archive is never copied
+    /// just to be turned down. Images are always taken (they shrink).
+    static func precheck(_ url: URL, name: String) -> Refusal? {
+        let ext = AttachmentRules.ext(name)
+        if AttachmentRules.readableImages.contains(ext) || AttachmentRules.needsConversion(name) { return nil }
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 1
+        return AttachmentRules.refusal(name: name, size: size).map(Refusal.init)
+    }
+
+    /// Copies a file URL another app shared into `folder`.
+    private static func copyLocal(_ url: URL, into folder: URL, index: Int) -> Result<SharedPayload, Refusal> {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        if let why = precheck(url, name: url.lastPathComponent) { return .failure(why) }
+        guard !Task.isCancelled, let copy = copy(url, into: folder, index: index) else {
+            return .failure(Refusal(message: "\(url.lastPathComponent) couldn't be read."))
+        }
+        return checked(copy)
+    }
+
+    /// `folder/<index>/<name>`: one subfolder per item, so two shared
+    /// files with the same name both survive.
+    static func copy(_ url: URL, into folder: URL, index: Int, name: String? = nil) -> URL? {
+        let dir = folder.appendingPathComponent("\(index)", isDirectory: true)
+        let dest = dir.appendingPathComponent(name ?? url.lastPathComponent)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: dest)
+            try FileManager.default.copyItem(at: url, to: dest)
+            return dest
+        } catch {
+            return nil
+        }
+    }
+
+    /// The provider's file copied into `folder`. With `check`, a file the
+    /// hub would refuse is turned down before it's copied.
+    private static func copyFile(_ provider: NSItemProvider, type: String, into folder: URL, index: Int,
+                                 check: Bool) async -> Result<URL, Refusal> {
+        let suggested = provider.suggestedName
+        let unread = Refusal(message: "\(suggested ?? "item-\(index + 1)") couldn't be read.")
+        guard provider.hasItemConformingToTypeIdentifier(type), !Task.isCancelled else { return .failure(unread) }
+        return await withCheckedContinuation { done in
+            _ = provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
+                // The provider deletes `url` once this returns: copy now.
+                guard let url else { return done.resume(returning: .failure(unread)) }
+                let name = fileName(suggested: suggested, provided: url, type: type)
+                if check, let why = precheck(url, name: name) { return done.resume(returning: .failure(why)) }
+                done.resume(returning: copy(url, into: folder, index: index, name: name).map { .success($0) } ?? .failure(unread))
+            }
+        }
+    }
+
+    /// The provider's suggested name when it has one (the file it hands
+    /// over can carry a temp name, or its type's, "PNG image.png"), with
+    /// the file's extension, else the type's, when the name lacks one.
+    static func fileName(suggested: String?, provided: URL, type: String) -> String {
+        guard let suggested, !suggested.isEmpty else { return provided.lastPathComponent }
+        let safe = suggested.replacingOccurrences(of: "/", with: "-")
+        guard (safe as NSString).pathExtension.isEmpty else { return safe }
+        let ext = provided.pathExtension.isEmpty ? UTType(type)?.preferredFilenameExtension : provided.pathExtension
+        return ext.map { "\(safe).\($0)" } ?? safe
+    }
+
+    /// Loads the first registered type that conforms to `kind`: a provider
+    /// answers only for a type it registered (`public.utf8-plain-text`,
+    /// not `public.plain-text`).
+    private static func loadItem(_ provider: NSItemProvider, conformingTo kind: UTType) async -> NSSecureCoding? {
+        guard let type = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: kind) == true })
+        else { return nil }
+        return await loadItem(provider, type: type)
+    }
+
+    /// A URL through the provider's own object loading, which decodes
+    /// every form it stores one in (an `NSURL`'s is a property list);
+    /// else the raw item.
+    private static func loadURL(_ provider: NSItemProvider, conformingTo kind: UTType) async -> URL? {
+        if provider.canLoadObject(ofClass: URL.self) {
+            let url: URL? = await withCheckedContinuation { done in
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in done.resume(returning: url) }
+            }
+            if let url { return url }
+        }
+        return asURL(await loadItem(provider, conformingTo: kind))
+    }
+
+    /// A URL item as some providers hand it over: a URL, or its text.
+    static func asURL(_ item: NSSecureCoding?) -> URL? {
+        let text: String?
+        switch item {
+        case let url as URL: return url
+        case let s as String: text = s
+        case let data as Data: text = String(data: data, encoding: .utf8)
+        default: text = nil
+        }
+        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let url = URL(string: trimmed), url.scheme != nil else { return nil }
+        return url
+    }
+
+    private static func loadItem(_ provider: NSItemProvider, type: String) async -> NSSecureCoding? {
+        await withCheckedContinuation { done in
+            provider.loadItem(forTypeIdentifier: type, options: nil) { item, _ in done.resume(returning: item) }
+        }
+    }
+}

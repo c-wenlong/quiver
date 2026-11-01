@@ -169,11 +169,11 @@ HELP = {
   after each, and prints what it fixed and what is left. Installs, plugin
   reinstalls and the drops that delete entries or links (undeclare,
   marketplace-drop, dangling-link) never run in a batch: they run only
-  for one finding named with --message.
+  for one finding named with --message. With --json, --fix prints
+  {{dry_run, ran, fixed, still_failing, skipped, not_cleared, fixable_left}}.
 
   Doctor also reports plugin drift (swe find plugins) as plugins.* and
-  broken top-level links in ~/.quiver, each with its fix. With --json, --fix prints
-  {{dry_run, ran, fixed, still_failing, skipped}}.
+  broken top-level links in ~/.quiver, each with its fix.
 
   Catches the common failure mode: {c('dim', 'npm install -g')} under nvm while
   interactive/non-interactive shells use Homebrew Node (tool missing from PATH).

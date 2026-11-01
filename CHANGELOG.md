@@ -19,21 +19,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.quiver` or its skills folder gets `dangling-link`, a click that
   copies the link to `~/.quiver/backups` and removes it, and refuses
   anything that is no longer a broken link directly in those folders.
-  `--fix` repeats its passes (up to three) so a fix that reveals more,
-  like a newly registered marketplace, gets them too. Part of
+  A marketplace `--fix` registers shows its uninstalled plugins to the
+  next pass, which installs them. Part of
   [#529](https://github.com/c-wenlong/quiver/issues/529).
 - **`swe doctor --fix`.** Runs every safe local fix doctor found, in
   order (setup, then discover, then init), reads the report again after
   each step, and prints what it fixed and what is left.
   `--fix=<check>` scopes it (`--fix=setup`), `--dry-run` (or `--check`)
   previews, and `--json` prints `{dry_run, ran, fixed, still_failing,
-  skipped}`. Installs and the drops that delete entries never run in a
-  batch; `--fix=<check> --message=<text> [--action=<a>]` runs one
-  finding's fix, as a Run button does. A failed fix is reported and the
-  rest still run. Plain `swe doctor` still writes nothing. The runners
-  moved to `harness/doctor_fix.py`, which the web Doctor page now calls
-  too. Part of [#529](https://github.com/c-wenlong/quiver/issues/529).
-
+  skipped, not_cleared, fixable_left}`. A fix that runs cleanly but
+  leaves its finding (an empty discovery, a real file in the way) is
+  listed as needing a person and never retried, so `--fix` settles.
+  Installs and the drops that delete entries never run in a batch;
+  `--fix=<check> --message=<text> [--action=<a>]` runs one finding's
+  fix, as a Run button does. A failed fix is reported and the rest still
+  run. Plain `swe doctor` still writes nothing. The runners moved to
+  `harness/doctor_fix.py`, which the web Doctor page now calls too. Part
+  of [#529](https://github.com/c-wenlong/quiver/issues/529).
+- **iPhone: share into a session.** A share extension ("Quiver" in the
+  share sheet) sends text, links, images and files from any app to a
+  session ([#1441](https://github.com/c-wenlong/quiver/issues/1441)).
+  The sheet lists the active hub's attached sessions, most recent
+  first, with a hub picker when the phone has more than one, and an
+  optional message. Text and links go in the message; images go up as
+  JPEGs with the long edge at most 2048 px and other files stream from
+  disk, one at a time, through the composer's attachments route and
+  caps, then the message is sent with their refs. It reads the paired
+  hubs from the App Group and shared Keychain group, and says so
+  instead of sending when the phone isn't paired or the hub can't be
+  reached.
 - **Homebrew tap.** `brew install --cask c-wenlong/quiver/quiver`
   installs the Mac app and `brew install c-wenlong/quiver/swe` the CLI,
   from [c-wenlong/homebrew-quiver](https://github.com/c-wenlong/homebrew-quiver).

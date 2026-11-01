@@ -251,12 +251,16 @@ The CLI side of remote also speaks `--json`:
   without remedy support. The command may exit nonzero with valid JSON,
   so the client is called with `allowFailure`.
 - `swe doctor --fix --json`: `{dry_run, ran, fixed, still_failing,
-  skipped}`. `ran` lists each fix as `{action, fix, findings, error}`
+  skipped, not_cleared, fixable_left}`. `ran` lists each fix as `{action, fix, findings, error}`
   (`findings` are `{check, message, harness?}`; one `setup`, `discover`
   or `init` run covers every finding naming it), `fixed` the findings
   gone afterwards, `still_failing` the full findings in scope still
   there, `skipped` the ones whose only fixes need a click (`actions`
-  lists them). Exits 1 when a fix failed or a batch fix is still owed.
+  lists them), `not_cleared` the ones whose batch fix ran cleanly but
+  left them (a person decides next), `fixable_left` the ones a batch fix
+  still waits for (never run, or failed). `fixed` counts findings a
+  step revealed too. Exits 1 when a fix failed or `fixable_left` is not
+  empty.
 - `SessionListPayload`: `sessions` (`id`, `harness`, `agent`, `cwd`,
   `title`, `title_source`, `last_active_at`, `status`, `resume`) plus
   `failures` for parsers that crashed.
