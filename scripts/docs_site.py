@@ -31,10 +31,10 @@ SOURCES = {
 # Titles and descriptions for the rendered <head>; "cli" has no source
 # file because it is generated from `swe help`.
 TITLES = {
-    "overview": ("Documentation — quiver", "Install, configure and use quiver."),
-    "cli": ("CLI reference — quiver", "Every swe command and flag."),
-    "changelog": ("Changelog — quiver", "Notable changes to quiver."),
-    "contributing": ("Contributing — quiver", "How to work on quiver."),
+    "overview": ("Documentation — swe", "Install, configure and use swe."),
+    "cli": ("CLI reference — swe", "Every swe command and flag."),
+    "changelog": ("Changelog — swe", "Notable changes to swe."),
+    "contributing": ("Contributing — swe", "How to work on swe."),
 }
 
 # Repo files a staged page may link to that are copied into the site as-is.
@@ -239,7 +239,7 @@ def _nav() -> str:
     return """<header class="top">
   <div class="wrap">
     <nav>
-      <a class="brand" href="../"><img src="../logo-rounded.svg" alt="">quiver</a>
+      <a class="brand" href="../"><img src="../logo-rounded.svg" alt="">swe</a>
       <div class="links">
         <a href="../overview/">Docs</a>
         <a href="../cli/">CLI reference</a>
@@ -261,7 +261,7 @@ _GH_SVG = ('<svg width="0" height="0" style="position:absolute" aria-hidden="tru
 
 def _footer() -> str:
     return """<footer>
-  <span>quiver is MIT licensed.</span>
+  <span>swe is MIT licensed.</span>
   <div class="right">
     <a href="../overview/">Docs</a>
     <a href="../changelog/">Changelog</a>

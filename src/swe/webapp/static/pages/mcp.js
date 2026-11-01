@@ -423,7 +423,8 @@ function mcpSyncTargets(s, source, harnesses) {
   return { missing, differing };
 }
 
-const mcpSourceName = (src) => (src === "quiver" ? "SWE hub" : Fmt.mark(src).name);
+const mcpIsHub = (p) => p === "quiver" || p === "swe";
+const mcpSourceName = (src) => (mcpIsHub(src) ? "SWE hub" : Fmt.mark(src).name);
 
 /* McpSyncReport.sentence: "Added to cursor and cline. Updated codex." */
 function mcpSentence(report) {
@@ -704,7 +705,7 @@ const mcpRemovePlaces = (s) => [...s.harnesses, ...(s.in_hub ? ["quiver"] : [])]
 function mcpRemoveConfirm(s) {
   const places = mcpRemovePlaces(s);
   const where = (mcpPage.data && mcpPage.data.machine) || "the hub";
-  const names = places.map((p) => (p === "quiver" ? "SWE hub" : Fmt.mark(p).name)).join(", ");
+  const names = places.map(mcpSourceName).join(", ");
   return `<div class="mcp-confirm mcp-remove-confirm" role="group" aria-label="Remove ${esc(s.name)}?">
     <p>Remove ${esc(s.name)}? It goes from ${esc(names)} on ${esc(where)}.</p>
     <pre class="command">swe mcp remove ${esc(mcpShellQuote(s.name))} --from=${esc(mcpShellQuote(places.join(",")))}</pre>
@@ -736,7 +737,7 @@ async function mcpRemove(s) {
   const sheet = document.getElementById("mcp-sheet");
   if (sheet && sheet.open && sheet.dataset.server === s.name) sheet.close();
   if (mcpPage.sheet === st) mcpPage.sheet = null;
-  mcpPage.notice = `Removed ${s.name} from ${data.removed.map((p) => (p === "quiver" ? "SWE hub" : Fmt.mark(p).name)).join(", ")}.`;
+  mcpPage.notice = `Removed ${s.name} from ${data.removed.map(mcpSourceName).join(", ")}.`;
   mcpAdopt(data.page);
   if (mcpOnPage()) paintMcp();
 }

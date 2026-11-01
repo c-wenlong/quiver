@@ -91,12 +91,12 @@ REMEDIES: dict[str, dict[str, dict]] = {
         },
         PERMISSION_REQUIRED: {
             "kind": "grant-permission",
-            "title": "Let SWE read Cursor's data",
+            "title": "Let Quiver read Cursor's data",
             "summary": "macOS is blocking Cursor's session files",
             "steps": [
                 "Open System Settings → Privacy & Security → Files and "
                 "Folders.",
-                "Grant your terminal (or SWE) access to Cursor's data, "
+                "Grant your terminal (or Quiver) access to Cursor's data, "
                 "then refresh.",
             ],
             "url": _PRIVACY_FILES_URL,
@@ -142,12 +142,12 @@ REMEDIES: dict[str, dict[str, dict]] = {
         },
         PERMISSION_REQUIRED: {
             "kind": "grant-permission",
-            "title": "Let SWE read Devin's credentials",
+            "title": "Let Quiver read Devin's credentials",
             "summary": "macOS is blocking Devin's credentials",
             "steps": [
                 "Open System Settings → Privacy & Security → Files and "
                 "Folders.",
-                "Grant your terminal (or SWE) access to "
+                "Grant your terminal (or Quiver) access to "
                 "~/.local/share/devin, then refresh.",
             ],
             "url": _PRIVACY_FILES_URL,
@@ -201,12 +201,12 @@ REMEDIES: dict[str, dict[str, dict]] = {
         },
         PERMISSION_REQUIRED: {
             "kind": "grant-permission",
-            "title": "Let SWE read {name}'s files",
+            "title": "Let Quiver read {name}'s files",
             "summary": "macOS is blocking {name}'s files",
             "steps": [
                 "Open System Settings → Privacy & Security → Files and "
                 "Folders.",
-                "Grant your terminal (or SWE) access, then refresh.",
+                "Grant your terminal (or Quiver) access, then refresh.",
             ],
             "url": _PRIVACY_FILES_URL,
         },

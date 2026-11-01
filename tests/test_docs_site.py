@@ -29,7 +29,7 @@ MISTUNE_MISSING = "mistune is not installed (pip install -r docs/requirements.tx
 
 def _repo(test: unittest.TestCase, files: dict) -> Path:
     """Write ``files`` (repo-relative path -> text) into a fake repo root."""
-    root = Path(tempfile.mkdtemp(prefix="quiver-docs-test-"))
+    root = Path(tempfile.mkdtemp(prefix="swe-docs-test-"))
     test.addCleanup(shutil.rmtree, root, True)
     for rel, text in files.items():
         path = root / rel
@@ -138,7 +138,7 @@ class RenderTests(unittest.TestCase):
         page = docs_site.render_page("changelog", render("# Hi\n\nbody"))
         for needle in ('<nav>', "../logo-rounded.svg", "../favicon.ico",
                        "../overview/",
-                       "quiver is MIT licensed", 'id="hi"'):
+                       "swe is MIT licensed", 'id="hi"'):
             self.assertIn(needle, page)
 
     def test_committed_output_is_fresh(self):
