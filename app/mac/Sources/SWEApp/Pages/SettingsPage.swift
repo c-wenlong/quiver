@@ -186,7 +186,14 @@ private struct SettingsSectionView: View {
                         RemoteSection()
                     }
                 }
-            case .files: filesCard
+            case .files:
+                VStack(alignment: .leading, spacing: 28) {
+                    filesCard
+                    SettingsCardGroup(title: "Hub sync",
+                                      detail: "Your ~/.swe git repo: what changed here, and what the remote has that this Mac doesn't.") {
+                        HubSyncSection()
+                    }
+                }
             case .experimental: ExperimentalSection(sourceCheckout: $drafts.sourceCheckout)
             }
         }

@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "data": {
+    "dry_run": false,
+    "mode": "device",
+    "branch": "device/desk",
+    "machine": "desk",
+    "base": "origin/main",
+    "commit": {
+      "message": "swe sync from desk: 2 files (mcp.json 1, skills 1)",
+      "files": [
+        {
+          "status": "A",
+          "path": "mcp.json",
+          "group": "mcp.json"
+        },
+        {
+          "status": "A",
+          "path": "skills/deploy/SKILL.md",
+          "group": "skills"
+        }
+      ]
+    },
+    "merges": [
+      {
+        "ref": "origin/main",
+        "commits": 1
+      }
+    ],
+    "conflicts": [],
+    "held_back": [],
+    "pushed": true,
+    "push_error": null,
+    "relinked": {
+      "changed": 2,
+      "linked": 18,
+      "marketplaces": [],
+      "mcp": null,
+      "notes": []
+    },
+    "would_push": true,
+    "result": "synced"
+  }
+}

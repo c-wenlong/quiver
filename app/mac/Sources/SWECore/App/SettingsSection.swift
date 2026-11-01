@@ -25,7 +25,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
         case .notifications: "Alerts when a usage limit runs low."
         case .integrations: "The GitHub CLI behind the GitHub pages, the keys for the services SWE calls, and the phones paired to watch your sessions."
         case .providers: "Which harnesses show up across the app, and the inference plans and API keys behind them."
-        case .files: "Where SWE finds swe, your API keys file and your MCP server folders, and the editor that opens them."
+        case .files: "Where SWE finds swe, your API keys file and your MCP server folders, the editor that opens them, and syncing ~/.swe."
         case .experimental: "Features being tried out. They may change or go away."
         }
     }

@@ -441,7 +441,7 @@ def sync(home: Path, dry_run: bool = False, relink=None) -> dict:
     ``would-sync`` (dry run), ``conflict`` or ``push-failed``. Raises
     SyncError when the repo can't be synced at all.
 
-    ``relink(home, changed_paths)`` runs after new content came in; the
+    ``relink(home, changed_paths, base=<commit before the merges>)`` runs after new content came in; the
     default re-links harnesses the way ``swe init`` does after a clone.
 
     One sync per repo at a time (the app, the web card and a terminal can
@@ -541,8 +541,7 @@ def _sync_locked(home: Path, dry_run: bool, relink) -> dict:
         raw = _out(state.root, "diff", "--name-only", "-z", mid or EMPTY_TREE, "HEAD")
         changed = [p for p in raw.split("\0") if p]
         if changed:
-            doc["relinked"] = (relink(home, changed) if relink
-                               else default_relink(home, changed, base=mid))
+            doc["relinked"] = (relink or default_relink)(home, changed, base=mid)
     # Never --force: a push the remote refuses (someone pushed meanwhile)
     # is reported, and the next sync merges it in.
     push_args = ["push", "--quiet"]

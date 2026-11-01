@@ -57,7 +57,7 @@ class SyncTestBase(unittest.TestCase):
             git(home / ".swe", "checkout", "-q", "-b", branch)
         return home
 
-    def relink(self, home, changed):
+    def relink(self, home, changed, base=None):
         self.relinks.append((home, sorted(changed)))
         return {"changed": len(changed), "linked": 0, "marketplaces": [],
                 "mcp": None, "notes": []}

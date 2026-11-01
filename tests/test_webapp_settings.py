@@ -1125,6 +1125,144 @@ class TestSync(_Settings):
         self.assertEqual(fake.calls(), [])
 
 
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class TestHubSync(_Settings):
+    """Files › Hub sync: swe sync status and swe sync on the hub's ~/.swe,
+    against a throwaway bare remote."""
+
+    def setUp(self):
+        super().setUp()
+        import os
+
+        from swe.paths import swe_dir_for
+        from tests.test_sync import GIT_ENV, git
+
+        patcher = patch.dict(os.environ, GIT_ENV)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.git = git
+        self.hub = swe_dir_for(self.home)
+        self.hub.mkdir(parents=True, exist_ok=True)
+        from tests._tempdir import temp_dir
+
+        self.remote = Path(temp_dir(self))
+        git(self.remote, "init", "-q", "--bare", "-b", "main")
+        (self.hub / "AGENTS.md").write_text("# hub\n")
+        (self.hub / ".gitignore").write_text("data/\ncache/\nsecrets/\n")
+        git(self.hub, "init", "-q", "-b", "main")
+        git(self.hub, "remote", "add", "origin", str(self.remote))
+        git(self.hub, "add", "-A")
+        git(self.hub, "commit", "-q", "-m", "seed")
+        git(self.hub, "push", "-q", "-u", "origin", "main")
+        relink = patch("swe.sync.repo.default_relink", return_value=None)
+        relink.start()
+        self.addCleanup(relink.stop)
+
+    def get_part(self, cred, query="part=hub_sync"):
+        status, data = self.srv.request(
+            "GET", f"/v1/app/settings?{query}",
+            headers={"Authorization": f"Bearer {cred['credential']}"})
+        return status, json.loads(data)
+
+    def test_status_part(self):
+        (self.hub / "skills").mkdir()
+        (self.hub / "skills" / "x.md").write_text("x\n")
+        status, body = self.get_part(self.device("laptop"), "part=hub_sync&fetch=1")
+        self.assertEqual(status, 200, body)
+        card = body["hub_sync"]
+        self.assertTrue(card["ready"])
+        self.assertTrue(card["fetched"])
+        self.assertEqual(card["mode"], "single")
+        self.assertEqual([c["path"] for c in card["changes"]], ["skills/x.md"])
+
+    def test_sync_commits_pushes_and_answers_with_the_card(self):
+        (self.hub / "AGENTS.md").write_text("# edited\n")
+        status, body = self.post("hub_sync", {}, self.device("laptop"))
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["result"]["result"], "synced")
+        self.assertEqual(body["hub_sync"]["changes"], [])
+        self.assertEqual(self.git(self.remote, "show", "main:AGENTS.md"), "# edited")
+
+    def test_relink_runs_under_the_config_lock(self):
+        from swe.webapp.pages import CONFIG_LOCK
+        from tests._tempdir import temp_dir
+
+        other = Path(temp_dir(self)) / "clone"
+        self.git(other.parent, "clone", "-q", str(self.remote), str(other))
+        (other / "skills.md").write_text("new\n")
+        self.git(other, "add", "-A")
+        self.git(other, "commit", "-q", "-m", "elsewhere")
+        self.git(other, "push", "-q", "origin", "main")
+        held = []
+
+        def relink(home, changed, base=None):
+            held.append(CONFIG_LOCK.locked())
+            return {"changed": len(changed), "linked": 0, "marketplaces": [],
+                    "mcp": None, "notes": []}
+
+        with patch("swe.sync.repo.default_relink", side_effect=relink):
+            status, body = self.post("hub_sync", {}, self.device("laptop"))
+        self.assertEqual(status, 200, body)
+        self.assertEqual(held, [True])
+        self.assertFalse(CONFIG_LOCK.locked())
+
+    def test_dry_run_changes_nothing(self):
+        (self.hub / "AGENTS.md").write_text("# edited\n")
+        before = self.git(self.remote, "rev-parse", "main")
+        status, body = self.post("hub_sync", {"dry_run": True}, self.device("laptop"))
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["result"]["result"], "would-sync")
+        self.assertEqual(self.git(self.remote, "rev-parse", "main"), before)
+        self.assertEqual(len(body["hub_sync"]["changes"]), 1)
+
+    def test_a_hub_that_is_not_a_repo_is_a_409(self):
+        shutil.rmtree(self.hub / ".git")
+        status, body = self.post("hub_sync", {}, self.device("laptop"))
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["code"], "sync_failed")
+        status, body = self.get_part(self.device("laptop"))
+        self.assertFalse(body["hub_sync"]["ready"])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_card_lines_under_node(self):
+        js = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/settings.js"
+        src = (
+            "const hubSyncCount = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;\n"
+            + app_js_function("hubSyncLines", js) + app_js_function("hubSyncOutcome", js)
+            + "const device = {mode: 'device', branch: 'device/desk', base: 'origin/main',"
+              " upstream: 'origin/device/desk', ahead: 2, behind: 0, base_behind: 1,"
+              " changes: [{}, {}], groups: {skills: 1, 'AGENTS.md': 1}, held_back: [], fetched: true};\n"
+              "const conflict = {result: 'conflict', conflicts: ['AGENTS.md']};\n"
+              "const synced = {result: 'synced', commit: {files: [{}]}, merges: [{commits: 3}],"
+              " pushed: true, branch: 'main', relinked: {}};\n"
+              "const pushFailed = {result: 'push-failed', push_error: 'rejected', relinked: {notes: ['n1'],"
+              " marketplaces: [{harness: 'claude', marketplace: 'mine', error: 'no claude'}]}};\n"
+              "process.stdout.write(JSON.stringify([hubSyncLines(device), hubSyncOutcome(conflict),"
+              " hubSyncOutcome(synced), hubSyncOutcome(pushFailed)]));\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        lines, conflict, synced, push_failed = json.loads(done.stdout)
+        self.assertEqual(push_failed["text"], "Committed and merged, but the push failed: rejected. "
+                                              "Sync again to retry. n1 mine not registered in claude: no claude.")
+        self.assertEqual(lines["repo"], "Device branch device/desk: merges origin/main in, "
+                                        "pushes only device/desk.")
+        self.assertEqual(lines["changes"], "2 uncommitted files: AGENTS.md 1, skills 1. "
+                                           "2 commits to push · 1 new commit on origin/main.")
+        self.assertTrue(conflict["danger"])
+        self.assertIn("AGENTS.md", conflict["text"])
+        self.assertEqual(synced["text"], "Committed 1 file, merged 3 commits, pushed main, "
+                                         "re-linked every harness.")
+
+    def test_one_hub_sync_at_a_time(self):
+        settings_page._HUB_SYNC_LOCK.acquire()
+        try:
+            with self.assertRaises(PageError) as raised:
+                settings_page.post(self.ctx(), "hub_sync", {})
+        finally:
+            settings_page._HUB_SYNC_LOCK.release()
+        self.assertEqual((raised.exception.status, raised.exception.code), (409, "busy"))
+
+
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestRevokeThisBrowserScript(unittest.TestCase):
     """pages/settings.js under node, with app.js's real pairForget():
