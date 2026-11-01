@@ -807,7 +807,7 @@ function pairSheet() {
   const payload = target === "web" ? t.url : t.deep_link;
   const instructions = target === "web"
     ? "On your phone, scan the code to pair the browser and open the web app, then Add to Home Screen to keep it."
-    : "On your phone, scan the code to open the pairing link in the Quiver app.";
+    : "On your phone, scan the code to open the pairing link in the SWE app.";
   return `<dialog class="sheet set-pair-sheet" id="set-pair-sheet" aria-labelledby="set-pair-title">
     <div class="sheet-body">
       <div class="set-sheet-head"><div class="sheet-title" id="set-pair-title">Pair a device</div>
@@ -815,7 +815,7 @@ function pairSheet() {
       <div class="set-pair">
         <div class="set-qr">${target === "web" ? t.qr.web : t.qr.app}</div>
         <div class="set-pair-side">
-          <div class="tabs set-segment" role="tablist">${[["web", "Browser"], ["app", "Quiver app"]].map(([id, label]) =>
+          <div class="tabs set-segment" role="tablist">${[["web", "Browser"], ["app", "SWE app"]].map(([id, label]) =>
             `<button class="tab${id === target ? " selected" : ""}" role="tab" aria-selected="${id === target}" data-target="${id}">${label}</button>`).join("")}</div>
           <p class="caption">${esc(instructions)}</p>
           <code class="set-payload" id="set-payload">${esc(payload)}</code>

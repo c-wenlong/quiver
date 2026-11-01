@@ -40,7 +40,7 @@ public struct RemoteStatus: Decodable, Sendable, Equatable {
         /// Hardware model where the client knows it (the iOS wrapper
         /// reports it; browser UAs can't).
         public let model: String?
-        /// Client name+version, e.g. "Quiver Remote 1.0" or "Safari 18.5".
+        /// Client name+version, e.g. "SWE Remote 1.0" or "Safari 18.5".
         public let client: String?
         public let os: String?
         /// Tailnet node the pairing request came from — the closest

@@ -2977,7 +2977,7 @@ class TestDeviceMetaCapture(unittest.TestCase):
         status, data = self.srv.request(
             "POST", "/v1/pair",
             {"token": token, "name": "phone",
-             "device": {"kind": "IPAD", "client": "Quiver Remote 1.2",
+             "device": {"kind": "IPAD", "client": "SWE Remote 1.2",
                         "model": "iPad13,1"}},
             headers={"User-Agent":
                      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 "
@@ -2987,7 +2987,7 @@ class TestDeviceMetaCapture(unittest.TestCase):
         row = self._row(json.loads(data)["device_id"])
         # Body's kind/client beat the UA; os falls back to the UA read.
         self.assertEqual(row["kind"], "ipad")
-        self.assertEqual(row["client"], "Quiver Remote 1.2")
+        self.assertEqual(row["client"], "SWE Remote 1.2")
         self.assertEqual(row["model"], "iPad13,1")
         self.assertEqual(row["os"], "iOS 18.5")
         self.assertEqual(row["node_name"], _PHONE["node_name"])
@@ -3010,9 +3010,9 @@ class TestDeviceMetaCapture(unittest.TestCase):
         self.srv.state.owner_login = "dev@github"
         status, data = self.srv.request(
             "POST", "/v1/pair/request",
-            {"device": {"kind": "iphone", "client": "Quiver Remote 1.0",
+            {"device": {"kind": "iphone", "client": "SWE Remote 1.0",
                         "model": "iPhone16,2", "os": "iOS 18.5"}},
-            headers={"User-Agent": "QuiverRemote/1.0 Darwin/25.0.0"},
+            headers={"User-Agent": "SWERemote/1.0 Darwin/25.0.0"},
         )
         self.assertEqual(status, 201, data)
         r = json.loads(data)
@@ -3029,7 +3029,7 @@ class TestDeviceMetaCapture(unittest.TestCase):
         row = self._row(json.loads(data)["device_id"])
         self.assertEqual(row["kind"], "iphone")
         self.assertEqual(row["model"], "iPhone16,2")
-        self.assertEqual(row["client"], "Quiver Remote 1.0")
+        self.assertEqual(row["client"], "SWE Remote 1.0")
         self.assertEqual(row["os"], "iOS 18.5")
         self.assertEqual(row["node_name"], _PHONE["node_name"])
         self.assertEqual(row["paired_via"], "tailscale")

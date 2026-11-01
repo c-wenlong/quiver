@@ -1193,7 +1193,7 @@ def _cmd_ssh(flags: dict, json_view: bool) -> int:
                        f"({key.split()[0]})"))
     if not keyed:
         print(c("dim", "  no device has sent a key yet: open the console "
-                       "in Quiver Remote"))
+                       "in SWE Remote"))
     for row in keyed:
         if row["revoked"]:
             mark = c("red", "revoked")

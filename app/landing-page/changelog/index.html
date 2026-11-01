@@ -1171,6 +1171,19 @@ the new defaults domain. Sparkle cannot update across a bundle id
 change, so a Quiver.app install must move to SWE.app once, manually;
 the release checklist covers it.</p>
 </li>
+<li><p><strong>The iPhone app is SWE Remote now</strong>, with bundle id <code>com.swe.remote</code>
+(was <code>com.quiver.remote</code>), extensions <code>SWEShare</code> and <code>SWEWidget</code>, App
+Group <code>group.com.swe.remote</code> and Keychain group
+<code>com.swe.remote.shared</code>. The shared store's Info.plist key is
+<code>SWEKeychainGroup</code>. Deep links move to <code>swe://</code> for pair, session and
+issue routes, and <code>quiver://</code> links keep opening, so pair QRs from a
+hub that has not upgraded still work. Pair and device metadata sent
+to the hub names <code>SWE Remote</code>; the hub reads the old
+<code>QuiverRemote</code>/<code>Quiver Remote</code> tokens the same way, so a phone on the
+old build still pairs and reports iOS correctly. Because the App
+Group and Keychain group change, a Quiver Remote install does not
+carry its pairing over: pair again after updating.</p>
+</li>
 <li><p><strong>New icon and logo everywhere; the pixel-art mascot is gone.</strong> The
 Mac and iPhone app icons, the web app's icons, the landing site and
 the README now use the new mark: three arrowheads above <code>swe</code> on a

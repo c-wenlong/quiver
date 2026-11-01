@@ -306,7 +306,7 @@ def evaluate(f: Facts) -> dict:
             "address can't reach it.", {"kind": "pair", "label": "Pair a phone"}))
     else:
         steps.append(_step("phone.paired", t_paired, NEEDS_YOU,
-                           "Scan a code with the Quiver app, or open a link in a browser.",
+                           "Scan a code with the SWE app, or open a link in a browser.",
                            {"kind": "pair", "label": "Pair a phone"}))
 
     return {
