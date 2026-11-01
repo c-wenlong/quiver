@@ -71,7 +71,7 @@ Status words:
 | --- | --- | --- | --- | --- |
 | Menu bar | yes | - | - | Mac-only by design |
 | Widgets | yes | - | yes | iOS: a home screen widget (small, medium) with sessions waiting on you, sessions working and today's spend; no lock screen widget or Live Activity (#1442) |
-| Notifications | yes | - | - | Mac: limit resets and 90% crossings, and GitHub notification banners. iOS: the app has no notification code; the hub posts to ntfy (`remote/notify.py`) and the ntfy app delivers it. APNs planned |
+| Notifications | yes | - | - | Mac: limit resets and 90% crossings, GitHub notification banners, and service status banners (a model provider or agent platform starting and ending an incident, once per incident, off by default; [#528](https://github.com/c-wenlong/quiver/issues/528)). iOS: the app has no notification code; the hub posts to ntfy (`remote/notify.py`) and the ntfy app delivers it. APNs planned |
 | Service status | yes | yes | - | |
 | Settings | yes | yes | part | iOS: the hub chip menu holds switch hub, devices, Console, Refresh and Unpair; no notification settings |
 | Doctor | yes | yes | - | Mac: a Settings section; web: `#/doctor`, no sidebar entry. Findings carry `source` + `remedies`; only the web page renders them (source line, remedy rows, Fix-with-agent picker through `/v1/sessions`). Web Run also covers `undeclare` (drop a hook declaration) and `marketplace-drop` (drop missing marketplace entries), each file backed up first and managed files refused. Mac reads `fix`/`action` as before |

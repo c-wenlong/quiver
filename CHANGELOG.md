@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `provider_names`; the hub forwards only the slug to a satellite.
   A missing key or an undeclared slug is a 422. Part of
   [#526](https://github.com/c-wenlong/quiver/issues/526).
+- **Mac: service status banners.** With "Notify about service status"
+  on (Settings › Notifications, off by default), the Mac banners when a
+  model provider or agent platform starts an incident on its status
+  page, and once more when it is back to normal. Each incident banners
+  once: the same incident on the next poll, after a relaunch or after it
+  flaps is quiet, two incidents opening at once are two banners, and
+  scheduled maintenance never banners. Each page's first reading only
+  records what is already open. A click opens Service status.
+  Part of [#528](https://github.com/c-wenlong/quiver/issues/528).
 - **Launch providers declared per harness.** `harness.json` gains
   `capabilities.provider`: for each provider slug a harness takes at
   launch, the variables it reads for the key (filled from named
