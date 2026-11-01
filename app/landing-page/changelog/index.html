@@ -128,6 +128,15 @@ behind counts and uncommitted changes by primitive; both take
 <code>--json</code>, sync takes <code>--dry-run</code>. Part of
 <a href="https://github.com/c-wenlong/quiver/issues/525">#525</a>.</p>
 </li>
+<li><p><strong>Coding plans as launch providers for Claude Code.</strong> Every plan in
+Settings › Providers › Inference is a provider Claude Code can launch
+on, one slug per plan region (<code>glm-coding-plan-china</code>): the launch
+sets <code>ANTHROPIC_BASE_URL</code> to the plan's endpoint, the plan key from
+its own variable (never the pay-as-you-go one), and <code>ANTHROPIC_MODEL</code>
+to the plan's default model. <code>plan_providers.PLANS</code> ports the Mac
+app's <code>InferenceCatalog</code>, and a test fails when they drift. Closes
+<a href="https://github.com/c-wenlong/swe/issues/526">#526</a>.</p>
+</li>
 <li><p><strong>Provider menu on the launch sheets (Mac, web, iPhone).</strong> The
 new-session sheet shows a Provider menu beside Model: Harness default,
 or a provider whose key is set on the target machine and that the
@@ -136,7 +145,7 @@ harness takes (<code>providers_at_launch</code>, labelled from
 a machine whose agent is too old or has no keyed provider for that
 harness. Picking a provider turns an untouched Model menu to Harness
 default, since the recent models ran on other providers; a model you
-pick yourself is still sent. Part of <a href="https://github.com/c-wenlong/quiver/issues/526">#526</a>.</p>
+pick yourself is still sent. Part of <a href="https://github.com/c-wenlong/swe/issues/526">#526</a>.</p>
 </li>
 <li><p><strong>Doctor: Fix all on the Mac and web pages.</strong> The findings card gets
 a Fix all (N) button whenever some finding has a batch fix. It runs
