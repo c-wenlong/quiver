@@ -272,6 +272,30 @@ def read_keys(path: Path) -> dict[str, str]:
     return out
 
 
+def assigned_names(path: Path) -> set[str]:
+    """Every variable name the keys file assigns, readable or not
+    (``export A="$OTHER"`` too): what a launch with a provider strips
+    from the inherited environment, since a shell that sourced the file
+    may have handed any of them down. {} when there is no file. Raises
+    ValueError like ``read_keys``."""
+    from swe.providers import keyfile
+
+    if not path.exists() and not path.is_symlink():
+        return set()
+    if path.is_dir():
+        raise ValueError(f"{path} is a folder, not a keys file")
+    try:
+        keys, _data = keyfile.load(path)
+    except keyfile.KeyFileError as exc:
+        raise ValueError(exc.message) from None
+    names = set()
+    for line in keys.lines:
+        match = _ASSIGN_RE.match(line.strip(" \t"))
+        if match:
+            names.add(match.group(1))
+    return names
+
+
 _BARE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _ASSIGN_RE = re.compile(r"(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=")
 

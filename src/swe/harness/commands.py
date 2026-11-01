@@ -1541,12 +1541,14 @@ def _provider_env(name: str, provider: str, tools: dict,
     from swe.remote.provider_exec import build_env
 
     try:
-        keys = launch_provider.read_keys(launch_provider.keys_path())
+        path = launch_provider.keys_path()
+        keys = launch_provider.read_keys(path)
         note = launch_provider.provider_error(name, provider, tools, keys)
         if note:
             raise ValueError(note)
         spec = (launch_provider.capability(name, tools) or {})[provider]
-        env = build_env(dict(os.environ), spec, keys)
+        env = build_env(dict(os.environ), spec, keys,
+                        launch_provider.assigned_names(path))
     except ValueError as exc:
         print(c("red", f"  {exc}"))
         return None

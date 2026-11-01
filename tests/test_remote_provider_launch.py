@@ -80,6 +80,16 @@ class TestProviderExec(unittest.TestCase):
         file_names = set(launch_provider.read_keys(self.keys))
         self.assertEqual(file_names & set(env), {"GROQ_API_KEY"})
 
+    def test_names_with_unreadable_values_are_dropped_too(self):
+        # A shell that sourced this file resolved OPENAI_API_KEY; we
+        # can't read its value, but the name still goes.
+        _write_keys(self.home, f'export GROQ_API_KEY="{GROQ}"\n'
+                               'export OPENAI_API_KEY="$OTHER"\n')
+        out = self._run(extra_env={"OPENAI_API_KEY": OPENAI})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertNotIn("OPENAI_API_KEY", out.stdout)
+        self.assertIn(f"GROQ_API_KEY={GROQ}", out.stdout)
+
     def test_missing_key_exits_without_the_command(self):
         _write_keys(self.home, f'export OPENAI_API_KEY="{OPENAI}"\n')
         out = self._run()
