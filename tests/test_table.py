@@ -1,4 +1,4 @@
-"""Unit tests for the declarative table renderer in ``quiver.table``.
+"""Unit tests for the declarative table renderer in ``swe.table``.
 
 Locks in:
 - Width computation under each fit mode (fixed/content/bounded).
@@ -12,8 +12,8 @@ Locks in:
 
 import unittest
 
-from quiver.console import c, strip_ansi, visible_len
-from quiver.table import (
+from swe.console import c, strip_ansi, visible_len
+from swe.table import (
     Column,
     Row,
     Table,

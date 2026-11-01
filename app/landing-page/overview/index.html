@@ -266,7 +266,7 @@ swe --help
 <h3 id="optional-mcp-history-server"><a class="anchor" href="#optional-mcp-history-server"></a>Optional: MCP history server</h3>
 <p>Exposes recent sessions as an MCP tool (requires the <code>server</code> extra):</p>
 <pre><code class="language-bash">pip install -e &quot;.[server]&quot;
-python -m quiver.mcp_server
+python -m swe.mcp_server
 </code></pre>
 <h2 id="quick-start"><a class="anchor" href="#quick-start"></a>Quick start</h2>
 <pre><code class="language-bash">swe setup                    # six-stage interactive onboarding wizard
@@ -911,15 +911,15 @@ swe list                  # verify the feature works end-to-end
 <ol>
 <li>✅ Unit tests pass: <code>HOME=&quot;$(mktemp -d)&quot; python3 -m unittest discover -s tests -p 'test_*.py'</code></li>
 <li>✅ Package reinstalled: <code>pip install -e .</code></li>
-<li>✅ Verified with real <code>swe</code> command (not just <code>PYTHONPATH=src python -m quiver.cli</code>)</li>
+<li>✅ Verified with real <code>swe</code> command (not just <code>PYTHONPATH=src python -m swe.cli</code>)</li>
 <li>✅ PR opened with clear description</li>
 </ol>
 <h2 id="renaming"><a class="anchor" href="#renaming"></a>Renaming</h2>
 <p>quiver centralizes naming so you can change it:</p>
 <ol>
-<li><strong>CLI command</strong> — <code>CLI_NAME</code> in <code>src/quiver/__init__.py</code> and <code>[project.scripts]</code> in <code>pyproject.toml</code>, then reinstall</li>
-<li><strong>Data dir</strong> — <code>DATA_DIR_NAME</code> in <code>src/quiver/__init__.py</code>; the root becomes <code>~/.&lt;name&gt;</code></li>
-<li><strong>Package name</strong> — rename <code>src/quiver/</code>, update imports and <code>pyproject.toml</code></li>
+<li><strong>CLI command</strong> — <code>CLI_NAME</code> in <code>src/swe/__init__.py</code> and <code>[project.scripts]</code> in <code>pyproject.toml</code>, then reinstall</li>
+<li><strong>Data dir</strong> — <code>DATA_DIR_NAME</code> in <code>src/swe/__init__.py</code>; the root becomes <code>~/.&lt;name&gt;</code></li>
+<li><strong>Package name</strong> — rename <code>src/swe/</code>, update imports and <code>pyproject.toml</code></li>
 </ol>
 <h2 id="contributing"><a class="anchor" href="#contributing"></a>Contributing</h2>
 <p>Issues and pull requests are welcome. <a href="../contributing/">CONTRIBUTING.md</a> covers the

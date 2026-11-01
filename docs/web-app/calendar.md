@@ -4,10 +4,10 @@ The Mac app's Calendar page (`CalendarPage.swift`, model in
 `QuiverCore/Calendar/`): when each harness was actually working on the
 hub machine, drawn as blocks of activity per project on a day grid.
 
-Files: `src/quiver/webapp/pages/calendar.py` (data),
-`src/quiver/webapp/pages/_activity.py` (the session-file and Cursor
+Files: `src/swe/webapp/pages/calendar.py` (data),
+`src/swe/webapp/pages/_activity.py` (the session-file and Cursor
 app sources),
-`src/quiver/webapp/static/pages/calendar.js` and `calendar.css` (page),
+`src/swe/webapp/static/pages/calendar.js` and `calendar.css` (page),
 `LedgerStore.activity_events` and `activity_session_stats` (the store
 reads it adds), `tests/test_webapp_calendar.py` and
 `tests/test_webapp_calendar_sources.py`.

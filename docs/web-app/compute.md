@@ -6,9 +6,9 @@ macOS (libproc, IOKit, the SMC); the hub is usually Linux, so the web page
 keeps the Mac page's layout and meaning and reads Linux's own sources.
 Stdlib only.
 
-Code: `src/quiver/webapp/compute.py` (sampler, attribution, meters,
-history), `src/quiver/webapp/pages/compute.py` (the route),
-`src/quiver/webapp/static/pages/compute.{js,css}` (the page).
+Code: `src/swe/webapp/compute.py` (sampler, attribution, meters,
+history), `src/swe/webapp/pages/compute.py` (the route),
+`src/swe/webapp/static/pages/compute.{js,css}` (the page).
 
 ## What it shows
 

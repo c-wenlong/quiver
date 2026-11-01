@@ -9,9 +9,9 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.init import hub as hub_repo
-from quiver.setup import commands as sc
-from quiver.setup.wizard import _stage_hub, run_setup_wizard
+from swe.init import hub as hub_repo
+from swe.setup import commands as sc
+from swe.setup.wizard import _stage_hub, run_setup_wizard
 from tests.test_init_hub import _hub_repo
 from tests.test_setup_commands import _SetupHarness
 
@@ -35,7 +35,7 @@ class _HubHarness(_SetupHarness):
     def setUp(self):
         super().setUp()
         # Registering marketplaces runs each harness's own CLI.
-        patcher = patch("quiver.init.hub.register_marketplaces", return_value=[])
+        patcher = patch("swe.init.hub.register_marketplaces", return_value=[])
         self.register = patcher.start()
         self.addCleanup(patcher.stop)
         tmp = tempfile.TemporaryDirectory()
@@ -229,12 +229,12 @@ class WizardHubStageTest(unittest.TestCase):
         def stage(key):
             def run(number, total, **_kwargs):
                 seen.append((key, number, total))
-                from quiver.setup.wizard import StageOutcome
+                from swe.setup.wizard import StageOutcome
                 return StageOutcome(key, key, "ready", "ok")
             return run
 
         keys = ("hub", "harnesses", "providers", "mcp", "skills", "report", "check")
-        with patch.dict("quiver.setup.wizard._STAGES", {k: stage(k) for k in keys}, clear=True), \
+        with patch.dict("swe.setup.wizard._STAGES", {k: stage(k) for k in keys}, clear=True), \
                 redirect_stdout(io.StringIO()):
             run_setup_wizard(input_fn=lambda _p: "", home=self.home)
             self.assertEqual(seen[0], ("hub", 1, 7))

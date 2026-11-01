@@ -6,7 +6,7 @@ benchmarks; this one shows only what the hub can show honestly from its
 own data: the models in its usage logs, the lab behind each, the
 harnesses that ran them, their list price and the tokens.
 
-Files: `src/quiver/webapp/pages/models.py`, `static/pages/models.js` and
+Files: `src/swe/webapp/pages/models.py`, `static/pages/models.js` and
 `models.css`. The brand table (`pages/_brands.py`) and the usage slices
 come from the Pricing page's modules.
 

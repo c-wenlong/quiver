@@ -10,7 +10,7 @@ styled run closes the run and re-opens it on the next line.
 import textwrap
 import unittest
 
-from quiver.console import (
+from swe.console import (
     COLORS, c, cell_len, cellpad, fill_ansi, lpad, sanitize, strip_ansi,
     tilde, visible_len, wrap_ansi,
 )
@@ -251,7 +251,7 @@ class SanitizeTest(unittest.TestCase):
         self.assertEqual(sanitize("x\x00y\x9bz"), "x y z")
 
     def test_sanitize_document_keeps_layout_and_fuses_controls(self):
-        from quiver.console import sanitize_document
+        from swe.console import sanitize_document
 
         self.assertEqual(sanitize_document("a\nb\tc"), "a\nb\tc")
         # \r becomes a real newline rather than fusing words; a CRLF pair

@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.harness import doctor_fix
-from quiver.harness.doctor_fix import FixRefused, run_fixes
+from swe.harness import doctor_fix
+from swe.harness.doctor_fix import FixRefused, run_fixes
 
 try:  # `unittest discover -s tests` puts tests/ itself on sys.path
     from _tempdir import temp_dir
@@ -190,7 +190,7 @@ class OneFindingTest(unittest.TestCase):
 
     def test_an_install_without_its_method_is_refused_not_run(self):
         f = finding("off-path", "codex", "install", harness="codex")
-        with mock.patch("quiver.harness.commands.install_harness") as install:
+        with mock.patch("swe.harness.commands.install_harness") as install:
             result = run_fixes(Path("/h"), lambda: [f], check="off-path", message="codex")
         install.assert_not_called()
         self.assertIn("names no harness or method", result["ran"][0]["error"])
@@ -203,7 +203,7 @@ def run_swe_on(home: Path, path: str, *args: str):
     env = {k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")}
     env.update({"HOME": str(home), "PATH": path, "NO_COLOR": "1",
                 "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")})
-    return subprocess.run([sys.executable, "-m", "quiver.cli", *args],
+    return subprocess.run([sys.executable, "-m", "swe.cli", *args],
                           capture_output=True, text=True, env=env, timeout=60)
 
 
@@ -280,7 +280,7 @@ class CliTest(unittest.TestCase):
 
 class RunnerParityTest(unittest.TestCase):
     def test_the_web_page_runs_every_action(self):
-        from quiver.webapp.pages import doctor as page
+        from swe.webapp.pages import doctor as page
 
         self.assertEqual(set(page.RUNNERS), set(doctor_fix.RUNNERS))
         self.assertEqual(set(doctor_fix.ORDER), set(doctor_fix.RUNNERS))

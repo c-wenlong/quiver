@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.parsers import parse_pi
+from swe.sessions.parsers import parse_pi
 
 
 def _session_record():
@@ -48,7 +48,7 @@ class ParsePiTitleSourceTest(unittest.TestCase):
                     return str(sessions_root) + "/"
                 return os.path.expanduser(path)
 
-            with patch("quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
+            with patch("swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
                 sessions = parse_pi()
         self.assertEqual(len(sessions), 1)
         return sessions[0]
@@ -141,7 +141,7 @@ class ParsePiSessionsPerFileTest(unittest.TestCase):
                     return str(sessions_root) + "/"
                 return os.path.expanduser(path)
 
-            with patch("quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
+            with patch("swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
                 return parse_pi()
 
     def test_one_session_per_transcript_file(self):

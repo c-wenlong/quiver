@@ -33,7 +33,7 @@ just risk a failed run; it risks shipping a build whose name does not match
 its release.
 
 - [ ] **The version is bumped in two places.** `project.version` in
-  `pyproject.toml` and `__version__` in `src/quiver/__init__.py` must both
+  `pyproject.toml` and `__version__` in `src/swe/__init__.py` must both
   say the release version. The workflow hard-fails if the pushed tag does
   not equal `pyproject.toml`'s version, and `swe version` reads
   `__init__.py`, so a mismatch ships a CLI that lies about its own version.

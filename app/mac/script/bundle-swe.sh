@@ -7,7 +7,8 @@
 #
 #   Contents/Resources/swe/bin/swe       a shell shim, what the app runs
 #   Contents/Resources/swe/python/       python-build-standalone CPython
-#     lib/python3.13/site-packages/quiver   this checkout's src/quiver
+#     lib/python3.13/site-packages/swe      this checkout's src/swe
+#     lib/python3.13/site-packages/quiver   this checkout's src/quiver shim
 #
 # swe needs nothing outside the standard library, so the package is copied
 # in as source rather than pip-installed: no build backend, no network
@@ -89,7 +90,7 @@ find "$py" -name '__pycache__' -type d -prune -exec rm -rf {} +
 # interpreter statically, and under the app's signature loading an
 # outside dylib (e.g. /usr/lib/libcrypto.dylib) aborts the process, so a
 # libcrypto that codesign then signs with the app goes in lib/, the only
-# place _load_libcrypto looks when QUIVER_BUNDLED_PYTHON is set.
+# place _load_libcrypto looks when SWE_BUNDLED_PYTHON is set.
 libcrypto=""
 # Arch-ordered defaults: an Intel Python under Rosetta needs /usr/local's
 # library, an arm64 one needs /opt/homebrew's; the wrong arch's dylib
@@ -121,8 +122,9 @@ fi
 # The package, without anything a previous run left behind.
 site="$stdlib/site-packages"
 mkdir -p "$site"
+cp -R "$repo/src/swe" "$site/swe"
 cp -R "$repo/src/quiver" "$site/quiver"
-find "$site/quiver" -name '__pycache__' -type d -prune -exec rm -rf {} +
+find "$site/swe" "$site/quiver" -name '__pycache__' -type d -prune -exec rm -rf {} +
 
 # unchecked-hash: the .pyc files are trusted as they are, so nothing
 # compares source timestamps or rewrites them at run time.
@@ -133,8 +135,8 @@ cat > "$dest/bin/swe" <<'SHIM'
 # swe as bundled with Quiver.app. -I keeps the user's PYTHONPATH and site
 # packages out; -B keeps Python from writing into the signed bundle.
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
-QUIVER_BUNDLED_PYTHON=1 exec "$root/python/bin/python3" -I -B -c \
-  'import sys; sys.argv[0] = "swe"; from quiver.cli import main; sys.exit(main())' "$@"
+SWE_BUNDLED_PYTHON=1 exec "$root/python/bin/python3" -I -B -c \
+  'import sys; sys.argv[0] = "swe"; from swe.cli import main; sys.exit(main())' "$@"
 SHIM
 chmod 755 "$dest/bin/swe"
 
@@ -149,9 +151,9 @@ if ! out="$(HOME="$probe_home" "$dest/bin/swe" version --json 2>&1)" \
 fi
 # When a libcrypto was bundled, the decryptor must actually load it —
 # loading the wrong one crashes this interpreter, so probe now.
-if [ -n "$libcrypto" ] && ! QUIVER_BUNDLED_PYTHON=1 "$py/bin/python3" -I -B -c \
+if [ -n "$libcrypto" ] && ! SWE_BUNDLED_PYTHON=1 "$py/bin/python3" -I -B -c \
     'import sys; sys.path.insert(0, sys.argv[1]); \
-     from quiver.harness.rate_limits import _load_libcrypto; \
+     from swe.harness.rate_limits import _load_libcrypto; \
      sys.exit(0 if _load_libcrypto() is not None else 1)' "$site"; then
   echo "bundle-swe: the bundled libcrypto did not load" >&2
   exit 1

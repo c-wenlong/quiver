@@ -254,7 +254,7 @@ enum McpRedaction {
     /// Words that mark a secret anywhere in a flag or key name, compared
     /// without dashes, underscores or case: `--api-key`, `--apiKey`,
     /// `--keyfile`, `SESSION_COOKIE`. The same words as swe's
-    /// `_SECRET_FLAG_RE` (src/quiver/mcp/secrets.py), so the app hides
+    /// `_SECRET_FLAG_RE` (src/swe/mcp/secrets.py), so the app hides
     /// whatever `swe mcp` hides.
     static let secretNameParts = ["key", "token", "secret", "passw", "bearer", "credential", "cookie",
                                   "signature", "authorization", "authorisation"]

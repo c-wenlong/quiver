@@ -12,8 +12,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.init import account_mcp, accounts
-from quiver.init import commands as init_commands
+from swe.init import account_mcp, accounts
+from swe.init import commands as init_commands
 
 from tests._tempdir import temp_dir
 
@@ -121,7 +121,7 @@ def _codex(home: Path) -> dict:
 
 def _without_servers(text: str) -> str:
     """The .claude.json text with the top-level mcpServers value blanked."""
-    from quiver.mcp.cli import _jsonc_key_span
+    from swe.mcp.cli import _jsonc_key_span
 
     start, end = _jsonc_key_span(text, "mcpServers")
     return text[:start] + text[end:]

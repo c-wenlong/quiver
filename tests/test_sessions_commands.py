@@ -1,5 +1,5 @@
 """Tests for the migrations of ``cmd_models`` and ``cmd_session`` to
-``quiver.table.Table``.
+``swe.table.Table``.
 
 Both handlers used hand-rolled ``f"{...:<{w}}"`` string interpolation
 with magic ``+9`` width offsets that compensated for ANSI-overhead in
@@ -23,8 +23,8 @@ from contextlib import redirect_stdout
 from dataclasses import dataclass
 from unittest.mock import patch
 
-from quiver.console import c, strip_ansi, visible_len
-from quiver.sessions.commands import cmd_models, cmd_session
+from swe.console import c, strip_ansi, visible_len
+from swe.sessions.commands import cmd_models, cmd_session
 
 
 # ---------------------------------------------------------------------------
@@ -140,11 +140,11 @@ class CmdModelsMigrationTest(unittest.TestCase):
         # but we still patch it so tests are deterministic.
         return [
             patch(
-                "quiver.sessions.commands.collect_model_usage",
+                "swe.sessions.commands.collect_model_usage",
                 return_value=_models_fixture(),
             ),
             patch(
-                "quiver.sessions.commands.classify_provider",
+                "swe.sessions.commands.classify_provider",
                 side_effect=lambda m: m.split("/", 1)[0] if "/" in m else m,
             ),
         ]
@@ -231,7 +231,7 @@ class CmdModelsMigrationTest(unittest.TestCase):
 
     def test_no_data_renders_empty_notice(self):
         patch(
-            "quiver.sessions.commands.collect_model_usage",
+            "swe.sessions.commands.collect_model_usage",
             return_value={},
         ).start()
         self.addCleanup(patch.stopall)
@@ -285,11 +285,11 @@ def _run_cmd_session(args):
     patches = [
         patch.dict(os.environ, {"HOME": _FIXTURE_HOME}),
         patch(
-            "quiver.sessions.commands.get_all_sessions",
+            "swe.sessions.commands.get_all_sessions",
             return_value=list(sessions),
         ),
         patch(
-            "quiver.sessions.commands.time.time",
+            "swe.sessions.commands.time.time",
             return_value=now_ms / 1000.0,
         ),
         patch("os.chdir"),             # don't actually chdir from tests
@@ -361,9 +361,9 @@ class CmdSessionMigrationTest(unittest.TestCase):
         # ``trust_cell_width=True`` means the Table doesn't re-pad, so
         # we manually pad here. Pin the visible length per digit width
         # so column-grid alignment is preserved.
-        from quiver.sessions.commands import cmd_session as _cs
+        from swe.sessions.commands import cmd_session as _cs
         # Inject our fixture + a deterministic now via the patches.
-        from quiver.console import c as _c
+        from swe.console import c as _c
         for digit_idx in (1, 12):
             bold = _c("bold", str(digit_idx))
             cell = f"[{bold}]" + " " * max(0, 4 - len(str(digit_idx)) - 2)

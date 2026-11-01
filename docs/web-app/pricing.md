@@ -5,7 +5,7 @@ every model the hub's ledger saw in the period, grouped by provider, with the
 price its name resolves to, where that price came from, and its tokens. A
 row opens the app's price form, which saves your own price or removes it.
 
-Files: `src/quiver/webapp/pages/pricing.py`, `src/quiver/webapp/pages/_brands.py`
+Files: `src/swe/webapp/pages/pricing.py`, `src/swe/webapp/pages/_brands.py`
 (the brand table, shared with Models), `static/pages/pricing.js` and `pricing.css`.
 
 ## What it shows

@@ -5,7 +5,7 @@ from contextlib import redirect_stdout
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
-from quiver import bug
+from swe import bug
 
 
 def _query(url):

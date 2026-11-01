@@ -13,11 +13,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.ledger.models import LedgerRecord, UsageEvent
-from quiver.ledger.store import LedgerStore
-from quiver.webapp import sessions as sessions_mod
-from quiver.webapp.pages import _activity
-from quiver.webapp.pages import calendar as cal
+from swe.ledger.models import LedgerRecord, UsageEvent
+from swe.ledger.store import LedgerStore
+from swe.webapp import sessions as sessions_mod
+from swe.webapp.pages import _activity
+from swe.webapp.pages import calendar as cal
 
 from tests.test_remote_hub import HubBase
 

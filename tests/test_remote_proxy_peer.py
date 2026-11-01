@@ -20,8 +20,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import hub as hub_mod
-from quiver.remote import peer
+from swe.remote import hub as hub_mod
+from swe.remote import peer
 
 from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server, _session

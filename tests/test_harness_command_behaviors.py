@@ -9,8 +9,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from quiver.harness.commands import cmd_doctor, cmd_install, cmd_remove, cmd_use
-from quiver.harness.path_health import NodeEnv, OffPathHit
+from swe.harness.commands import cmd_doctor, cmd_install, cmd_remove, cmd_use
+from swe.harness.path_health import NodeEnv, OffPathHit
 
 
 class HarnessProcessCommandTest(unittest.TestCase):
@@ -20,15 +20,15 @@ class HarnessProcessCommandTest(unittest.TestCase):
         # install listing would change with what this machine has
         # installed. Tests that need a bundle patch them again inside.
         for name in ("installed_app", "installed_cask"):
-            p = patch(f"quiver.harness.installers.{name}", return_value=None)
+            p = patch(f"swe.harness.installers.{name}", return_value=None)
             p.start()
             self.addCleanup(p.stop)
 
     def test_use_preserves_extra_argument_boundaries(self):
         tools = {"claude": {"command": "claude", "aliases": ["cc"]}}
-        with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
-            "quiver.harness.commands.is_installed", return_value=True
-        ), patch("quiver.harness.commands.os.execvp") as execvp:
+        with patch("swe.harness.commands.load_registry", return_value=tools), patch(
+            "swe.harness.commands.is_installed", return_value=True
+        ), patch("swe.harness.commands.os.execvp") as execvp:
             cmd_use(["cc", "--model", "claude sonnet"])
 
         execvp.assert_called_once_with(
@@ -37,20 +37,20 @@ class HarnessProcessCommandTest(unittest.TestCase):
 
     def test_use_does_not_exec_missing_binary(self):
         tools = {"claude": {"command": "claude", "aliases": []}}
-        with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
-            "quiver.harness.commands.is_installed", return_value=False
-        ), patch("quiver.harness.commands.os.execvp") as execvp:
+        with patch("swe.harness.commands.load_registry", return_value=tools), patch(
+            "swe.harness.commands.is_installed", return_value=False
+        ), patch("swe.harness.commands.os.execvp") as execvp:
             cmd_use(["claude"])
 
         execvp.assert_not_called()
 
     def test_failed_install_does_not_update_registry(self):
         with patch(
-            "quiver.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"
-        ), patch("quiver.harness.commands.load_registry", return_value={}), patch(
-            "quiver.harness.commands.subprocess.run",
+            "swe.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"
+        ), patch("swe.harness.commands.load_registry", return_value={}), patch(
+            "swe.harness.commands.subprocess.run",
             return_value=subprocess.CompletedProcess([], 2),
-        ), patch("quiver.harness.commands.save_registry") as save:
+        ), patch("swe.harness.commands.save_registry") as save:
             result = cmd_install(["demo", "--package=demo-package"])
 
         self.assertEqual(result, 2)
@@ -58,15 +58,15 @@ class HarnessProcessCommandTest(unittest.TestCase):
 
     def test_successful_install_registers_resolved_command(self):
         with patch(
-            "quiver.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"
-        ), patch("quiver.harness.commands.load_registry", return_value={}), patch(
-            "quiver.harness.commands.subprocess.run",
+            "swe.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"
+        ), patch("swe.harness.commands.load_registry", return_value={}), patch(
+            "swe.harness.commands.subprocess.run",
             return_value=subprocess.CompletedProcess([], 0),
         ) as run, patch(
-            "quiver.harness.commands.shutil.which", return_value="/usr/local/bin/demo"
+            "swe.harness.commands.shutil.which", return_value="/usr/local/bin/demo"
         ), patch(
-            "quiver.harness.tools.live_version", return_value="1.2.3"
-        ), patch("quiver.harness.commands.save_registry") as save:
+            "swe.harness.tools.live_version", return_value="1.2.3"
+        ), patch("swe.harness.commands.save_registry") as save:
             result = cmd_install(
                 ["demo", "--package=@scope/demo", "--command=demo-bin"]
             )
@@ -85,15 +85,15 @@ class HarnessProcessCommandTest(unittest.TestCase):
     def test_reinstall_keeps_the_display_name(self):
         existing = {"demo": {"command": "demo", "display_name": "Demo Code"}}
         with patch(
-            "quiver.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"
-        ), patch("quiver.harness.commands.load_registry", return_value=existing), patch(
-            "quiver.harness.commands.subprocess.run",
+            "swe.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"
+        ), patch("swe.harness.commands.load_registry", return_value=existing), patch(
+            "swe.harness.commands.subprocess.run",
             return_value=subprocess.CompletedProcess([], 0),
         ), patch(
-            "quiver.harness.commands.shutil.which", return_value="/usr/local/bin/demo"
+            "swe.harness.commands.shutil.which", return_value="/usr/local/bin/demo"
         ), patch(
-            "quiver.harness.tools.live_version", return_value="1.2.3"
-        ), patch("quiver.harness.commands.save_registry") as save:
+            "swe.harness.tools.live_version", return_value="1.2.3"
+        ), patch("swe.harness.commands.save_registry") as save:
             result = cmd_install(["demo", "--package=@scope/demo"])
 
         self.assertEqual(result, 0)
@@ -101,10 +101,10 @@ class HarnessProcessCommandTest(unittest.TestCase):
 
     def test_install_dry_run_has_no_process_or_registry_write(self):
         with patch(
-            "quiver.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"
-        ), patch("quiver.harness.commands.load_registry", return_value={}), patch(
-            "quiver.harness.commands.subprocess.run"
-        ) as run, patch("quiver.harness.commands.save_registry") as save:
+            "swe.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"
+        ), patch("swe.harness.commands.load_registry", return_value={}), patch(
+            "swe.harness.commands.subprocess.run"
+        ) as run, patch("swe.harness.commands.save_registry") as save:
             result = cmd_install(["demo", "--package=demo-package", "--dry-run"])
 
         self.assertEqual(result, 0)
@@ -116,19 +116,19 @@ class HarnessProcessCommandTest(unittest.TestCase):
         which = which if which is not None else lambda name: "/fake/bin/" + name
         out = io.StringIO()
         with patch(
-            "quiver.harness.path_health.preferred_npm_bin", return_value=npm
+            "swe.harness.path_health.preferred_npm_bin", return_value=npm
         ), patch(
-            "quiver.harness.commands.load_registry", return_value=tools or {}
+            "swe.harness.commands.load_registry", return_value=tools or {}
         ), patch(
-            "quiver.harness.commands.load_registry_readonly", return_value=tools or {}
+            "swe.harness.commands.load_registry_readonly", return_value=tools or {}
         ), patch(
-            "quiver.harness.commands.shutil.which", side_effect=which
+            "swe.harness.commands.shutil.which", side_effect=which
         ), patch(
-            "quiver.harness.commands.subprocess.run",
+            "swe.harness.commands.subprocess.run",
             return_value=subprocess.CompletedProcess([], 0),
         ) as run, patch(
-            "quiver.harness.tools.live_version", return_value="1.0.0"
-        ), patch("quiver.harness.commands.save_registry") as save, redirect_stdout(out):
+            "swe.harness.tools.live_version", return_value="1.0.0"
+        ), patch("swe.harness.commands.save_registry") as save, redirect_stdout(out):
             code = cmd_install(argv)
         return code, out.getvalue(), run, save
 
@@ -301,9 +301,9 @@ class HarnessProcessCommandTest(unittest.TestCase):
     def test_install_json_gui_app_reads_the_bundle_and_caskroom(self):
         # zcode is a GUI app: no PATH binary, so evidence is the .app
         # bundle, and the Caskroom record names the remover.
-        with patch("quiver.harness.installers.installed_app",
+        with patch("swe.harness.installers.installed_app",
                    return_value="/Applications/ZCode.app"), patch(
-                "quiver.harness.installers.installed_cask",
+                "swe.harness.installers.installed_cask",
                 return_value="/opt/homebrew/Caskroom/zcode"):
             code, out, run, save = self._run_install(
                 ["zcode", "--json"], which=lambda name: None)
@@ -323,9 +323,9 @@ class HarnessProcessCommandTest(unittest.TestCase):
         # IDE's bundle on disk must not mark its CLI installed. The row stays
         # installable, reports the app, and the Caskroom record still names
         # the remover brew owns.
-        with patch("quiver.harness.installers.installed_app",
+        with patch("swe.harness.installers.installed_app",
                    return_value="/Applications/Antigravity.app"), patch(
-                "quiver.harness.installers.installed_cask",
+                "swe.harness.installers.installed_cask",
                 return_value="/opt/homebrew/Caskroom/antigravity"):
             code, out, run, save = self._run_install(
                 ["antigravity", "--json"], which=lambda name: None)
@@ -345,8 +345,8 @@ class HarnessProcessCommandTest(unittest.TestCase):
         def which(name):
             return npm_bin if name == "codex" else None
 
-        with patch("quiver.harness.installers.installed_app", return_value=None), \
-                patch("quiver.harness.installers.installed_cask",
+        with patch("swe.harness.installers.installed_app", return_value=None), \
+                patch("swe.harness.installers.installed_cask",
                       return_value="/opt/homebrew/Caskroom/codex"):
             code, out, run, save = self._run_install(
                 ["codex", "--json"], which=which)
@@ -359,9 +359,9 @@ class HarnessProcessCommandTest(unittest.TestCase):
     def test_install_json_gui_app_without_caskroom_has_no_uninstall(self):
         # A dmg install leaves no brew record: the sheet gets the website,
         # and no remover rather than a guessed one.
-        with patch("quiver.harness.installers.installed_app",
+        with patch("swe.harness.installers.installed_app",
                    return_value="/Applications/ZCode.app"), patch(
-                "quiver.harness.installers.installed_cask", return_value=None):
+                "swe.harness.installers.installed_cask", return_value=None):
             code, out, run, save = self._run_install(
                 ["zcode", "--json"], which=lambda name: None)
 
@@ -381,9 +381,9 @@ class HarnessProcessCommandTest(unittest.TestCase):
         self.assertEqual(harness["website"], "https://kiro.dev")
 
     def test_install_listing_notes_an_installed_gui_app(self):
-        with patch("quiver.harness.installers.installed_app",
+        with patch("swe.harness.installers.installed_app",
                    return_value="/Applications/ZCode.app"), patch(
-                "quiver.harness.installers.installed_cask", return_value=None):
+                "swe.harness.installers.installed_cask", return_value=None):
             code, out, run, save = self._run_install(
                 ["zcode"], which=lambda name: None)
 
@@ -395,9 +395,9 @@ class HarnessProcessCommandTest(unittest.TestCase):
         def which(name):
             return "/usr/bin/brew" if name == "brew" else None
 
-        with patch("quiver.harness.installers.installed_app",
+        with patch("swe.harness.installers.installed_app",
                    return_value="/Applications/ZCode.app"), patch(
-                "quiver.harness.installers.installed_cask", return_value=None):
+                "swe.harness.installers.installed_cask", return_value=None):
             code, out, run, save = self._run_install(["zcode", "--via=cask"],
                                                      which=which)
 
@@ -412,7 +412,7 @@ class HarnessProcessCommandTest(unittest.TestCase):
         code, out, run, save = self._run_install(["--json"])
 
         self.assertEqual(code, 0)
-        from quiver.harness.installers import INSTALLERS
+        from swe.harness.installers import INSTALLERS
         doc = json.loads(out)
         self.assertEqual([h["name"] for h in doc["data"]["harnesses"]],
                          sorted(INSTALLERS))
@@ -421,7 +421,7 @@ class HarnessProcessCommandTest(unittest.TestCase):
 
     def test_install_json_rejects_run_flags(self):
         err = io.StringIO()
-        with patch("quiver.harness.commands.load_registry", return_value={}),                 redirect_stderr(err):
+        with patch("swe.harness.commands.load_registry", return_value={}),                 redirect_stderr(err):
             code = cmd_install(["gemini", "--json", "--via=npm"])
 
         self.assertEqual(code, 1)
@@ -444,12 +444,12 @@ class HarnessProcessCommandTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             missing = Path(tmp) / "config" / "harness.json"
             legacy = Path(tmp) / "config" / "tools.json"
-            with patch("quiver.harness.registry.HARNESS_FILE", missing), patch(
-                "quiver.harness.registry.TOOLS_FILE", legacy
+            with patch("swe.harness.registry.HARNESS_FILE", missing), patch(
+                "swe.harness.registry.TOOLS_FILE", legacy
             ), patch(
-                "quiver.harness.commands.shutil.which", return_value=None
-            ), patch("quiver.harness.commands.subprocess.run") as run, patch(
-                "quiver.harness.commands.save_registry") as save:
+                "swe.harness.commands.shutil.which", return_value=None
+            ), patch("swe.harness.commands.subprocess.run") as run, patch(
+                "swe.harness.commands.save_registry") as save:
                 out = io.StringIO()
                 with redirect_stdout(out):
                     self.assertEqual(cmd_install(["gemini"]), 0)
@@ -467,12 +467,12 @@ class HarnessProcessCommandTest(unittest.TestCase):
             legacy.parent.mkdir(parents=True)
             legacy.write_text(json.dumps(
                 {"claude": {"command": "claude-custom", "aliases": ["cc"]}}))
-            with patch("quiver.harness.registry.HARNESS_FILE", missing), patch(
-                "quiver.harness.registry.TOOLS_FILE", legacy
+            with patch("swe.harness.registry.HARNESS_FILE", missing), patch(
+                "swe.harness.registry.TOOLS_FILE", legacy
             ), patch(
-                "quiver.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"
-            ), patch("quiver.harness.commands.subprocess.run") as run, patch(
-                "quiver.harness.commands.save_registry") as save:
+                "swe.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"
+            ), patch("swe.harness.commands.subprocess.run") as run, patch(
+                "swe.harness.commands.save_registry") as save:
                 out = io.StringIO()
                 with redirect_stdout(out):
                     code = cmd_install(["cc", "--via=npm", "--dry-run"])
@@ -487,7 +487,7 @@ class HarnessProcessCommandTest(unittest.TestCase):
 
     def test_install_json_unknown_name_errors(self):
         err = io.StringIO()
-        with patch("quiver.harness.commands.load_registry", return_value={}),                 redirect_stderr(err):
+        with patch("swe.harness.commands.load_registry", return_value={}),                 redirect_stderr(err):
             code = cmd_install(["nosuch", "--json"])
 
         self.assertEqual(code, 1)
@@ -498,8 +498,8 @@ class HarnessProcessCommandTest(unittest.TestCase):
             "claude": {"command": "claude", "aliases": ["cc"]},
             "codex": {"command": "codex", "aliases": []},
         }
-        with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value=tools), patch(
+            "swe.harness.commands.save_registry"
         ) as save:
             cmd_remove(["cc"])
 
@@ -510,13 +510,13 @@ class HarnessDoctorCommandTest(unittest.TestCase):
     def _run_doctor(self, env, orphans):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             "os.environ", {"NVM_DIR": str(Path(tmp) / "missing-nvm")}, clear=False
-        ), patch("quiver.harness.commands.load_registry", return_value={}), patch(
-            "quiver.harness.path_health.probe_node_env", return_value=env
+        ), patch("swe.harness.commands.load_registry", return_value={}), patch(
+            "swe.harness.path_health.probe_node_env", return_value=env
         ), patch(
-            "quiver.harness.path_health.preferred_npm_bin", return_value=env.npm
-        ), patch("quiver.harness.path_health.nvm_bin_dirs", return_value=[]), patch(
-            "quiver.harness.path_health.find_off_path_tools", return_value=orphans
-        ), patch("quiver.harness.commands.shutil.which", return_value=env.npm):
+            "swe.harness.path_health.preferred_npm_bin", return_value=env.npm
+        ), patch("swe.harness.path_health.nvm_bin_dirs", return_value=[]), patch(
+            "swe.harness.path_health.find_off_path_tools", return_value=orphans
+        ), patch("swe.harness.commands.shutil.which", return_value=env.npm):
             output = io.StringIO()
             with redirect_stdout(output):
                 result = cmd_doctor([])
@@ -552,7 +552,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
     """``swe harness usage <devin|cursor> --account-dir=<dir>``."""
 
     def _run(self, args):
-        from quiver.harness.commands import cmd_harness_usage
+        from swe.harness.commands import cmd_harness_usage
 
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -580,14 +580,14 @@ class HarnessUsageCommandTest(unittest.TestCase):
         self.assertEqual(out, "")
 
     def _verdict(self, status, limit=None, detail=None):
-        from quiver.harness.rate_limits import UsageOutcome
+        from swe.harness.rate_limits import UsageOutcome
 
         return UsageOutcome(status=status, limit=limit, detail=detail)
 
     def test_json_emits_null_limit_when_signed_out(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_usage",
+                "swe.harness.rate_limits.get_account_usage",
                 return_value=self._verdict("signed-out"),
             ):
                 code, out, _ = self._run(
@@ -601,7 +601,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
         self.assertEqual(data["remedy"]["kind"], "relogin")
 
     def test_json_emits_the_list_row_limit_shape(self):
-        from quiver.harness.models import RateLimitInfo
+        from swe.harness.models import RateLimitInfo
 
         limit = RateLimitInfo(
             tool_name="cursor", used_percent=42, limit_reached=False,
@@ -613,7 +613,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_usage",
+                "swe.harness.rate_limits.get_account_usage",
                 return_value=self._verdict("ok", limit),
             ):
                 code, out, _ = self._run(
@@ -627,7 +627,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
     def test_human_output_says_not_signed_in(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_usage",
+                "swe.harness.rate_limits.get_account_usage",
                 return_value=self._verdict("signed-out"),
             ):
                 code, out, _ = self._run(["devin", f"--account-dir={tmp}"])
@@ -637,7 +637,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
     def test_an_outage_is_a_typed_status_not_a_signed_out_reading(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_usage",
+                "swe.harness.rate_limits.get_account_usage",
                 return_value=self._verdict(
                     "unavailable",
                     detail="couldn't read devin usage for this account"),
@@ -658,7 +658,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
     def test_an_auth_failure_names_its_fix(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_usage",
+                "swe.harness.rate_limits.get_account_usage",
                 return_value=self._verdict("auth-required"),
             ):
                 code, out, err = self._run(
@@ -678,7 +678,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
     def test_human_output_prints_the_remedy_steps(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_usage",
+                "swe.harness.rate_limits.get_account_usage",
                 return_value=self._verdict("auth-required"),
             ):
                 code, out, _ = self._run(["devin", f"--account-dir={tmp}"])
@@ -687,7 +687,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
         self.assertNotIn("not signed in", out)
 
     def test_stdout_stays_pure_json_when_a_fetch_helper_warns(self):
-        from quiver.harness.models import RateLimitInfo
+        from swe.harness.models import RateLimitInfo
 
         limit = RateLimitInfo(
             tool_name="devin", used_percent=10, limit_reached=False,
@@ -700,7 +700,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_usage",
+                "swe.harness.rate_limits.get_account_usage",
                 side_effect=noisy,
             ):
                 code, out, _ = self._run(
@@ -711,7 +711,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
         self.assertNotIn("chatty", out)
 
     def test_human_output_lists_windows_and_marks_unavailable(self):
-        from quiver.harness.models import RateLimitInfo
+        from swe.harness.models import RateLimitInfo
 
         limit = RateLimitInfo(
             tool_name="devin", used_percent=40, limit_reached=False,
@@ -728,7 +728,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.get_account_usage",
+                "swe.harness.rate_limits.get_account_usage",
                 return_value=self._verdict("ok", limit),
             ):
                 code, out, _ = self._run(["devin", f"--account-dir={tmp}"])
@@ -744,7 +744,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
     """``swe harness usage-events cursor``."""
 
     def _run(self, args):
-        from quiver.harness.commands import cmd_harness_usage_events
+        from swe.harness.commands import cmd_harness_usage_events
 
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -769,7 +769,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
 
     def test_json_emits_status_and_events(self):
         with patch(
-            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            "swe.harness.rate_limits.fetch_cursor_usage_events",
             return_value=("ok", self._events(), "uid-1"),
         ) as fetch:
             code, out, _ = self._run(["cursor", "--json"])
@@ -784,7 +784,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
     def test_since_and_account_dir_pass_through(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
-                "quiver.harness.rate_limits.fetch_cursor_usage_events",
+                "swe.harness.rate_limits.fetch_cursor_usage_events",
                 return_value=("ok", [], "uid-1"),
             ) as fetch:
                 code, _, _ = self._run(
@@ -797,7 +797,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
 
     def test_unavailable_exits_nonzero_with_clean_json(self):
         with patch(
-            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            "swe.harness.rate_limits.fetch_cursor_usage_events",
             return_value=("unavailable", [], "uid-1"),
         ):
             code, out, _ = self._run(["cursor", "--json"])
@@ -806,7 +806,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out)["data"]["status"], "unavailable")
         with patch(
-            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            "swe.harness.rate_limits.fetch_cursor_usage_events",
             return_value=("unavailable", [], "uid-1"),
         ):
             code, out, err = self._run(["cursor"])
@@ -816,7 +816,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
     def test_signed_out_and_auth_required_are_zero_exit(self):
         for status in ("signed-out", "auth-required"):
             with patch(
-                "quiver.harness.rate_limits.fetch_cursor_usage_events",
+                "swe.harness.rate_limits.fetch_cursor_usage_events",
                 return_value=(status, [], "uid-1"),
             ):
                 code, out, _ = self._run(["cursor", "--json"])
@@ -829,7 +829,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
             return "ok", self._events(1), "uid-1"
 
         with patch(
-            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            "swe.harness.rate_limits.fetch_cursor_usage_events",
             side_effect=noisy,
         ):
             code, out, _ = self._run(["cursor", "--json"])
@@ -839,14 +839,14 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
 
     def test_signed_out_and_auth_required_human_messages(self):
         with patch(
-            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            "swe.harness.rate_limits.fetch_cursor_usage_events",
             return_value=("signed-out", [], None),
         ):
             code, out, _ = self._run(["cursor"])
         self.assertEqual(code, 0)
         self.assertIn("not signed in", out)
         with patch(
-            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            "swe.harness.rate_limits.fetch_cursor_usage_events",
             return_value=("auth-required", [], "uid-1"),
         ):
             code, out, _ = self._run(["cursor"])
@@ -855,7 +855,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
 
     def test_incomplete_keeps_the_events_and_warns(self):
         with patch(
-            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            "swe.harness.rate_limits.fetch_cursor_usage_events",
             return_value=("incomplete", self._events(), "uid-1"),
         ):
             code, out, err = self._run(["cursor"])
@@ -864,7 +864,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
         # Human-mode diagnostics print on the console stream (stdout).
         self.assertIn("page cap", out)
         with patch(
-            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            "swe.harness.rate_limits.fetch_cursor_usage_events",
             return_value=("incomplete", self._events(1), "uid-1"),
         ):
             code, out, _ = self._run(["cursor", "--json"])
@@ -887,7 +887,7 @@ class HarnessUsageEventsCommandTest(unittest.TestCase):
 
     def test_human_output_summarises_by_model(self):
         with patch(
-            "quiver.harness.rate_limits.fetch_cursor_usage_events",
+            "swe.harness.rate_limits.fetch_cursor_usage_events",
             return_value=("ok", self._events(), "uid-1"),
         ):
             code, out, _ = self._run(["cursor"])

@@ -15,9 +15,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver import paths
-from quiver.init import commands as init_commands
-from quiver.init.migrate import (
+from swe import paths
+from swe.init import commands as init_commands
+from swe.init.migrate import (
     CACHE_FILES,
     CONFIG_FILES,
     DROP,
@@ -44,8 +44,8 @@ class LayoutInvariantTest(unittest.TestCase):
         for name in self.ALL_PATHS:
             value = getattr(paths, name)
             self.assertTrue(
-                str(value).startswith(str(paths.QUIVER_DIR)),
-                f"{name} = {value} escaped {paths.QUIVER_DIR}",
+                str(value).startswith(str(paths.SWE_DIR)),
+                f"{name} = {value} escaped {paths.SWE_DIR}",
             )
 
     def test_no_path_points_into_dot_config(self):
@@ -55,8 +55,8 @@ class LayoutInvariantTest(unittest.TestCase):
             )
 
     def test_root_is_named_for_the_project_not_the_command(self):
-        self.assertEqual(paths.QUIVER_DIR.name, ".quiver")
-        self.assertEqual(paths.QUIVER_DIR.parent, Path.home())
+        self.assertEqual(paths.SWE_DIR.name, ".quiver")
+        self.assertEqual(paths.SWE_DIR.parent, Path.home())
 
     def test_authored_state_sits_in_config(self):
         for name in ("HARNESS_FILE", "TOOLS_FILE", "STARS_FILE", "ARCHIVE_FILE",
@@ -67,7 +67,7 @@ class LayoutInvariantTest(unittest.TestCase):
     def test_mcp_registry_sits_at_the_root_beside_agents_md(self):
         # mcp.json is the control plane for a whole subsystem, not one more
         # settings file, so it sits alongside AGENTS.md rather than in config/.
-        self.assertEqual(paths.MCP_SOURCE_FILE.parent, paths.QUIVER_DIR)
+        self.assertEqual(paths.MCP_SOURCE_FILE.parent, paths.SWE_DIR)
         self.assertEqual(paths.MCP_SOURCE_FILE.name, "mcp.json")
 
     def test_mcp_server_checkouts_are_gitignored(self):
@@ -94,7 +94,7 @@ class LayoutInvariantTest(unittest.TestCase):
     def test_mcp_secrets_are_gitignored(self):
         # Resolved MCP tokens. A user who runs `git init` in ~/.quiver must
         # not commit them on the first `git add .`.
-        from quiver.mcp import secrets
+        from swe.mcp import secrets
 
         self.assertIn(f"{secrets.SECRETS_DIRNAME}/", paths.GITIGNORE_BODY.splitlines())
 
@@ -117,7 +117,7 @@ class LayoutInvariantTest(unittest.TestCase):
         self.assertFalse(str(paths.CACHE_DIR).startswith(str(paths.CONFIG_DIR)))
 
     def test_helpers_and_constants_agree(self):
-        self.assertEqual(paths.quiver_dir_for(), paths.QUIVER_DIR)
+        self.assertEqual(paths.swe_dir_for(), paths.SWE_DIR)
         self.assertEqual(paths.agents_file_for(), paths.AGENTS_FILE)
         self.assertEqual(paths.skills_dir_for(), paths.SKILLS_DIR)
         self.assertEqual(paths.config_dir_for(), paths.CONFIG_DIR)
@@ -126,11 +126,11 @@ class LayoutInvariantTest(unittest.TestCase):
 
     def test_helpers_respect_an_explicit_home(self):
         fake = Path("/tmp/does-not-exist-home")
-        self.assertEqual(paths.quiver_dir_for(fake), fake / ".quiver")
+        self.assertEqual(paths.swe_dir_for(fake), fake / ".quiver")
         self.assertEqual(paths.config_dir_for(fake), fake / ".quiver" / "config")
 
     def test_init_layout_reexports_the_same_helpers(self):
-        from quiver.init import layout
+        from swe.init import layout
 
         self.assertEqual(layout.agents_file(), paths.AGENTS_FILE)
         self.assertEqual(layout.skills_dir(), paths.SKILLS_DIR)
@@ -430,7 +430,7 @@ class SecretsLayoutTest(unittest.TestCase):
             self.assertEqual(paths.mcp_secrets_path_for(home), old_mcp)
 
     def test_mcp_secrets_load_from_either_place(self):
-        from quiver.mcp import secrets
+        from swe.mcp import secrets
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)

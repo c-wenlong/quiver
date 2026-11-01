@@ -11,8 +11,8 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
-from quiver.remote import agent as agent_mod
-from quiver.remote import commands, launchd, systemd
+from swe.remote import agent as agent_mod
+from swe.remote import commands, launchd, systemd
 
 from tests._tempdir import temp_dir
 from tests.test_remote_systemd import FakeCtl
@@ -80,7 +80,7 @@ class AgentServiceTest(unittest.TestCase):
         return [
             patch.object(commands.sys, "platform", "linux"),
             patch.object(commands.sys, "argv", ["/home/dev/.local/bin/swe"]),
-            patch("quiver.remote.commands.os.access", return_value=True),
+            patch("swe.remote.commands.os.access", return_value=True),
             patch.object(commands.systemd, "available", return_value=True),
             patch.object(commands.systemd, "install", _fake(systemd.install, ctl)),
             patch.object(commands.systemd, "uninstall", _fake(systemd.uninstall, ctl)),
@@ -138,7 +138,7 @@ class AgentServiceTest(unittest.TestCase):
         patches = self._mac(ctl) + [
             patch.object(commands, "_probe", return_value=None),
             patch.object(commands.launchd, "loaded_pid", return_value=(False, None)),
-            patch("quiver.remote.commands._tailscale_ip", return_value="100.1.2.3"),
+            patch("swe.remote.commands._tailscale_ip", return_value="100.1.2.3"),
         ]
         rc, _, err = self._with(patches, ["serve", "--install"])
         self.assertEqual(rc, 1)
@@ -149,7 +149,7 @@ class AgentServiceTest(unittest.TestCase):
         # setup --apply installs through the same path.
         with patch.object(commands.sys, "platform", "darwin"), \
              patch.object(commands.launchd, "bundled_swe", return_value=SWE):
-            from quiver.remote import setup
+            from swe.remote import setup
             err = setup.default_actions(self.home, run=ctl).install_hub("https://m.ts.net", 8477)
         self.assertIn("satellite agent is installed", err)
 

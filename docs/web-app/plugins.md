@@ -87,7 +87,7 @@ The hub reads the findings again and refuses unless every id is one
 Health lists right now (404 `unknown_finding`) and one swe can run (422
 `not_runnable`); a malformed body is 422, and a second fix while one runs
 is 409 `busy` (one fix at a time across the hub). It then calls
-`quiver.find.plugin_drift.apply_fix`, the function behind
+`swe.find.plugin_drift.apply_fix`, the function behind
 `swe find plugins --fix=<id>`, in process: the commands are the ones that
 module builds from the finding, run without a shell, with `HOME` set to
 the hub's home. Fix all follows `PluginsModel.fixAll`: report order, the
@@ -113,7 +113,7 @@ error, so the page still gets the fresh findings.
 ### Install, enable, disable, uninstall
 
 `POST /v1/app/plugins/plugin` with `{"verb", "ref", "harness"}` runs
-`quiver.plugins.actions.plugin_action`, the code behind `swe plugins
+`swe.plugins.actions.plugin_action`, the code behind `swe plugins
 <verb> <ref> --harness=<h> --json`, in process: the harness's own CLI
 (`claude plugin install|uninstall|enable|disable`, `codex plugin
 add|remove`) with `HOME` pinned to the hub's, or for Codex enable and

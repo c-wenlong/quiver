@@ -92,11 +92,19 @@ class TestBumpFormula(unittest.TestCase):
         out = bump_tap.bump_formula(FORMULA, "1.2.0", NEW_WHEEL)
         expected = FORMULA.replace(
             "download/v1.1.1/quiver-1.1.1-py3-none-any.whl",
-            "download/v1.2.0/quiver-1.2.0-py3-none-any.whl",
-        ).replace(OLD_WHEEL, NEW_WHEEL)
+            "download/v1.2.0/swe-1.2.0-py3-none-any.whl",
+        ).replace(OLD_WHEEL, NEW_WHEEL).replace(
+            'buildpath/"quiver-#{version}-py3-none-any.whl"',
+            'buildpath/"swe-#{version}-py3-none-any.whl"',
+        )
         self.assertEqual(out, expected)
-        # The install block names the wheel through #{version}: untouched.
-        self.assertIn('buildpath/"quiver-#{version}-py3-none-any.whl"', out)
+        # The install block's wheel filename follows the package rename too.
+        self.assertIn('buildpath/"swe-#{version}-py3-none-any.whl"', out)
+
+    def test_rebumps_a_formula_already_on_swe(self):
+        out = bump_tap.bump_formula(FORMULA.replace("quiver", "swe"), "1.3.0", NEW_WHEEL)
+        self.assertIn("download/v1.3.0/swe-1.3.0-py3-none-any.whl", out)
+        self.assertIn('buildpath/"swe-#{version}-py3-none-any.whl"', out)
 
     def test_missing_url_fails(self):
         broken = FORMULA.replace("-py3-none-any.whl\",", ".tar.gz\",")
@@ -125,7 +133,7 @@ class TestMain(unittest.TestCase):
         formula = (tap / "Formula/swe.rb").read_text(encoding="utf-8")
         self.assertIn('version "1.2.0"', cask)
         self.assertIn(NEW_DMG, cask)
-        self.assertIn("download/v1.2.0/quiver-1.2.0-py3-none-any.whl", formula)
+        self.assertIn("download/v1.2.0/swe-1.2.0-py3-none-any.whl", formula)
         self.assertIn(NEW_WHEEL, formula)
 
     def test_rejects_bad_arguments_without_writing(self):

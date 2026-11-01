@@ -14,18 +14,18 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from quiver.harness.drift import check_code_vs_data
-from quiver.init import commands as init_commands
-from quiver.init.hooks import (
+from swe.harness.drift import check_code_vs_data
+from swe.init import commands as init_commands
+from swe.init.hooks import (
     HOOK_FALLBACK,
-    INSIDE_QUIVER_DETAIL,
+    INSIDE_SWE_DETAIL,
     NO_ROOT_DETAIL,
     UNKNOWN_HARNESS_DETAIL,
     UNSUPPORTED_DETAIL,
     hook_root,
     plan_hooks,
 )
-from quiver.init.layout import hooks_dir, linkignore_file
+from swe.init.layout import hooks_dir, linkignore_file
 
 
 def _home(tmp: str) -> Path:
@@ -95,7 +95,7 @@ class PlanHooksTest(unittest.TestCase):
             _hook(home, "droid", "guard.sh")
             # Binary evidence counts too (#68): stub PATH or a machine
             # with droid installed reads the same dirs as installed.
-            with mock.patch("quiver.init.layout.shutil.which", return_value=None):
+            with mock.patch("swe.init.layout.shutil.which", return_value=None):
                 [status] = plan_hooks(home)
             self.assertEqual((status.state, status.detail), ("skipped", "harness not installed"))
 
@@ -106,7 +106,7 @@ class PlanHooksTest(unittest.TestCase):
             home = _home(tmp)
             _hook(home, "droid", "guard.sh")
             which = lambda name: "/fake/bin/droid" if name == "droid" else None
-            with mock.patch("quiver.init.layout.shutil.which", side_effect=which):
+            with mock.patch("swe.init.layout.shutil.which", side_effect=which):
                 [status] = plan_hooks(home)
             self.assertEqual(status.state, "create")
             self.assertEqual(status.path, home / ".factory/hooks/guard.sh")
@@ -214,7 +214,7 @@ class HookRootSafetyTest(unittest.TestCase):
             src = _hook(home, "claude", "guard.py", "keep me\n")
             _registry(home, {"claude": {"capabilities": {"hooks": {"supported": True, "root": "~/.quiver/hooks/claude"}}}})
             [status] = plan_hooks(home)
-            self.assertEqual((status.state, status.detail), ("skipped", INSIDE_QUIVER_DETAIL))
+            self.assertEqual((status.state, status.detail), ("skipped", INSIDE_SWE_DETAIL))
             out = StringIO()
             with mock.patch.object(Path, "home", staticmethod(lambda: home)), redirect_stdout(out):
                 init_commands.cmd_init([])
@@ -239,7 +239,7 @@ class HookRootSafetyTest(unittest.TestCase):
             _registry(home, {"claude": {"capabilities": {"hooks": {"supported": True, "root": "~/elsewhere"}}}})
             # This pins the dir rule, not the PATH rule: stub which or a
             # machine with claude installed answers "installed" via binary.
-            with mock.patch("quiver.init.layout.shutil.which", return_value=None):
+            with mock.patch("swe.init.layout.shutil.which", return_value=None):
                 [status] = plan_hooks(home)
                 self.assertEqual((status.state, status.detail), ("skipped", "harness not installed"))
                 (home / "elsewhere").mkdir()

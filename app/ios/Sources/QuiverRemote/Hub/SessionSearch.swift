@@ -53,7 +53,7 @@ final class SessionSearch {
     }
 
     /// Metadata match over loaded rows, ranked the way the hub ranks them
-    /// (`src/quiver/remote/search.py`): titles first, then the rest of the
+    /// (`src/swe/remote/search.py`): titles first, then the rest of the
     /// details, each holding the whole query or every word of it; within
     /// a tier, the whole query beats the words apart, scaled by
     /// `recencyWeight`. Plain text, never a regex, so no typed pattern can

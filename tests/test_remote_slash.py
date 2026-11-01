@@ -6,10 +6,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.paths import config_dir_for
-from quiver.remote import agent as agent_mod
-from quiver.remote import slash, slash_builtins, supervise
-from quiver.sessions.models import Session
+from swe.paths import config_dir_for
+from swe.remote import agent as agent_mod
+from swe.remote import slash, slash_builtins, supervise
+from swe.sessions.models import Session
 
 from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server

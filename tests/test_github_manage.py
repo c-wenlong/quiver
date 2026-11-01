@@ -1,4 +1,4 @@
-"""quiver.github.manage: pin, repo search and the catalog sync, against a
+"""swe.github.manage: pin, repo search and the catalog sync, against a
 throwaway home and a fake ``gh`` on PATH. Every store they touch lives
 under that home's ~/.quiver, never the real one."""
 
@@ -8,8 +8,8 @@ import time
 import unittest
 from pathlib import Path
 
-from quiver import paths
-from quiver.github import catalog, gh, manage, repos
+from swe import paths
+from swe.github import catalog, gh, manage, repos
 
 from tests.test_webapp_repositories import FakeGh
 

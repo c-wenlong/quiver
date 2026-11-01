@@ -13,12 +13,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.github import gh, manage, repos
-from quiver.github import issues as gh_issues
-from quiver.remote import issues as issues_mod
-from quiver.remote import protocol, sessionmeta
-from quiver.github import shared as G
-from quiver.webapp.pages import repositories
+from swe.github import gh, manage, repos
+from swe.github import issues as gh_issues
+from swe.remote import issues as issues_mod
+from swe.remote import protocol, sessionmeta
+from swe.github import shared as G
+from swe.webapp.pages import repositories
 
 from tests.test_github_issues import RAW_ISSUE
 from tests.test_remote_hub import _Server, _session
@@ -63,8 +63,8 @@ class _Base(unittest.TestCase):
 class TestList(_Base):
     @contextlib.contextmanager
     def _stubs(self, env=OK_ENV, issues=None):
-        with patch("quiver.github.gh.probe_env", return_value=env), \
-             patch("quiver.github.cli._fetch_issues",
+        with patch("swe.github.gh.probe_env", return_value=env), \
+             patch("swe.github.cli._fetch_issues",
                    side_effect=issues or _stub_issues) as lp:
             yield lp
 
@@ -182,8 +182,8 @@ class TestDetail(_Base):
     def _stubs(self, env=OK_ENV, fetched=None):
         fetched = fetched or gh.GhResult(
             "ok", data=gh_issues.shape(RAW_ISSUE, "o/r", self.srv.home))
-        with patch("quiver.github.gh.probe_env", return_value=env), \
-             patch("quiver.github.issues.fetch", return_value=fetched):
+        with patch("swe.github.gh.probe_env", return_value=env), \
+             patch("swe.github.issues.fetch", return_value=fetched):
             yield
 
     def test_full_row_plus_detail_fields(self):
@@ -291,8 +291,8 @@ class TestCommentRoute(_Base):
     @contextlib.contextmanager
     def _stubs(self, env=OK_ENV, ran=None):
         ran = ran or gh.GhResult("ok", data=self.POSTED)
-        with patch("quiver.github.gh.probe_env", return_value=env), \
-             patch("quiver.github.gh.run_gh", return_value=ran) as run:
+        with patch("swe.github.gh.probe_env", return_value=env), \
+             patch("swe.github.gh.run_gh", return_value=ran) as run:
             yield run
 
     def _post(self, body, headers=None):
@@ -455,23 +455,23 @@ class TestResolveRoute(unittest.TestCase):
     def _stubs(self, env=OK_ENV, installed=True, tmux=True, fetched=None,
                worktree=None, launch=None, blocker=None, tracked=True):
         fetched = fetched or gh.GhResult("ok", data=self.issue)
-        with patch("quiver.remote.catalog.launch_command",
+        with patch("swe.remote.catalog.launch_command",
                    return_value="claude" if installed else None), \
-             patch("quiver.remote.catalog.launchable_harnesses",
+             patch("swe.remote.catalog.launchable_harnesses",
                    return_value=[]), \
-             patch("quiver.remote.catalog.known_session_ids",
+             patch("swe.remote.catalog.known_session_ids",
                    return_value=["old"]), \
-             patch("quiver.remote.supervise.tmux_bin",
+             patch("swe.remote.supervise.tmux_bin",
                    return_value="/usr/bin/tmux" if tmux else None), \
-             patch("quiver.remote.supervise.fork_blocker",
+             patch("swe.remote.supervise.fork_blocker",
                    return_value=blocker), \
-             patch("quiver.remote.catalog.untracked",
+             patch("swe.remote.catalog.untracked",
                    return_value=[] if tracked else ["claude"]), \
-             patch("quiver.github.gh.probe_env", return_value=env), \
-             patch("quiver.github.issues.fetch", return_value=fetched), \
-             patch("quiver.github.manage.issue_worktree",
+             patch("swe.github.gh.probe_env", return_value=env), \
+             patch("swe.github.issues.fetch", return_value=fetched), \
+             patch("swe.github.manage.issue_worktree",
                    side_effect=worktree or self._worktree_ok) as wt, \
-             patch("quiver.remote.supervise.launch_new",
+             patch("swe.remote.supervise.launch_new",
                    side_effect=launch,
                    return_value=(True, "launched", "qv-t")) as ln:
             try:

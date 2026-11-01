@@ -215,7 +215,7 @@ class SkillsLinkJsonTest(unittest.TestCase):
         env = {"HOME": str(self.home), "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
                "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "NO_COLOR": "1"}
         env.update({k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")})
-        result = subprocess.run([sys.executable, "-m", "quiver.cli", "skills", "unlink", "codx", "--json"],
+        result = subprocess.run([sys.executable, "-m", "swe.cli", "skills", "unlink", "codx", "--json"],
                                 capture_output=True, text=True, env=env, cwd=work, timeout=60)
         self.assertEqual(result.returncode, 1)
         self.assertIn("Unknown skill root", result.stderr)
@@ -329,7 +329,7 @@ class SkillsHubJsonTest(unittest.TestCase):
                "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
         env.update({k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")})
         result = subprocess.run(
-            [sys.executable, "-m", "quiver.cli", "find", "plugins", f"--fix={fix_id}", "--json"],
+            [sys.executable, "-m", "swe.cli", "find", "plugins", f"--fix={fix_id}", "--json"],
             capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(log.read_text().strip(), "plugin install toolkit@kit")

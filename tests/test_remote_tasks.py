@@ -14,13 +14,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.github import cli as ghcli
-from quiver.github import gh, manage, repos
-from quiver.github import issues as gh_issues
-from quiver.github import pulls as gh_pulls
-from quiver.remote import protocol
-from quiver.remote import tasks as tasks_mod
-from quiver.github import shared as G
+from swe.github import cli as ghcli
+from swe.github import gh, manage, repos
+from swe.github import issues as gh_issues
+from swe.github import pulls as gh_pulls
+from swe.remote import protocol
+from swe.remote import tasks as tasks_mod
+from swe.github import shared as G
 
 from tests.test_github_issues import RAW_ISSUE
 from tests.test_remote_pulls import RAW_PR, _row, _pr_status
@@ -262,7 +262,7 @@ class TestStore(unittest.TestCase):
 
     def test_remember_survives_an_unwritable_cache(self):
         tasks_mod.link(self.home, ISSUE_REF, session_key="claude:s1")
-        with patch("quiver.remote.tasks.atomic_write_text",
+        with patch("swe.remote.tasks.atomic_write_text",
                    side_effect=OSError("read-only")):
             tasks_mod._remember(self.home, {
                 tasks_mod.task_id(ISSUE_REF): {"state": "open",
@@ -314,12 +314,12 @@ class TestTasksRoute(_Base):
             lambda name, state, limit: {
                 "repo": name, "status": "ok",
                 "issues": [_issue_row(5), _issue_row(6)]})
-        with patch("quiver.github.gh.probe_env", return_value=env), \
-             patch("quiver.remote.pulls._repo_pulls",
+        with patch("swe.github.gh.probe_env", return_value=env), \
+             patch("swe.remote.pulls._repo_pulls",
                    side_effect=pulls), \
-             patch("quiver.github.cli._fetch_issues",
+             patch("swe.github.cli._fetch_issues",
                    side_effect=issues), \
-             patch("quiver.github.gh.run_json",
+             patch("swe.github.gh.run_json",
                    side_effect=run_json or (lambda *a, **k:
                                             gh.GhResult("not-found"))):
             yield
@@ -377,7 +377,7 @@ class TestTasksRoute(_Base):
         own = {"number": 9, "title": "mine", "state": "MERGED",
                "headRefName": "quiver/issue-5",
                "headRepositoryOwner": {"login": "o"}}
-        with patch("quiver.github.gh.run_json",
+        with patch("swe.github.gh.run_json",
                    return_value=gh.GhResult("ok", data=[fork, own])) as run:
             answered, pr = tasks_mod.GitHubTasks(
                 self.srv.home)._linked_pr("o/r", 5)
@@ -500,7 +500,7 @@ class TestTasksRoute(_Base):
                 writes.append(text)
             return real(path, text, **kw)
 
-        with patch("quiver.remote.tasks.atomic_write_text",
+        with patch("swe.remote.tasks.atomic_write_text",
                    side_effect=spy), \
                 self._stubs(run_json=self._closed_with_merged_pr):
             self._get("/v1/tasks")
@@ -610,14 +610,14 @@ class TestLinkRoutes(_Base):
 
     def _gh_ok(self):
         env = OK_ENV
-        return patch("quiver.github.gh.probe_env", return_value=env), \
-            patch("quiver.remote.pulls._repo_pulls",
+        return patch("swe.github.gh.probe_env", return_value=env), \
+            patch("swe.remote.pulls._repo_pulls",
                   return_value={"name": "o/r", "status": "ok",
                                 "pulls": []}), \
-            patch("quiver.github.cli._fetch_issues",
+            patch("swe.github.cli._fetch_issues",
                   return_value={"repo": "o/r", "status": "ok",
                                 "issues": []}), \
-            patch("quiver.github.gh.run_json",
+            patch("swe.github.gh.run_json",
                   return_value=gh.GhResult("not-found"))
 
     def test_link_then_unlink_through_the_routes(self):
@@ -727,25 +727,25 @@ class TestOrigin(_Base):
 
     @contextlib.contextmanager
     def _resolve_stubs(self):
-        with patch("quiver.remote.catalog.launch_command",
+        with patch("swe.remote.catalog.launch_command",
                    return_value="claude"), \
-             patch("quiver.remote.catalog.launchable_harnesses",
+             patch("swe.remote.catalog.launchable_harnesses",
                    return_value=[]), \
-             patch("quiver.remote.catalog.known_session_ids",
+             patch("swe.remote.catalog.known_session_ids",
                    return_value=[]), \
-             patch("quiver.remote.supervise.tmux_bin",
+             patch("swe.remote.supervise.tmux_bin",
                    return_value="/usr/bin/tmux"), \
-             patch("quiver.remote.supervise.fork_blocker",
+             patch("swe.remote.supervise.fork_blocker",
                    return_value=None), \
-             patch("quiver.remote.catalog.untracked", return_value=[]), \
-             patch("quiver.github.gh.probe_env", return_value=OK_ENV), \
-             patch("quiver.github.issues.fetch",
+             patch("swe.remote.catalog.untracked", return_value=[]), \
+             patch("swe.github.gh.probe_env", return_value=OK_ENV), \
+             patch("swe.github.issues.fetch",
                    return_value=gh.GhResult("ok", data=self.issue)), \
-             patch("quiver.github.manage.issue_worktree",
+             patch("swe.github.manage.issue_worktree",
                    return_value=gh.GhResult("ok", data={
                        "path": self.tree, "branch": "quiver/issue-5",
                        "created": True})), \
-             patch("quiver.remote.supervise.launch_new",
+             patch("swe.remote.supervise.launch_new",
                    return_value=(True, "launched", "qv-t")):
             try:
                 yield
@@ -791,24 +791,24 @@ class TestOrigin(_Base):
     def test_open_origin_links_to_the_pull_task(self):
         tree = str(Path(self.tree).parent / "o__r-pr5")
         Path(tree).mkdir()
-        with patch("quiver.remote.catalog.launch_command",
+        with patch("swe.remote.catalog.launch_command",
                    return_value="claude"), \
-             patch("quiver.remote.catalog.launchable_harnesses",
+             patch("swe.remote.catalog.launchable_harnesses",
                    return_value=[]), \
-             patch("quiver.remote.catalog.known_session_ids",
+             patch("swe.remote.catalog.known_session_ids",
                    return_value=[]), \
-             patch("quiver.remote.supervise.tmux_bin",
+             patch("swe.remote.supervise.tmux_bin",
                    return_value="/usr/bin/tmux"), \
-             patch("quiver.remote.supervise.fork_blocker",
+             patch("swe.remote.supervise.fork_blocker",
                    return_value=None), \
-             patch("quiver.remote.catalog.untracked", return_value=[]), \
-             patch("quiver.github.gh.probe_env", return_value=OK_ENV), \
-             patch("quiver.github.pulls.fetch",
+             patch("swe.remote.catalog.untracked", return_value=[]), \
+             patch("swe.github.gh.probe_env", return_value=OK_ENV), \
+             patch("swe.github.pulls.fetch",
                    return_value=gh.GhResult("ok", data=self.pr)), \
-             patch("quiver.github.manage.pr_worktree",
+             patch("swe.github.manage.pr_worktree",
                    return_value=gh.GhResult("ok", data={
                        "path": tree, "head": "abc", "created": True})), \
-             patch("quiver.remote.supervise.launch_new",
+             patch("swe.remote.supervise.launch_new",
                    return_value=(True, "launched", "qv-t")):
             status, data = self.srv.request(
                 "POST", "/v1/pulls/o/r/5/open",
@@ -833,11 +833,11 @@ class TestPullsAgentRunning(_Base):
 
     def test_linked_pull_runs(self):
         tasks_mod.link(self.srv.home, PULL_REF, session_key="claude:s1")
-        with patch("quiver.github.gh.probe_env", return_value=OK_ENV), \
-             patch("quiver.github.cli._fetch_prs",
+        with patch("swe.github.gh.probe_env", return_value=OK_ENV), \
+             patch("swe.github.cli._fetch_prs",
                    return_value={"repo": "o/r", "status": "ok",
                                  "pull_requests": [_row(7), _row(8)]}), \
-             patch("quiver.github.cli._fetch_pr_status",
+             patch("swe.github.cli._fetch_pr_status",
                    return_value=_pr_status()):
             status, body = self._get("/v1/pulls")
         self.assertEqual(status, 200, body)
@@ -848,11 +848,11 @@ class TestPullsAgentRunning(_Base):
     def test_pending_launch_counts_as_running(self):
         lid = self.srv.state.new_launch("m", "claude", "/tmp/x")
         tasks_mod.link(self.srv.home, PULL_REF, launch_id=lid)
-        with patch("quiver.github.gh.probe_env", return_value=OK_ENV), \
-             patch("quiver.github.cli._fetch_prs",
+        with patch("swe.github.gh.probe_env", return_value=OK_ENV), \
+             patch("swe.github.cli._fetch_prs",
                    return_value={"repo": "o/r", "status": "ok",
                                  "pull_requests": [_row(7)]}), \
-             patch("quiver.github.cli._fetch_pr_status",
+             patch("swe.github.cli._fetch_pr_status",
                    return_value=_pr_status()):
             _s, body = self._get("/v1/pulls")
         self.assertTrue(body["repos"][0]["pulls"][0]["agent_running"])

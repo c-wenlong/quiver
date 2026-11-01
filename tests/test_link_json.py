@@ -34,7 +34,7 @@ def run_swe_in(home: Path, cwd: Path, *args: str):
         "NO_COLOR": "1",
     }
     return subprocess.run(
-        [sys.executable, "-m", "quiver.cli", *args],
+        [sys.executable, "-m", "swe.cli", *args],
         capture_output=True, text=True, env=env, timeout=60, cwd=cwd,
     )
 

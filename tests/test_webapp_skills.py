@@ -12,8 +12,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import quote
 
-from quiver.webapp.pages import PageError
-from quiver.webapp.pages import skills as page
+from swe.webapp.pages import PageError
+from swe.webapp.pages import skills as page
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp import app_js_function
@@ -71,7 +71,7 @@ class TestPlacement(unittest.TestCase):
         own = _skill("lint", plugin / "skills" / "lint", source="plugin", harnesses=["claude"])
         loose = _skill("stray", base / "elsewhere", source="plugin", harnesses=["claude"])
         mine = _skill("tdd", base / "mine")
-        with patch("quiver.plugins.catalog.build_catalog", return_value=_catalog(plugin)):
+        with patch("swe.plugins.catalog.build_catalog", return_value=_catalog(plugin)):
             placed, moved, error = page.placement([own, loose, mine], base)
         self.assertEqual([s["plugin"] for s in placed], ["tools@market", None, None])
         self.assertEqual((moved, error), (1, None))
@@ -79,11 +79,11 @@ class TestPlacement(unittest.TestCase):
     def test_placement_reuses_the_plugins_pages_catalog(self):
         # build_catalog walks every marketplace: one read serves both
         # pages until it expires or a plugin change drops it.
-        from quiver.webapp.pages import plugins
+        from swe.webapp.pages import plugins
         base = Path(tempfile.mkdtemp())
         self.addCleanup(plugins.clear_cache)
         skills = [_skill("lint", base / "lint", source="plugin")]
-        with patch("quiver.plugins.catalog.build_catalog",
+        with patch("swe.plugins.catalog.build_catalog",
                    return_value={"marketplaces": []}) as build:
             page.placement(skills, base)
             page.placement(skills, base)
@@ -94,7 +94,7 @@ class TestPlacement(unittest.TestCase):
 
     def test_unreadable_catalog_keeps_every_skill(self):
         skills = [_skill("lint", "/x/lint", source="plugin")]
-        with patch("quiver.plugins.catalog.build_catalog", side_effect=ValueError("bad json")):
+        with patch("swe.plugins.catalog.build_catalog", side_effect=ValueError("bad json")):
             placed, moved, error = page.placement(skills, Path("/x"))
         self.assertEqual((placed, moved, error), ([{**skills[0], "plugin": None}], 0, "bad json"))
 
@@ -194,7 +194,7 @@ class TestPageScripts(unittest.TestCase):
 
 
 def pages_dir():
-    from quiver.webapp import pages
+    from swe.webapp import pages
     return pages.STATIC
 
 
@@ -208,13 +208,13 @@ class TestRoute(HubBase):
             "skills": [_skill("lint", "/p/lint", source="plugin", harnesses=["claude"]),
                        _skill("tdd", "/h/tdd")],
         }
-        patcher = patch("quiver.skills.inventory.installed_skills", return_value=self.inventory)
+        patcher = patch("swe.skills.inventory.installed_skills", return_value=self.inventory)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def test_needs_a_device_and_lists_standalone_skills(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/skills")[0], 401)
-        with patch("quiver.plugins.catalog.build_catalog", return_value=_catalog("/p")):
+        with patch("swe.plugins.catalog.build_catalog", return_value=_catalog("/p")):
             status, data = self.srv.request("GET", "/v1/app/skills", headers=self.auth())
         self.assertEqual(status, 200, data)
         body = json.loads(data)
@@ -264,12 +264,12 @@ class _WriteHome:
         self.home = home
         self.shared = _skills_home(home)
         self.records = home / ".quiver" / "config" / "skill_links.json"
-        for target, value in (("quiver.skills.layout.SKILL_LINKS_FILE", self.records),
-                              ("quiver.skills.layout.CONFIG_DIR", self.records.parent)):
+        for target, value in (("swe.skills.layout.SKILL_LINKS_FILE", self.records),
+                              ("swe.skills.layout.CONFIG_DIR", self.records.parent)):
             patcher = patch(target, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        catalog = patch("quiver.plugins.catalog.build_catalog", return_value={"marketplaces": []})
+        catalog = patch("swe.plugins.catalog.build_catalog", return_value={"marketplaces": []})
         catalog.start()
         self.addCleanup(catalog.stop)
 
@@ -607,7 +607,7 @@ class TestFileSheetReplies(unittest.TestCase):
     after the same file name in skill B was opened."""
 
     def test_a_late_reply_for_another_opening_is_dropped(self):
-        script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/skills.js"
+        script = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/skills.js"
         prelude = (
             (script.parents[1] / "format.js").read_text(encoding="utf-8") + "\n"
             "const esc = (s) => String(s); function registerPage() {}\n"
@@ -635,7 +635,7 @@ class TestFileSheetFailures(unittest.TestCase):
     unreachable hub says so instead of "The hub answered 0."."""
 
     def read_file(self, reply):
-        script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/skills.js"
+        script = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/skills.js"
         prelude = (
             (script.parents[1] / "format.js").read_text(encoding="utf-8") + "\n"
             "const esc = (s) => String(s); function registerPage() {}\n"

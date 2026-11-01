@@ -6,7 +6,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.harness.commands import (
+from swe.harness.commands import (
     _apply_edits,
     _parse_edit_flags,
     _show_edit_fields,
@@ -141,12 +141,12 @@ class HarnessEditTest(unittest.TestCase):
                     }
                 )
             )
-            with patch("quiver.harness.registry.CONFIG_DIR", config_dir), patch(
-                "quiver.harness.registry.HARNESS_FILE", registry_file
-            ), patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"
-            ), patch("quiver.harness.commands.load_registry") as load, patch(
-                "quiver.harness.commands.save_registry"
-            ) as save, patch("quiver.harness.commands.resolve", return_value="mastracode"):
+            with patch("swe.harness.registry.CONFIG_DIR", config_dir), patch(
+                "swe.harness.registry.HARNESS_FILE", registry_file
+            ), patch("swe.harness.registry.TOOLS_FILE", config_dir / "tools.json"
+            ), patch("swe.harness.commands.load_registry") as load, patch(
+                "swe.harness.commands.save_registry"
+            ) as save, patch("swe.harness.commands.resolve", return_value="mastracode"):
                 tools = json.loads(registry_file.read_text())
                 load.return_value = tools
 
@@ -174,9 +174,9 @@ class HarnessEditTest(unittest.TestCase):
             registry_file.write_text(
                 json.dumps({"claude": {"command": "claude", "aliases": [], "tags": []}})
             )
-            with patch("quiver.harness.commands.load_registry") as load, patch(
-                "quiver.harness.commands.save_registry"
-            ) as save, patch("quiver.harness.commands.resolve", return_value="claude"):
+            with patch("swe.harness.commands.load_registry") as load, patch(
+                "swe.harness.commands.save_registry"
+            ) as save, patch("swe.harness.commands.resolve", return_value="claude"):
                 load.side_effect = lambda: json.loads(registry_file.read_text())
 
                 def _save(t):
@@ -196,9 +196,9 @@ class HarnessEditTest(unittest.TestCase):
 
     def test_cmd_edit_rejects_a_bad_colour(self):
         tools = {"claude": {"command": "claude", "aliases": [], "tags": []}}
-        with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
-            "quiver.harness.commands.save_registry"
-        ) as save, patch("quiver.harness.commands.resolve", return_value="claude"):
+        with patch("swe.harness.commands.load_registry", return_value=tools), patch(
+            "swe.harness.commands.save_registry"
+        ) as save, patch("swe.harness.commands.resolve", return_value="claude"):
             rc = cmd_edit(["claude", "--primary-color=notacolour"])
             self.assertEqual(rc, 1)
             save.assert_not_called()
@@ -225,11 +225,11 @@ class HarnessEditTest(unittest.TestCase):
         # 2nd: re-enter aliases field with 'ta'
         # 3rd save: succeeds
         inputs = iter(["aliases", "au", "save", "aliases", "ta", "save"])
-        with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value=tools), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.resolve", return_value="tau"
-        ), patch("quiver.harness.commands.read_line", side_effect=lambda *_a, **_k: next(inputs)):
+            "swe.harness.commands.resolve", return_value="tau"
+        ), patch("swe.harness.commands.read_line", side_effect=lambda *_a, **_k: next(inputs)):
             rc = cmd_edit(["tau"])
             self.assertEqual(rc, 0)
             save.assert_called_once()
@@ -247,11 +247,11 @@ class HarnessEditTest(unittest.TestCase):
             }
         }
         inputs = iter(["description", "Tau — coding agent", "save"])
-        with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value=tools), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.resolve", return_value="tau"
-        ), patch("quiver.harness.commands.read_line", side_effect=lambda *_a, **_k: next(inputs)):
+            "swe.harness.commands.resolve", return_value="tau"
+        ), patch("swe.harness.commands.read_line", side_effect=lambda *_a, **_k: next(inputs)):
             rc = cmd_edit(["tau"])
             self.assertEqual(rc, 0)
             save.assert_called_once()
@@ -262,11 +262,11 @@ class HarnessEditTest(unittest.TestCase):
         for typed in ("display name", "display-name", "display_name", "Display Name"):
             tools = {"tau": {"command": "tau", "aliases": [], "tags": []}}
             inputs = iter([typed, "Tau Code", "save"])
-            with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
-                "quiver.harness.commands.save_registry"
+            with patch("swe.harness.commands.load_registry", return_value=tools), patch(
+                "swe.harness.commands.save_registry"
             ) as save, patch(
-                "quiver.harness.commands.resolve", return_value="tau"
-            ), patch("quiver.harness.commands.read_line",
+                "swe.harness.commands.resolve", return_value="tau"
+            ), patch("swe.harness.commands.read_line",
                      side_effect=lambda *_a, **_k: next(inputs)):
                 rc = cmd_edit(["tau"])
             self.assertEqual(rc, 0, typed)

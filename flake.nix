@@ -1,5 +1,5 @@
 {
-  description = "quiver: one command to launch, resume, and analyze many AI coding agents";
+  description = "swe: one command to launch, resume, and analyze many AI coding agents";
 
   # Pinned to the same release branch the consumer dotfiles use, so a
   # `follows` there dedupes the package set instead of silently building
@@ -14,10 +14,10 @@
     in
     {
       packages = forAllSystems (pkgs: rec {
-        default = quiver;
+        default = swe;
 
-        quiver = pkgs.python3Packages.buildPythonApplication {
-          pname = "quiver";
+        swe = pkgs.python3Packages.buildPythonApplication {
+          pname = "swe";
           # One source of truth: the wheel and the derivation cannot drift.
           version = (lib.importTOML ./pyproject.toml).project.version;
           pyproject = true;
@@ -55,7 +55,7 @@
             HOME="$(mktemp -d)" python -m unittest discover -s tests -p 'test_*.py'
             runHook postCheck
           '';
-          pythonImportsCheck = [ "quiver" ];
+          pythonImportsCheck = [ "swe" ];
 
           meta = {
             description = "One command to launch, resume, and analyze many AI coding agents";

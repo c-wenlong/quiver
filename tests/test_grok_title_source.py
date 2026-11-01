@@ -20,10 +20,10 @@ def _write_session(base: Path, sid: str, summary) -> Path:
 
 def _parse(base: Path):
     with mock.patch(
-        "quiver.sessions.parsers.os.path.expanduser",
+        "swe.sessions.parsers.os.path.expanduser",
         side_effect=lambda p: str(base) if p.endswith("sessions") else p,
     ):
-        from quiver.sessions.parsers import parse_grok
+        from swe.sessions.parsers import parse_grok
 
         return {s.session_id: s for s in parse_grok()}
 

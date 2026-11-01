@@ -13,13 +13,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.github import cli as ghcli
-from quiver.github import gh, manage, repos
-from quiver.github import pulls as gh_pulls
-from quiver.remote import pulls as pulls_mod
-from quiver.remote import protocol
-from quiver.github import shared as G
-from quiver.webapp.pages import repositories
+from swe.github import cli as ghcli
+from swe.github import gh, manage, repos
+from swe.github import pulls as gh_pulls
+from swe.remote import pulls as pulls_mod
+from swe.remote import protocol
+from swe.github import shared as G
+from swe.webapp.pages import repositories
 
 from tests.test_remote_hub import _Server, _session
 
@@ -110,10 +110,10 @@ def _stub_prs(name, state, limit):
 class TestList(_Base):
     @contextlib.contextmanager
     def _stubs(self, env=OK_ENV, prs=None, status=None):
-        with patch("quiver.github.gh.probe_env", return_value=env), \
-             patch("quiver.github.cli._fetch_prs",
+        with patch("swe.github.gh.probe_env", return_value=env), \
+             patch("swe.github.cli._fetch_prs",
                    side_effect=prs or _stub_prs) as lp, \
-             patch("quiver.github.cli._fetch_pr_status",
+             patch("swe.github.cli._fetch_pr_status",
                    side_effect=status or (lambda _n: _pr_status())) as ls:
             yield lp, ls
 
@@ -190,8 +190,8 @@ class TestList(_Base):
 class TestDetail(_Base):
     @contextlib.contextmanager
     def _stubs(self, env=OK_ENV, view=None):
-        with patch("quiver.github.gh.probe_env", return_value=env), \
-             patch("quiver.github.gh.run_json",
+        with patch("swe.github.gh.probe_env", return_value=env), \
+             patch("swe.github.gh.run_json",
                    return_value=view or gh.GhResult("ok", data=RAW_PR)):
             yield
 
@@ -304,23 +304,23 @@ class TestOpen(_Base):
     def _stubs(self, env=OK_ENV, installed=True, tmux=True, fetched=None,
                worktree=None, launch=None, blocker=None, tracked=True):
         fetched = fetched or gh.GhResult("ok", data=self.pr)
-        with patch("quiver.remote.catalog.launch_command",
+        with patch("swe.remote.catalog.launch_command",
                    return_value="claude" if installed else None), \
-             patch("quiver.remote.catalog.launchable_harnesses",
+             patch("swe.remote.catalog.launchable_harnesses",
                    return_value=[]), \
-             patch("quiver.remote.catalog.known_session_ids",
+             patch("swe.remote.catalog.known_session_ids",
                    return_value=["old"]), \
-             patch("quiver.remote.supervise.tmux_bin",
+             patch("swe.remote.supervise.tmux_bin",
                    return_value="/usr/bin/tmux" if tmux else None), \
-             patch("quiver.remote.supervise.fork_blocker",
+             patch("swe.remote.supervise.fork_blocker",
                    return_value=blocker), \
-             patch("quiver.remote.catalog.untracked",
+             patch("swe.remote.catalog.untracked",
                    return_value=[] if tracked else ["claude"]), \
-             patch("quiver.github.gh.probe_env", return_value=env), \
-             patch("quiver.github.pulls.fetch", return_value=fetched), \
-             patch("quiver.github.manage.pr_worktree",
+             patch("swe.github.gh.probe_env", return_value=env), \
+             patch("swe.github.pulls.fetch", return_value=fetched), \
+             patch("swe.github.manage.pr_worktree",
                    side_effect=worktree or self._worktree_ok) as wt, \
-             patch("quiver.remote.supervise.launch_new",
+             patch("swe.remote.supervise.launch_new",
                    side_effect=launch,
                    return_value=(True, "launched", "qv-t")) as ln:
             try:

@@ -8,9 +8,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.remote import catalog as catalog_mod
-from quiver.remote import session_model
-from quiver.sessions.models import Session
+from swe.remote import catalog as catalog_mod
+from swe.remote import session_model
+from swe.sessions.models import Session
 
 
 def _session(sid, tool, ts=1000, account_home=""):
@@ -239,7 +239,7 @@ class TestReadOnlyOpen(unittest.TestCase):
         import sqlite3
         import tempfile
         from pathlib import Path
-        from quiver.remote import session_model, tail
+        from swe.remote import session_model, tail
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         folder = Path(tmp.name) / "odd?name#1 %2"

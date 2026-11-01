@@ -40,7 +40,7 @@
 #
 # A prod build also refuses a tree it cannot ship from: non-arm64 hosts
 # (releases are Apple Silicon only, per app/mac/ROADMAP.md), a dirty checkout
-# (untracked files under src/quiver would bundle in silently) and a
+# (untracked files under src/swe would bundle in silently) and a
 # checkout with no version tag (the bundle would stamp 0.0.0, which
 # ReleaseCheck then treats as older than every release).
 set -euo pipefail
@@ -69,7 +69,7 @@ if [ "$channel" = "prod" ]; then
   fi
   if [ -n "$(git -C "$here" status --porcelain)" ]; then
     echo "build-app: refusing a prod build from a dirty checkout: uncommitted" >&2
-    echo "edits (and untracked files under src/quiver) ship silently. Commit or" >&2
+    echo "edits (and untracked files under src/swe) ship silently. Commit or" >&2
     echo "stash first, or build a clean worktree like install-app.sh does." >&2
     exit 1
   fi

@@ -11,9 +11,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver.console import strip_ansi
-from quiver.find.mcps import ToolView, _kind, _signature, hub_view, prefix_of
-from quiver.harness import registry
+from swe.console import strip_ansi
+from swe.find.mcps import ToolView, _kind, _signature, hub_view, prefix_of
+from swe.harness import registry
 from tests._tempdir import temp_dir
 
 LOCAL = {"command": "npx", "args": ["thing"]}
@@ -52,7 +52,7 @@ class DuplicateRuleTest(unittest.TestCase):
     filed twice."""
 
     def _hub(self, servers):
-        with mock.patch("quiver.mcp.cli.get_hub_servers", return_value=servers):
+        with mock.patch("swe.mcp.cli.get_hub_servers", return_value=servers):
             return hub_view()
 
     def test_two_locals_under_different_names_are_flagged(self):
@@ -82,34 +82,34 @@ class ToolCoverageTest(unittest.TestCase):
         """Every registry harness gets an optimistic config path so sync
         works; listing 20 that have no MCP config at all as "missing 33
         servers" buries the ones really behind."""
-        from quiver.find import mcps
+        from swe.find import mcps
 
-        with mock.patch("quiver.mcp.cli.load_registry", return_value={"ghost": {}}), \
-             mock.patch("quiver.mcp.cli.get_mcp_tools", return_value={"ghost": {}}), \
-             mock.patch("quiver.mcp.cli.get_tool_servers", return_value={}), \
-             mock.patch("quiver.mcp.cli.get_tool_config",
+        with mock.patch("swe.mcp.cli.load_registry", return_value={"ghost": {}}), \
+             mock.patch("swe.mcp.cli.get_mcp_tools", return_value={"ghost": {}}), \
+             mock.patch("swe.mcp.cli.get_tool_servers", return_value={}), \
+             mock.patch("swe.mcp.cli.get_tool_config",
                         return_value={"path": "/nope/does/not/exist.json"}):
             self.assertEqual(mcps.tool_views({"a": LOCAL}), [])
 
     def test_servers_are_split_into_from_hub_and_only_here(self):
-        from quiver.find import mcps
+        from swe.find import mcps
 
-        with mock.patch("quiver.mcp.cli.load_registry", return_value={"t": {}}), \
-             mock.patch("quiver.mcp.cli.get_mcp_tools", return_value={"t": {}}), \
-             mock.patch("quiver.mcp.cli.get_tool_servers",
+        with mock.patch("swe.mcp.cli.load_registry", return_value={"t": {}}), \
+             mock.patch("swe.mcp.cli.get_mcp_tools", return_value={"t": {}}), \
+             mock.patch("swe.mcp.cli.get_tool_servers",
                         return_value={"shared": LOCAL, "localonly": LOCAL}), \
-             mock.patch("quiver.mcp.cli.get_tool_config", return_value={"path": ""}):
+             mock.patch("swe.mcp.cli.get_tool_config", return_value={"path": ""}):
             views = mcps.tool_views({"shared": LOCAL})
         self.assertEqual(views[0].present, {"shared"})
         self.assertEqual(views[0].only_here, {"localonly"})
 
     def test_a_parser_error_does_not_take_down_the_view(self):
-        from quiver.find import mcps
+        from swe.find import mcps
 
-        with mock.patch("quiver.mcp.cli.load_registry", return_value={"t": {}}), \
-             mock.patch("quiver.mcp.cli.get_mcp_tools", return_value={"t": {}}), \
-             mock.patch("quiver.mcp.cli.get_tool_servers", side_effect=ValueError), \
-             mock.patch("quiver.mcp.cli.get_tool_config", return_value={"path": ""}):
+        with mock.patch("swe.mcp.cli.load_registry", return_value={"t": {}}), \
+             mock.patch("swe.mcp.cli.get_mcp_tools", return_value={"t": {}}), \
+             mock.patch("swe.mcp.cli.get_tool_servers", side_effect=ValueError), \
+             mock.patch("swe.mcp.cli.get_tool_config", return_value={"path": ""}):
             self.assertEqual(mcps.tool_views({"a": LOCAL}), [])
 
 
@@ -126,12 +126,12 @@ class RenderTest(unittest.TestCase):
         empty, so every harness here resolves as unknown and nothing is
         filtered by it.
         """
-        from quiver.find.commands import cmd_find_mcps
+        from swe.find.commands import cmd_find_mcps
 
-        with mock.patch("quiver.mcp.cli.get_hub_servers", return_value=servers), \
-             mock.patch("quiver.find.mcps.tool_views", return_value=views), \
-             mock.patch("quiver.find.mcps.scan_configs", return_value=list(configs)), \
-             mock.patch("quiver.find.mcps.unmanaged", return_value=stray or {}), \
+        with mock.patch("swe.mcp.cli.get_hub_servers", return_value=servers), \
+             mock.patch("swe.find.mcps.tool_views", return_value=views), \
+             mock.patch("swe.find.mcps.scan_configs", return_value=list(configs)), \
+             mock.patch("swe.find.mcps.unmanaged", return_value=stray or {}), \
              mock.patch.object(registry, "HARNESS_FILE", Path("/nonexistent/harness.json")):
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -141,12 +141,12 @@ class RenderTest(unittest.TestCase):
     def test_the_disk_is_scanned_once(self):
         """unmanaged() used to run its own scan_configs, so every
         `swe find mcps` walked every dot-directory in home twice."""
-        from quiver.find import mcps
-        from quiver.find.commands import cmd_find_mcps
+        from swe.find import mcps
+        from swe.find.commands import cmd_find_mcps
 
-        with mock.patch("quiver.mcp.cli.get_hub_servers", return_value={"a": LOCAL}), \
-             mock.patch("quiver.find.mcps.tool_views", return_value=[]), \
-             mock.patch("quiver.find.mcps.scan_configs", return_value=[]) as scan, \
+        with mock.patch("swe.mcp.cli.get_hub_servers", return_value={"a": LOCAL}), \
+             mock.patch("swe.find.mcps.tool_views", return_value=[]), \
+             mock.patch("swe.find.mcps.scan_configs", return_value=[]) as scan, \
              mock.patch.object(registry, "HARNESS_FILE", Path("/nonexistent/harness.json")):
             with redirect_stdout(io.StringIO()):
                 cmd_find_mcps()
@@ -218,7 +218,7 @@ class ScanTest(unittest.TestCase):
         return p
 
     def _scan(self, **kw):
-        from quiver.find.mcps import scan_configs
+        from swe.find.mcps import scan_configs
 
         return scan_configs(self.home, **kw)
 
@@ -317,7 +317,7 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(self._scan(scope="all"), [])
 
     def test_unmanaged_ignores_servers_only_in_snapshots(self):
-        from quiver.find.mcps import unmanaged
+        from swe.find.mcps import unmanaged
 
         self._write(".Trash/old/.copilot/mcp-config.json",
                     {"mcpServers": {"rf__lazyweb": REMOTE}})
@@ -327,14 +327,14 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(sorted(unmanaged(self.home, {})), ["stray"])
 
     def test_unmanaged_lists_only_what_the_hub_lacks(self):
-        from quiver.find.mcps import unmanaged
+        from swe.find.mcps import unmanaged
 
         self._write(".h/mcp.json", {"mcpServers": {"known": LOCAL, "stray": LOCAL}})
         out = unmanaged(self.home, {"known": LOCAL})
         self.assertEqual(sorted(out), ["stray"])
 
     def test_unmanaged_uses_a_scan_it_is_handed(self):
-        from quiver.find import mcps
+        from swe.find import mcps
 
         self._write(".h/mcp.json", {"mcpServers": {"stray": LOCAL}})
         configs = self._scan(scope="global")
@@ -342,7 +342,7 @@ class ScanTest(unittest.TestCase):
             self.assertEqual(sorted(mcps.unmanaged(self.home, {}, configs=configs)), ["stray"])
 
     def test_unmanaged_records_which_config_declared_it(self):
-        from quiver.find.mcps import unmanaged
+        from swe.find.mcps import unmanaged
 
         self._write(".h/mcp.json", {"mcpServers": {"stray": REMOTE}})
         out = unmanaged(self.home, {})
@@ -360,7 +360,7 @@ class FlowLayoutTest(unittest.TestCase):
     """
 
     def _lines(self, items, width, **kw):
-        from quiver.find import commands
+        from swe.find import commands
 
         with mock.patch.object(commands, "terminal_width", return_value=width):
             buf = io.StringIO()

@@ -56,7 +56,7 @@ card appears behind the sheet and the row reads Added.
 
 ## Data
 
-`src/quiver/status/` is a stdlib port of the app's `QuiverCore/Status`:
+`src/swe/status/` is a stdlib port of the app's `QuiverCore/Status`:
 
 | Module | Swift | What |
 |---|---|---|

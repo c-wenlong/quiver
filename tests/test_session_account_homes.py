@@ -15,9 +15,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.models import Session, SessionRow
-from quiver.sessions.parsers import parse_claude, parse_codex
-from quiver.sessions.resume import resume_json
+from swe.sessions.models import Session, SessionRow
+from swe.sessions.parsers import parse_claude, parse_codex
+from swe.sessions.resume import resume_json
 
 REAL_EXPANDUSER = os.path.expanduser
 PROJECT = "-Users-dev-project"
@@ -84,7 +84,7 @@ class ClaudeAccountHomesTest(unittest.TestCase):
             (home / ".quiver" / "accounts" / "claude" / "retired" / "data").mkdir(parents=True)
 
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=_FakeHome(home),
             ):
                 sessions = {s.session_id: s for s in parse_claude()}
@@ -103,7 +103,7 @@ class ClaudeAccountHomesTest(unittest.TestCase):
                 [_claude_user("Fix login")],
             )
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=_FakeHome(home),
             ):
                 sessions = parse_claude()
@@ -121,7 +121,7 @@ class ClaudeAccountHomesTest(unittest.TestCase):
             _write_jsonl(account / "projects" / PROJECT / "s1.jsonl", record)
 
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=_FakeHome(home),
             ):
                 sessions = {s.account_home: s for s in parse_claude()}
@@ -130,7 +130,7 @@ class ClaudeAccountHomesTest(unittest.TestCase):
         self.assertEqual("s1", sessions[str(account)].session_id)
 
     def test_account_home_survives_the_session_cache(self):
-        from quiver.sessions import aggregator
+        from swe.sessions import aggregator
 
         session = Session(
             timestamp=1_000, agent="Claude Code", path="/c/quiver",
@@ -155,7 +155,7 @@ class CodexAccountHomesTest(unittest.TestCase):
             _write_jsonl(day_dir / rollout, [_codex_meta(), _codex_user("Fix the login bug")])
 
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=_FakeHome(home),
             ):
                 sessions = parse_codex()
@@ -183,7 +183,7 @@ class CodexAccountHomesTest(unittest.TestCase):
             )
 
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=_FakeHome(home),
             ):
                 sessions = parse_codex()
@@ -201,7 +201,7 @@ class CodexAccountHomesTest(unittest.TestCase):
             _write_jsonl(account / "sessions" / "2026" / "09" / "09" / rollout, records)
 
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=_FakeHome(home),
             ):
                 sessions = parse_codex()

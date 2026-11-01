@@ -22,8 +22,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver.sessions import failures
-from quiver.sessions.parsers import parse_cursor
+from swe.sessions import failures
+from swe.sessions.parsers import parse_cursor
 
 
 def _cursor_home(tmp: str, uuid: str = "f36fd647-90f5-454e-b460-1f37ce0653b9",
@@ -113,7 +113,7 @@ class FailureReportingTest(unittest.TestCase):
         self.addCleanup(failures.clear)
 
     def test_a_raising_parser_is_recorded_not_swallowed(self):
-        import quiver.sessions.aggregator as agg
+        import swe.sessions.aggregator as agg
 
         def boom():
             raise NameError("name 'uuid_dir' is not defined")
@@ -125,8 +125,8 @@ class FailureReportingTest(unittest.TestCase):
         self.assertIn("NameError", failures.snapshot()["cursor"])
 
     def test_one_broken_parser_does_not_stop_the_others(self):
-        import quiver.sessions.aggregator as agg
-        from quiver.sessions.models import Session
+        import swe.sessions.aggregator as agg
+        from swe.sessions.models import Session
 
         def boom():
             raise ValueError("bad file")
@@ -143,8 +143,8 @@ class FailureReportingTest(unittest.TestCase):
         self.assertIn("broken", failures.snapshot())
 
     def test_failures_are_printed_rather_than_looking_like_no_history(self):
-        import quiver.sessions.aggregator as agg
-        from quiver.sessions.commands import cmd_session
+        import swe.sessions.aggregator as agg
+        from swe.sessions.commands import cmd_session
 
         def boom():
             raise NameError("name 'uuid_dir' is not defined")

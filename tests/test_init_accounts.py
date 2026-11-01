@@ -9,10 +9,10 @@ import os
 import unittest
 from pathlib import Path
 
-from quiver.configuration import validate_config
-from quiver.init import accounts
-from quiver.init import commands as init_commands
-from quiver.init.layout import LinkStatus, agents_file, hooks_dir, skills_dir
+from swe.configuration import validate_config
+from swe.init import accounts
+from swe.init import commands as init_commands
+from swe.init.layout import LinkStatus, agents_file, hooks_dir, skills_dir
 
 from tests._tempdir import temp_dir
 
@@ -304,7 +304,7 @@ class ReviewFixesTest(unittest.TestCase):
         self.assertEqual(len(doc["account_notes"]), 1)
 
     def test_defaults_show_every_switch_off(self):
-        from quiver.configuration import get_value, resolve_config
+        from swe.configuration import get_value, resolve_config
 
         self.assertIs(get_value(resolve_config({}), "accounts.sync.skills"), False)
 
@@ -400,7 +400,7 @@ class QuiverGuardTest(unittest.TestCase):
         self.assertFalse(target.is_symlink())
 
     def test_hook_apply_refuses_to_absorb_inside_quiver(self):
-        from quiver.init.hooks import apply_hook_status
+        from swe.init.hooks import apply_hook_status
 
         home = _home(self)
         _profiles(home, WORK)
@@ -427,7 +427,7 @@ class InitIntegrationTest(unittest.TestCase):
             "path": str(_acct(home) / "skills"), "state": "would-create", "detail": "",
         }])
         # Account rows never join the paths --force would replace.
-        from quiver.webapp.pages.doctor import blocked_paths
+        from swe.webapp.pages.doctor import blocked_paths
         self.assertNotIn(str(_acct(home) / "skills"), blocked_paths(run, home))
 
     def test_accounts_flag_runs_only_the_account_pass(self):
@@ -496,12 +496,12 @@ class InitIntegrationTest(unittest.TestCase):
         from contextlib import redirect_stdout
         from unittest import mock
 
-        from quiver import config_commands
+        from swe import config_commands
 
         home = _home(self)
         path = home / ".quiver" / "config" / "config.json"
         out = io.StringIO()
-        with mock.patch("quiver.configuration.CONFIG_FILE", path), redirect_stdout(out):
+        with mock.patch("swe.configuration.CONFIG_FILE", path), redirect_stdout(out):
             config_commands.cmd_config(["set", "accounts.sync.skills", "true"])
             config_commands.cmd_config(["unset", "accounts.sync.skills"])
         self.assertEqual(out.getvalue().count("Run swe init"), 2)

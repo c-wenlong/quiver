@@ -9,10 +9,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.harness.discover import HarnessFinding
-from quiver.webapp import harnesses
-from quiver.webapp.pages import PageError
-from quiver.webapp.pages import harness as harness_page
+from swe.harness.discover import HarnessFinding
+from swe.webapp import harnesses
+from swe.webapp.pages import PageError
+from swe.webapp.pages import harness as harness_page
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp import app_js_function
@@ -29,11 +29,11 @@ ARCHIVE = {"ollama": {"reason": "not a harness", "archived_at": "2026-10-06T10:3
 class _Registry:
     def setUp(self):
         self._patches = [
-            patch("quiver.harness.registry.load_registry_readonly", return_value=dict(REGISTRY)),
-            patch("quiver.harness.stars.load_stars", return_value=["claude"]),
-            patch("quiver.harness.archive.load_archive", return_value=dict(ARCHIVE)),
-            patch("quiver.sessions.usage.session_counts", return_value={"claude": 12, "codex": 3}),
-            patch("quiver.harness.tools.is_installed", side_effect=lambda cmd: cmd != "codex"),
+            patch("swe.harness.registry.load_registry_readonly", return_value=dict(REGISTRY)),
+            patch("swe.harness.stars.load_stars", return_value=["claude"]),
+            patch("swe.harness.archive.load_archive", return_value=dict(ARCHIVE)),
+            patch("swe.sessions.usage.session_counts", return_value={"claude": 12, "codex": 3}),
+            patch("swe.harness.tools.is_installed", side_effect=lambda cmd: cmd != "codex"),
         ]
         for p in self._patches:
             p.start()
@@ -69,7 +69,7 @@ class TestRoute(_Registry, HubBase):
         self.assertEqual(body["machine"], self.srv.state.machine["name"])
 
     def test_an_unreadable_registry_is_a_503(self):
-        with patch("quiver.webapp.harnesses.rows", side_effect=ValueError("bad json")):
+        with patch("swe.webapp.harnesses.rows", side_effect=ValueError("bad json")):
             status, data = self.srv.request("GET", "/v1/app/harnesses", headers=self.auth())
         self.assertEqual(status, 503)
         self.assertIn("bad json", data.decode())
@@ -101,11 +101,11 @@ class _TempRegistry:
         self.file = config / "harness.json"
         self.file.write_text(json.dumps(ON_DISK, indent=2))
         self._patches = [
-            patch("quiver.harness.registry.CONFIG_DIR", config),
-            patch("quiver.harness.registry.HARNESS_FILE", self.file),
-            patch("quiver.harness.registry.TOOLS_FILE", config / "tools.json"),
-            patch("quiver.sessions.usage.session_counts", return_value={"claude": 12, "codex": 3}),
-            patch("quiver.harness.tools.is_installed", return_value=True),
+            patch("swe.harness.registry.CONFIG_DIR", config),
+            patch("swe.harness.registry.HARNESS_FILE", self.file),
+            patch("swe.harness.registry.TOOLS_FILE", config / "tools.json"),
+            patch("swe.sessions.usage.session_counts", return_value={"claude": 12, "codex": 3}),
+            patch("swe.harness.tools.is_installed", return_value=True),
         ]
         for p in self._patches:
             p.start()
@@ -302,7 +302,7 @@ class TestWriteRoute(_TempRegistry, HubBase):
     def test_the_page_reads_only_the_discover_view(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/harness", headers=self.auth())[0], 404)
         self.assertEqual(self.srv.request("GET", "/v1/app/harness?view=discover")[0], 401)
-        with patch("quiver.harness.discover.discover_harnesses", return_value=[FOUND[0]]):
+        with patch("swe.harness.discover.discover_harnesses", return_value=[FOUND[0]]):
             status, data = self.srv.request("GET", "/v1/app/harness?view=discover", headers=self.auth())
         self.assertEqual(status, 200, data)
         self.assertEqual([f["name"] for f in json.loads(data)["findings"]], ["droid"])
@@ -349,7 +349,7 @@ class TestHeaderActions(unittest.TestCase):
     paintHarnesses binds them, never in the loading or error header."""
 
     def test_actions_only_when_painted(self):
-        manage_js = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/manage.js"
+        manage_js = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/manage.js"
         prelude = ("const esc = (s) => String(s); const icon = () => '';\n"
                    "const pageHeader = (t, s, actions = '') => actions;\n")
         body = "process.stdout.write(JSON.stringify([harnessesHeader(), harnessesHeader(true)]));\n"
@@ -367,7 +367,7 @@ class TestHeaderActions(unittest.TestCase):
         """bindSearch, which every filter box that repaints as you type
         uses: text kept on each keystroke, the repaint (which replaces
         the box) held while a composition is open and run once it ends."""
-        manage_js = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/manage.js"
+        manage_js = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/manage.js"
         body = ("const box = { value: '' }, seen = [], paints = [];\n"
                 "bindSearch(box, (t) => seen.push(t), () => paints.push(box.value));\n"
                 "box.value = 'a'; box.oninput({ isComposing: false });\n"
@@ -461,8 +461,8 @@ class TestEdit(_TempRegistry, unittest.TestCase):
 class TestDetect(_TempRegistry, unittest.TestCase):
     def setUp(self):
         super().setUp()
-        for p in (patch("quiver.harness.discover.discover_harnesses", return_value=list(FOUND)),
-                  patch("quiver.harness.discover.live_version", return_value="1.2.3")):
+        for p in (patch("swe.harness.discover.discover_harnesses", return_value=list(FOUND)),
+                  patch("swe.harness.discover.live_version", return_value="1.2.3")):
             p.start()
             self.addCleanup(p.stop)
 
@@ -567,7 +567,7 @@ class TestSheetScript(unittest.TestCase):
         """The harness sheet is app.js's bodySheet, so route() closes it on
         navigation; closing it however it happens forgets the open sheet,
         and Esc goes through closeHarnessSheet (held while a save runs)."""
-        root = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static"
+        root = Path(__file__).resolve().parents[1] / "src/swe/webapp/static"
         prelude = ("let listeners = 0;\n"
                    "globalThis.window = { addEventListener() { listeners++; } };\n"
                    "const made = new Map();\n"

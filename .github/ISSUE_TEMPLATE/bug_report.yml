@@ -1,6 +1,6 @@
 # Field ids and the Area options are part of a contract: the Mac app's
 # Help › Report a Bug (app/mac/Sources/QuiverCore/Support/IssueReport.swift)
-# and `swe bug` (src/quiver/bug.py) prefill them by name, and
+# and `swe bug` (src/swe/bug.py) prefill them by name, and
 # .github/workflows/issue-labels.yml maps each Area option to a label.
 # Rename one and update all three.
 name: Bug report

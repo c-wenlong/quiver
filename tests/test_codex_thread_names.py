@@ -24,8 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.commands import _codex_resume_args
-from quiver.sessions.parsers import _codex_is_rename, codex_thread_id, parse_codex
+from swe.sessions.commands import _codex_resume_args
+from swe.sessions.parsers import _codex_is_rename, codex_thread_id, parse_codex
 
 THREAD_ID = "01a084f0-b4fe-72d0-9b7b-1a5214957f73"
 ROLLOUT = f"rollout-2026-09-09T14-52-42-{THREAD_ID}.jsonl"
@@ -118,7 +118,7 @@ class ParseCodexTitleTest(unittest.TestCase):
                 return REAL_EXPANDUSER(path)
 
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
+                "swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
             ):
                 sessions = parse_codex()
         self.assertEqual(expect, len(sessions))
@@ -363,7 +363,7 @@ class CodexResumedThreadsTest(unittest.TestCase):
                 return REAL_EXPANDUSER(path)
 
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
+                "swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
             ):
                 return parse_codex()
 

@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 
-MCP_MODULE = "quiver.mcp"
+MCP_MODULE = "swe.mcp"
 PROJECT_SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
 
 
@@ -179,7 +179,7 @@ class McpAddRemoveTest(unittest.TestCase):
         """Run in-process cmd_* against the throwaway HOME."""
         from unittest import mock
 
-        from quiver.mcp import cli
+        from swe.mcp import cli
 
         return mock.patch.multiple(
             cli,
@@ -188,7 +188,7 @@ class McpAddRemoveTest(unittest.TestCase):
 
     def test_to_without_a_backend_refuses_before_writing(self):
         from unittest import mock
-        from quiver.mcp import cli
+        from swe.mcp import cli
 
         env_patch, home_patch = self._in_home()
         with env_patch, home_patch, \
@@ -199,7 +199,7 @@ class McpAddRemoveTest(unittest.TestCase):
 
     def test_remove_without_a_backend_refuses(self):
         from unittest import mock
-        from quiver.mcp import cli
+        from swe.mcp import cli
 
         self.run_mcp("add", "s", "--to=claude", "--", "c")
         before = self.claude()
@@ -316,7 +316,7 @@ class HttpTransportRoundTripTest(unittest.TestCase):
     """An explicit and an implicit http read the same; sse stays distinct."""
 
     def test_strict_sees_no_change_for_http_either_way(self):
-        from quiver.mcp.formats import get_conversion_issues
+        from swe.mcp.formats import get_conversion_issues
 
         plain = {"url": "https://a/mcp"}
         explicit = {"url": "https://a/mcp", "type": "http"}
@@ -324,7 +324,7 @@ class HttpTransportRoundTripTest(unittest.TestCase):
         self.assertEqual(get_conversion_issues(explicit, "droid", "standard"), [])
 
     def test_sse_survives_standard_to_droid(self):
-        from quiver.mcp.formats import get_conversion_issues, get_format_handler
+        from swe.mcp.formats import get_conversion_issues, get_format_handler
 
         sse = {"url": "https://a/sse", "type": "sse"}
         self.assertEqual(get_conversion_issues(sse, "standard", "droid"), [])

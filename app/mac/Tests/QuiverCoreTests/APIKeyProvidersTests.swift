@@ -11,7 +11,7 @@ import Testing
             .deletingLastPathComponent() // QuiverCoreTests
             .deletingLastPathComponent() // Tests
             .deletingLastPathComponent() // app/mac
-            .appending(path: "../../src/quiver/providers/defaults.py")
+            .appending(path: "../../src/swe/providers/defaults.py")
             .standardizedFileURL
         let text = try String(contentsOf: file, encoding: .utf8)
         let entryPattern = #/(?m)^    "([a-z0-9_]+)": \{\n(?:(?!^    \},)[\s\S])*^    \},?$/#

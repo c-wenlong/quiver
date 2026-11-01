@@ -1,10 +1,10 @@
-"""Unit tests for quiver.providers.keys — masking/discovery/read helpers."""
+"""Unit tests for swe.providers.keys — masking/discovery/read helpers."""
 
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from quiver.providers.keys import (
+from swe.providers.keys import (
     default_keys_dir,
     find_key_file,
     mask_key,
@@ -118,7 +118,7 @@ class ReadShellExportKeysTest(unittest.TestCase):
             )
 
     def test_reads_back_what_the_key_writers_escape(self):
-        from quiver.providers.keyfile import KeysFile
+        from swe.providers.keyfile import KeysFile
         with TemporaryDirectory() as tmp:
             f = Path(tmp) / ".api_keys"
             for value in ['abc$def', 'q"uote', "back\\slash", "tick`s", "sk-plain-123"]:

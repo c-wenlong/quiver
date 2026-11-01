@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from quiver.harness.doctor import issue_findings, setup_findings
+from swe.harness.doctor import issue_findings, setup_findings
 
 
 class SetupFindingsTest(unittest.TestCase):
@@ -21,15 +21,15 @@ class SetupFindingsTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def hub(self):
-        quiver = self.home / ".quiver"
-        quiver.mkdir(exist_ok=True)
-        return quiver
+        swe_dir = self.home / ".quiver"
+        swe_dir.mkdir(exist_ok=True)
+        return swe_dir
 
     def findings(self, registry, states=None):
         (self.home / "harness.json").write_text(json.dumps(registry))
-        with mock.patch("quiver.harness.registry.HARNESS_FILE",
+        with mock.patch("swe.harness.registry.HARNESS_FILE",
                         self.home / "harness.json"), \
-             mock.patch("quiver.init.layout.link_states",
+             mock.patch("swe.init.layout.link_states",
                         return_value=states or {}):
             return setup_findings(self.home)
 
@@ -171,13 +171,13 @@ class SetupFindingsTest(unittest.TestCase):
         self.assertIn("managed elsewhere", got[0].fix)
 
     def test_another_harness_gets_no_drop_action(self):
-        from quiver.harness.doctor import _marketplace_remedies
+        from swe.harness.doctor import _marketplace_remedies
         remedies = _marketplace_remedies("codex", ["x"], ["x"], [], False)
         self.assertNotIn("marketplace-drop",
                          [r.get("action") for r in remedies])
 
     def test_drop_marketplace_entries_edits_both_files(self):
-        from quiver.harness.doctor import drop_marketplace_entries
+        from swe.harness.doctor import drop_marketplace_entries
         settings = self._declare(["nus", "design", "here"], present=["here"])
         plugins = self.home / ".claude" / "plugins"
         plugins.mkdir()
@@ -196,7 +196,7 @@ class SetupFindingsTest(unittest.TestCase):
         self.assertEqual(len(list((self.hub() / "backups").iterdir())), 2)
 
     def test_a_managed_settings_file_is_skipped_not_failed(self):
-        from quiver.harness.doctor import drop_marketplace_entries
+        from swe.harness.doctor import drop_marketplace_entries
         settings = self._declare(["nus"])
         real = self.home / "real-settings.json"
         settings.rename(real)
@@ -213,7 +213,7 @@ class SetupFindingsTest(unittest.TestCase):
         self.assertEqual(json.loads(known.read_text()), {})
 
     def test_an_unreadable_file_is_reported_and_the_other_still_drops(self):
-        from quiver.harness.doctor import drop_marketplace_entries
+        from swe.harness.doctor import drop_marketplace_entries
 
         settings = self._declare(["nus"])
         settings.write_text("{corrupt")
@@ -228,7 +228,7 @@ class SetupFindingsTest(unittest.TestCase):
         self.assertEqual(json.loads(known.read_text()), {})
 
     def test_a_non_object_and_a_missing_map_are_reported(self):
-        from quiver.harness.doctor import drop_marketplace_entries
+        from swe.harness.doctor import drop_marketplace_entries
 
         settings = self._declare(["nus"])
         settings.write_text(json.dumps(["nus"]))
@@ -239,7 +239,7 @@ class SetupFindingsTest(unittest.TestCase):
         self.assertIn("has no extraKnownMarketplaces map", error)
 
     def test_a_missing_name_is_silent_a_missing_file_reports(self):
-        from quiver.harness.doctor import drop_marketplace_entries
+        from swe.harness.doctor import drop_marketplace_entries
 
         self._declare(["nus"])
         plugins = self.home / ".claude" / "plugins"
@@ -252,10 +252,10 @@ class SetupFindingsTest(unittest.TestCase):
         self.assertIn("could not read", error)
 
     def test_a_file_changed_under_the_read_is_reported(self):
-        from quiver.harness.doctor import drop_marketplace_entries
+        from swe.harness.doctor import drop_marketplace_entries
 
         self._declare(["nus"])
-        with mock.patch("quiver.hooks.settings._unchanged",
+        with mock.patch("swe.hooks.settings._unchanged",
                         side_effect=ValueError("changed")):
             error = drop_marketplace_entries(self.home, ["nus"], [])
         self.assertIn("changed", error)
@@ -315,7 +315,7 @@ class SetupFindingsTest(unittest.TestCase):
         self.assertEqual(self.findings({})[0].to_json()["action"], "setup")
 
     def test_warnings_keep_exit_zero(self):
-        from quiver.harness.commands import cmd_doctor
+        from swe.harness.commands import cmd_doctor
 
         env = mock.Mock(node="/usr/bin/node", npm="/usr/bin/npm",
                         node_version="22", npm_version="10",
@@ -325,13 +325,13 @@ class SetupFindingsTest(unittest.TestCase):
         (self.home / "harness.json").write_text("{}")
         out = io.StringIO()
         with mock.patch.dict("os.environ", {"HOME": str(self.home)}), \
-             mock.patch("quiver.harness.commands.load_registry", return_value={}), \
-             mock.patch("quiver.harness.path_health.probe_node_env", return_value=env), \
-             mock.patch("quiver.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"), \
-             mock.patch("quiver.harness.path_health.nvm_bin_dirs", return_value=[]), \
-             mock.patch("quiver.harness.path_health.find_off_path_tools", return_value=[]), \
-             mock.patch("quiver.harness.commands.shutil.which", return_value="/usr/bin/npm"), \
-             mock.patch("quiver.harness.registry.HARNESS_FILE", self.home / "harness.json"), \
+             mock.patch("swe.harness.commands.load_registry", return_value={}), \
+             mock.patch("swe.harness.path_health.probe_node_env", return_value=env), \
+             mock.patch("swe.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"), \
+             mock.patch("swe.harness.path_health.nvm_bin_dirs", return_value=[]), \
+             mock.patch("swe.harness.path_health.find_off_path_tools", return_value=[]), \
+             mock.patch("swe.harness.commands.shutil.which", return_value="/usr/bin/npm"), \
+             mock.patch("swe.harness.registry.HARNESS_FILE", self.home / "harness.json"), \
              contextlib.redirect_stdout(out):
             self.assertEqual(cmd_doctor(["--json"]), 0)
         doc = json.loads(out.getvalue())
@@ -339,7 +339,7 @@ class SetupFindingsTest(unittest.TestCase):
         self.assertIn("setup.registry", checks)
 
     def test_plain_output_shows_the_setup_section(self):
-        from quiver.harness.commands import cmd_doctor
+        from swe.harness.commands import cmd_doctor
 
         env = mock.Mock(node="/usr/bin/node", npm="/usr/bin/npm",
                         node_version="22", npm_version="10",
@@ -348,12 +348,12 @@ class SetupFindingsTest(unittest.TestCase):
         self.hub()  # a hub with no AGENTS.md
         out = io.StringIO()
         with mock.patch.dict("os.environ", {"HOME": str(self.home)}), \
-             mock.patch("quiver.harness.commands.load_registry", return_value={}), \
-             mock.patch("quiver.harness.path_health.probe_node_env", return_value=env), \
-             mock.patch("quiver.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"), \
-             mock.patch("quiver.harness.path_health.nvm_bin_dirs", return_value=[]), \
-             mock.patch("quiver.harness.path_health.find_off_path_tools", return_value=[]), \
-             mock.patch("quiver.harness.commands.shutil.which", return_value="/usr/bin/npm"), \
+             mock.patch("swe.harness.commands.load_registry", return_value={}), \
+             mock.patch("swe.harness.path_health.probe_node_env", return_value=env), \
+             mock.patch("swe.harness.path_health.preferred_npm_bin", return_value="/usr/bin/npm"), \
+             mock.patch("swe.harness.path_health.nvm_bin_dirs", return_value=[]), \
+             mock.patch("swe.harness.path_health.find_off_path_tools", return_value=[]), \
+             mock.patch("swe.harness.commands.shutil.which", return_value="/usr/bin/npm"), \
              contextlib.redirect_stdout(out):
             cmd_doctor([])
         text = out.getvalue()

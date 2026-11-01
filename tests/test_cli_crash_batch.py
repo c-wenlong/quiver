@@ -21,8 +21,8 @@ from unittest import mock
 
 class SessionUseFilePathTest(unittest.TestCase):
     def test_existing_file_path_is_rejected_before_chdir(self):
-        from quiver.sessions.commands import _resume_session
-        from quiver.sessions.models import Session
+        from swe.sessions.commands import _resume_session
+        from swe.sessions.models import Session
 
         with tempfile.TemporaryDirectory() as tmp:
             file_path = Path(tmp) / "transcript.jsonl"
@@ -42,8 +42,8 @@ class SessionUseFilePathTest(unittest.TestCase):
             self.assertEqual(os.getcwd(), cwd_before)
 
     def test_existing_dir_still_resumes(self):
-        from quiver.sessions.commands import _resume_session
-        from quiver.sessions.models import Session
+        from swe.sessions.commands import _resume_session
+        from swe.sessions.models import Session
 
         with tempfile.TemporaryDirectory() as tmp:
             session = Session(
@@ -53,7 +53,7 @@ class SessionUseFilePathTest(unittest.TestCase):
             cwd_before = os.getcwd()
             try:
                 with mock.patch(
-                    "quiver.harness.commands.cmd_use", return_value=0
+                    "swe.harness.commands.cmd_use", return_value=0
                 ) as use:
                     with redirect_stdout(io.StringIO()):
                         rc = _resume_session(session)
@@ -70,7 +70,7 @@ class SessionUseFilePathTest(unittest.TestCase):
 
 class SessionCountsCacheTest(unittest.TestCase):
     def _load(self, payload):
-        from quiver.sessions import usage
+        from swe.sessions import usage
 
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp) / "session_counts.json"
@@ -144,7 +144,7 @@ class SessionCountsCacheTest(unittest.TestCase):
 
 class DoctorHostilePathsTest(unittest.TestCase):
     def test_registry_root_with_missing_user_warns_not_crashes(self):
-        from quiver.harness.drift import check_registry_schema
+        from swe.harness.drift import check_registry_schema
 
         registry = {
             "x": {
@@ -163,7 +163,7 @@ class DoctorHostilePathsTest(unittest.TestCase):
         )
 
     def test_dangling_symlink_scan_survives_unreadable_dir(self):
-        from quiver.harness.drift import check_dangling_symlinks
+        from swe.harness.drift import check_dangling_symlinks
 
         with tempfile.TemporaryDirectory() as tmp:
             locked = Path(tmp) / "locked"
@@ -181,7 +181,7 @@ class DoctorHostilePathsTest(unittest.TestCase):
         )
 
     def test_nvm_bin_dirs_survives_unreadable_versions_dir(self):
-        from quiver.harness.path_health import nvm_bin_dirs
+        from swe.harness.path_health import nvm_bin_dirs
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -205,7 +205,7 @@ class DoctorHostilePathsTest(unittest.TestCase):
         """Lock the parent, not the versions dir: stat() on
         ``.nvm/versions/node`` then raises EACCES inside ``is_dir()``
         itself, before the iterdir guard can run."""
-        from quiver.harness.path_health import nvm_bin_dirs
+        from swe.harness.path_health import nvm_bin_dirs
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -225,7 +225,7 @@ class DoctorHostilePathsTest(unittest.TestCase):
 
     def test_nvm_bin_dirs_skips_unstatable_version_dir(self):
         """iterdir succeeds but ``child/bin`` cannot be stat()'d."""
-        from quiver.harness.path_health import nvm_bin_dirs
+        from swe.harness.path_health import nvm_bin_dirs
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -247,7 +247,7 @@ class DoctorHostilePathsTest(unittest.TestCase):
         """is_dir() itself raises EACCES on Python 3.11-3.13 when a
         parent lacks +x. The mode bit alone cannot prove it (3.14+
         returns False instead), so the raise is patched in."""
-        from quiver.harness.drift import check_dangling_symlinks
+        from swe.harness.drift import check_dangling_symlinks
 
         with tempfile.TemporaryDirectory() as tmp:
             locked = Path(tmp) / "locked"
@@ -266,7 +266,7 @@ class DoctorHostilePathsTest(unittest.TestCase):
         """A directory with +r but no +x lists names it cannot lstat().
         The PermissionError is patched in for the same reason as above:
         mode bits express it only on the Pythons that still raise."""
-        from quiver.harness.drift import check_dangling_symlinks
+        from swe.harness.drift import check_dangling_symlinks
 
         with tempfile.TemporaryDirectory() as tmp:
             listed = Path(tmp) / "listed"
@@ -287,7 +287,7 @@ class DoctorHostilePathsTest(unittest.TestCase):
 
 class McpEditNonObjectTest(unittest.TestCase):
     def test_array_edit_is_rejected_without_typeerror(self):
-        from quiver.mcp import cli as cli_mod
+        from swe.mcp import cli as cli_mod
 
         with tempfile.TemporaryDirectory() as tmp:
             cfg = Path(tmp) / "mcp.json"
@@ -329,7 +329,7 @@ class McpEditNonObjectTest(unittest.TestCase):
             )
 
     def test_deeply_nested_edit_is_rejected_without_traceback(self):
-        from quiver.mcp import cli as cli_mod
+        from swe.mcp import cli as cli_mod
 
         with tempfile.TemporaryDirectory() as tmp:
             cfg = Path(tmp) / "mcp.json"
@@ -363,7 +363,7 @@ class McpEditNonObjectTest(unittest.TestCase):
 
 class UsageEventsParseTest(unittest.TestCase):
     def test_fields_map_survives_overflowing_tokens(self):
-        from quiver.harness.rate_limits import _usage_event_fields
+        from swe.harness.rate_limits import _usage_event_fields
 
         row = {
             "timestamp": "1700000000000",
@@ -380,7 +380,7 @@ class UsageEventsParseTest(unittest.TestCase):
         self.assertEqual(mapped["cache_read_tokens"], 0)
 
     def test_fields_map_survives_overflowing_cents(self):
-        from quiver.harness.rate_limits import _usage_event_fields
+        from swe.harness.rate_limits import _usage_event_fields
 
         # A 400-digit integer parses fine from JSON but float() cannot
         # convert it — math.isfinite() used to take the OverflowError.
@@ -392,7 +392,7 @@ class UsageEventsParseTest(unittest.TestCase):
         self.assertIsNone(mapped["cost_usd"])
 
     def test_bad_since_flag_reports_not_tracebacks(self):
-        from quiver.harness.commands import cmd_harness_usage_events
+        from swe.harness.commands import cmd_harness_usage_events
 
         err = io.StringIO()
         # error_stream(): stderr under --json, stdout otherwise.
@@ -404,7 +404,7 @@ class UsageEventsParseTest(unittest.TestCase):
     def test_cursor_timestamps_stay_total_on_junk_and_inf(self):
         # The event-field mapper reads Cursor's millisecond timestamps;
         # junk and infinity map to 0 rather than raising or overflowing.
-        from quiver.harness.rate_limits import _cursor_ms_to_epoch
+        from swe.harness.rate_limits import _cursor_ms_to_epoch
 
         self.assertEqual(_cursor_ms_to_epoch("not-a-ts"), 0.0)
         self.assertEqual(_cursor_ms_to_epoch(float("inf")), 0.0)
@@ -422,7 +422,7 @@ def _deep_json(depth: int = 300000) -> str:
 
 class DeepJsonConfigTest(unittest.TestCase):
     def test_load_config_raises_corrupt_not_recursionerror(self):
-        from quiver.configuration import (
+        from swe.configuration import (
             CorruptConfigurationError,
             load_config,
         )
@@ -434,7 +434,7 @@ class DeepJsonConfigTest(unittest.TestCase):
                 load_config(path)
 
     def test_check_config_reports_deep_nesting(self):
-        from quiver.configuration import check_config
+        from swe.configuration import check_config
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
@@ -444,7 +444,7 @@ class DeepJsonConfigTest(unittest.TestCase):
         self.assertTrue(any("deep" in str(i) for i in issues), issues)
 
     def test_refuse_to_overwrite_deep_config(self):
-        from quiver.configuration import (
+        from swe.configuration import (
             CorruptConfigurationError,
             _assert_existing_file_is_safe,
         )
@@ -461,19 +461,19 @@ class DeepJsonConfigTest(unittest.TestCase):
 
 class MissingUserExpansionTest(unittest.TestCase):
     def test_expand_user_leaves_missing_user_literal(self):
-        from quiver.paths import expand_user
+        from swe.paths import expand_user
 
         out = expand_user("~quiver-no-such-user-392/x")
         self.assertEqual(str(out), "~quiver-no-such-user-392/x")
 
     def test_expand_user_still_expands_own_home(self):
-        from quiver.paths import expand_user
+        from swe.paths import expand_user
 
         self.assertEqual(expand_user("~/x"), Path.home() / "x")
         self.assertEqual(expand_user("~"), Path.home())
 
     def test_provider_keys_dir_flag_reports_not_tracebacks(self):
-        from quiver.providers import commands as providers_commands
+        from swe.providers import commands as providers_commands
 
         out = io.StringIO()
         with mock.patch.object(
@@ -487,7 +487,7 @@ class MissingUserExpansionTest(unittest.TestCase):
     def test_registry_drift_check_covers_missing_user_root(self):
         # Same guarantee as the doctor test, pinned at the helper level:
         # a ``~user`` root must probe as missing, never raise.
-        from quiver.harness.drift import check_registry_schema
+        from swe.harness.drift import check_registry_schema
 
         findings = check_registry_schema({
             "x": {"capabilities": {
@@ -501,7 +501,7 @@ class MissingUserExpansionTest(unittest.TestCase):
         )
 
     def test_resolve_project_root_keeps_missing_user_literal(self):
-        from quiver.sessions.query import resolve_project_root
+        from swe.sessions.query import resolve_project_root
 
         got = resolve_project_root("~quiver-no-such-user-392/proj")
         self.assertIn("quiver-no-such-user-392", got)
@@ -516,8 +516,8 @@ class MissingUserExpansionTest(unittest.TestCase):
 
 class PathGuardBranchesTest(unittest.TestCase):
     def test_find_mcps_survives_missing_user_view_path(self):
-        from quiver.find import commands as find_commands
-        from quiver.find import mcps as find_mcps
+        from swe.find import commands as find_commands
+        from swe.find import mcps as find_mcps
 
         view = find_mcps.ToolView(
             name="claude", path="~quiver-no-such-user-392/x",
@@ -538,7 +538,7 @@ class PathGuardBranchesTest(unittest.TestCase):
     def test_doctor_preferred_npm_symlink_loop_falls_back(self):
         from types import SimpleNamespace
 
-        from quiver.harness.doctor import collect_findings
+        from swe.harness.doctor import collect_findings
 
         with tempfile.TemporaryDirectory() as tmp:
             loop = Path(tmp) / "loop"
@@ -552,7 +552,7 @@ class PathGuardBranchesTest(unittest.TestCase):
             any(f.check == "npm.preferred" for f in findings), findings)
 
     def test_search_dirs_for_command_survives_resolve_loop(self):
-        from quiver.harness import path_health
+        from swe.harness import path_health
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -569,7 +569,7 @@ class PathGuardBranchesTest(unittest.TestCase):
         self.assertEqual(hits, [])
 
     def test_mcp_registered_paths_missing_user(self):
-        from quiver.mcp import discover as mcp_discover
+        from swe.mcp import discover as mcp_discover
 
         with mock.patch.object(
             mcp_discover, "get_tool_config",
@@ -579,7 +579,7 @@ class PathGuardBranchesTest(unittest.TestCase):
                 mcp_discover._registered_paths(["claude"]), set())
 
     def test_providers_info_missing_user_keys_dir(self):
-        from quiver.providers import commands as providers_commands
+        from swe.providers import commands as providers_commands
 
         out = io.StringIO()
         with mock.patch.object(
@@ -594,8 +594,8 @@ class PathGuardBranchesTest(unittest.TestCase):
         self.assertIn("Cannot expand --api-keys-dir", out.getvalue())
 
     def test_resume_session_survives_unenterable_dir(self):
-        from quiver.sessions.commands import _resume_session
-        from quiver.sessions.models import Session
+        from swe.sessions.commands import _resume_session
+        from swe.sessions.models import Session
 
         with tempfile.TemporaryDirectory() as tmp:
             locked = Path(tmp) / "locked"
@@ -617,7 +617,7 @@ class PathGuardBranchesTest(unittest.TestCase):
         self.assertIn("Cannot enter", buf.getvalue())
 
     def test_catalog_root_scan_survives_pathless_entry(self):
-        from quiver.skills import catalog_discover
+        from swe.skills import catalog_discover
 
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(
@@ -629,7 +629,7 @@ class PathGuardBranchesTest(unittest.TestCase):
         self.assertIsInstance(known, set)
 
     def test_skill_layout_survives_looping_link_target(self):
-        from quiver.skills.layout import enumerate_skill_roots
+        from swe.skills.layout import enumerate_skill_roots
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -645,7 +645,7 @@ class PathGuardBranchesTest(unittest.TestCase):
             try:
                 os.chdir(tmp)
                 with mock.patch.object(
-                    __import__("quiver.skills.layout", fromlist=["x"]),
+                    __import__("swe.skills.layout", fromlist=["x"]),
                     "load_skill_catalogs", return_value=[],
                 ):
                     entries = enumerate_skill_roots(home=home, cwd=home)
@@ -658,20 +658,20 @@ class PathGuardBranchesTest(unittest.TestCase):
 
 class ReportGuardBranchesTest(unittest.TestCase):
     def test_stdout_error_detail_skips_undecodable(self):
-        from quiver.reports.runners import _stdout_error_detail
+        from swe.reports.runners import _stdout_error_detail
 
         # Neither the blob nor any reversed line parses as JSON.
         out = _stdout_error_detail("{not json at all")
         self.assertIsInstance(out, str)
 
     def test_tool_message_keeps_undecodable_arguments(self):
-        from quiver.reports.transcripts import _tool_message
+        from swe.reports.transcripts import _tool_message
 
         msg = _tool_message("runner", "{not json")
         self.assertIsNotNone(msg)
 
     def test_read_jsonl_skips_corrupt_lines(self):
-        from quiver.reports.transcripts import _read_jsonl
+        from swe.reports.transcripts import _read_jsonl
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "t.jsonl"
@@ -680,8 +680,8 @@ class ReportGuardBranchesTest(unittest.TestCase):
         self.assertIsInstance(msgs, list)
 
     def test_cline_reader_survives_corrupt_history_file(self):
-        from quiver.reports import transcripts
-        from quiver.sessions.models import Session
+        from swe.reports import transcripts
+        from swe.sessions.models import Session
 
         with tempfile.TemporaryDirectory() as tmp:
             root = (Path(tmp) / ".cline" / "data" / "tasks" / "s1")
@@ -698,8 +698,8 @@ class ReportGuardBranchesTest(unittest.TestCase):
     def test_devin_reader_skips_corrupt_node_payload(self):
         import sqlite3
 
-        from quiver.reports import transcripts
-        from quiver.sessions.models import Session
+        from swe.reports import transcripts
+        from swe.sessions.models import Session
 
         with tempfile.TemporaryDirectory() as tmp:
             dbdir = Path(tmp) / ".local" / "share" / "devin" / "cli"
@@ -727,9 +727,9 @@ class ReportGuardBranchesTest(unittest.TestCase):
         self.assertIsNotNone(tr)
 
     def test_resume_plan_survives_path_vanishing_between_checks(self):
-        from quiver.reports import work as work_mod
-        from quiver.reports.models import FollowUp
-        from quiver.sessions.models import Session
+        from swe.reports import work as work_mod
+        from swe.reports.models import FollowUp
+        from swe.sessions.models import Session
 
         with tempfile.TemporaryDirectory() as tmp:
             loop = Path(tmp) / "loop"
@@ -764,7 +764,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
         import urllib.request
         import ssl
 
-        from quiver.harness import rate_limits as rl
+        from swe.harness import rate_limits as rl
 
         req = urllib.request.Request("https://example.invalid/")
         first = urllib.error.URLError(ssl.SSLError("verify failed"))
@@ -776,7 +776,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
             self.assertIsNone(rl._fetch_json(req))
 
     def test_fetch_codex_corrupt_auth_file(self):
-        from quiver.harness import rate_limits as rl
+        from swe.harness import rate_limits as rl
 
         with tempfile.TemporaryDirectory() as tmp:
             auth = Path(tmp) / ".codex"
@@ -786,7 +786,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
                 self.assertIsNone(rl._fetch_codex())
 
     def test_fetch_codex_overflowing_reset_at(self):
-        from quiver.harness import rate_limits as rl
+        from swe.harness import rate_limits as rl
 
         with tempfile.TemporaryDirectory() as tmp:
             auth = Path(tmp) / ".codex"
@@ -811,7 +811,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
         self.assertEqual(info.reset_at, 0.0)
 
     def test_copilot_fields_survive_junk_entitlement(self):
-        from quiver.harness.rate_limits import _derive_copilot_fields
+        from swe.harness.rate_limits import _derive_copilot_fields
 
         used, limited = _derive_copilot_fields(
             {"percent_remaining": 50, "entitlement": "junk"})
@@ -819,7 +819,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
         self.assertFalse(limited)
 
     def test_claude_credentials_file_corrupt_returns_none(self):
-        from quiver.harness import rate_limits as rl
+        from swe.harness import rate_limits as rl
 
         with tempfile.TemporaryDirectory() as tmp:
             creds = Path(tmp) / ".claude"
@@ -829,7 +829,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
                 self.assertIsNone(rl._read_claude_credentials_file())
 
     def test_fetch_claude_skips_window_with_junk_utilization(self):
-        from quiver.harness import rate_limits as rl
+        from swe.harness import rate_limits as rl
 
         payload = {
             "five_hour": {"utilization": "junk"},
@@ -855,7 +855,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
         import base64
         import ctypes
 
-        from quiver.harness import rate_limits as rl
+        from swe.harness import rate_limits as rl
 
         class _FakeCrypto:
             def EVP_CIPHER_CTX_new(self):
@@ -896,7 +896,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
                 self.assertIsNone(rl._decrypt_droid_auth_file())
 
     def test_freebuff_token_corrupt_credentials(self):
-        from quiver.harness import rate_limits as rl
+        from swe.harness import rate_limits as rl
 
         with tempfile.TemporaryDirectory() as tmp:
             creds = Path(tmp) / ".config" / "manicode"
@@ -906,7 +906,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
                 self.assertIsNone(rl._get_freebuff_access_token())
 
     def test_freebuff_quota_junk_glm_fields(self):
-        from quiver.harness.rate_limits import _parse_freebuff_quota
+        from swe.harness.rate_limits import _parse_freebuff_quota
 
         self.assertIsNone(_parse_freebuff_quota({
             "rateLimitsByModel": {
@@ -915,7 +915,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
         }))
 
     def test_freebuff_quota_junk_referral_fields(self):
-        from quiver.harness.rate_limits import _parse_freebuff_quota
+        from swe.harness.rate_limits import _parse_freebuff_quota
 
         self.assertIsNone(_parse_freebuff_quota({
             "referral": {
@@ -925,7 +925,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
         }))
 
     def test_cursor_usage_events_bad_since_is_ignored(self):
-        from quiver.harness import rate_limits as rl
+        from swe.harness import rate_limits as rl
 
         with mock.patch.object(
             rl, "_get_cursor_access_token", return_value="tok"
@@ -943,7 +943,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
         self.assertEqual(account, "u")
 
     def test_devin_status_junk_credit_fields(self):
-        from quiver.harness.rate_limits import _parse_devin_status
+        from swe.harness.rate_limits import _parse_devin_status
 
         self.assertIsNone(_parse_devin_status({
             "userStatus": {
@@ -960,7 +960,7 @@ class RateLimitGuardBranchesTest(unittest.TestCase):
     def test_rate_limits_cache_guards(self):
         import time
 
-        from quiver.harness import rate_limits as rl
+        from swe.harness import rate_limits as rl
 
         now = time.time()
         info = {

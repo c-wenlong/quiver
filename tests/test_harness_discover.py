@@ -3,16 +3,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.harness.catalog import HARNESS_CATALOG
-from quiver.harness.discover import apply_findings, discover_harnesses
-from quiver.harness.registry import load_registry, save_registry
+from swe.harness.catalog import HARNESS_CATALOG
+from swe.harness.discover import apply_findings, discover_harnesses
+from swe.harness.registry import load_registry, save_registry
 
 
 def _registry_patches(config_dir: Path, registry_file: Path):
     return (
-        patch("quiver.harness.registry.CONFIG_DIR", config_dir),
-        patch("quiver.harness.registry.HARNESS_FILE", registry_file),
-        patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"),
+        patch("swe.harness.registry.CONFIG_DIR", config_dir),
+        patch("swe.harness.registry.HARNESS_FILE", registry_file),
+        patch("swe.harness.registry.TOOLS_FILE", config_dir / "tools.json"),
     )
 
 
@@ -23,7 +23,7 @@ class HarnessDiscoverTest(unittest.TestCase):
         # harness found there. Tests that check a version patch it inside.
         for target, value in (("EXTRA_BIN_DIRS", ()),
                               ("live_version", lambda cmd: None)):
-            p = patch(f"quiver.harness.discover.{target}", value)
+            p = patch(f"swe.harness.discover.{target}", value)
             p.start()
             self.addCleanup(p.stop)
 
@@ -109,7 +109,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             minimal = {"claude": dict(HARNESS_CATALOG["claude"])}
 
             p1, p2, p3 = _registry_patches(config_dir, registry_file)
-            with p1, p2, p3, patch("quiver.harness.discover.live_version", return_value="9.9.9"):
+            with p1, p2, p3, patch("swe.harness.discover.live_version", return_value="9.9.9"):
                 save_registry(minimal)
                 findings = discover_harnesses(path_env=str(bindir), home=tmp_path)
                 added, _ = apply_findings(findings, min_confidence="high")
@@ -133,7 +133,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             minimal = {"claude": dict(HARNESS_CATALOG["claude"])}
 
             p1, p2, p3 = _registry_patches(config_dir, registry_file)
-            with p1, p2, p3, patch("quiver.harness.discover.live_version", return_value="1.0"):
+            with p1, p2, p3, patch("swe.harness.discover.live_version", return_value="1.0"):
                 save_registry(minimal)
                 findings = discover_harnesses(path_env=str(bindir), home=tmp_path)
                 added, _ = apply_findings(findings, min_confidence="high")
@@ -202,8 +202,8 @@ class HomeScanTest(unittest.TestCase):
         registry_file = config_dir / "harness.json"
         return (
             *_registry_patches(config_dir, registry_file),
-            patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
-            patch("quiver.harness.discover.live_version", lambda cmd: None),
+            patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
+            patch("swe.harness.discover.live_version", lambda cmd: None),
         )
 
     def test_finds_dotdir_with_skills(self):
@@ -295,9 +295,9 @@ class HomeScanTest(unittest.TestCase):
             config_dir = home / ".quiver" / "config"
             which = lambda name, **kw: "/nix/bin/hermes" if name == "hermes" else None
             patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
-                       patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
-                       patch("quiver.harness.discover.shutil.which", side_effect=which),
-                       patch("quiver.harness.discover.live_version", lambda cmd: "0.20.5"))
+                       patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
+                       patch("swe.harness.discover.shutil.which", side_effect=which),
+                       patch("swe.harness.discover.live_version", lambda cmd: "0.20.5"))
             with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
                 save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 findings = discover_harnesses(path_env="", home=home)
@@ -323,8 +323,8 @@ class ConfidenceFloorTest(unittest.TestCase):
             (home / ".fancytool" / "skills").mkdir(parents=True)
             config_dir = home / ".quiver" / "config"
             patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
-                       patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
-                       patch("quiver.harness.discover.live_version", lambda cmd: None))
+                       patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
+                       patch("swe.harness.discover.live_version", lambda cmd: None))
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 findings = discover_harnesses(path_env="", home=home)
@@ -342,8 +342,8 @@ class ConfidenceFloorTest(unittest.TestCase):
             (home / ".fancytool" / "skills").mkdir(parents=True)
             config_dir = home / ".quiver" / "config"
             patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
-                       patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
-                       patch("quiver.harness.discover.live_version", lambda cmd: None))
+                       patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
+                       patch("swe.harness.discover.live_version", lambda cmd: None))
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 findings = discover_harnesses(path_env="", home=home)
@@ -364,8 +364,8 @@ class NotHarnessTest(unittest.TestCase):
                 (home / f".{name}" / "skills").mkdir(parents=True)
             config_dir = home / ".quiver" / "config"
             patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
-                       patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
-                       patch("quiver.harness.discover.live_version", lambda cmd: None))
+                       patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
+                       patch("swe.harness.discover.live_version", lambda cmd: None))
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 found = {f.name for f in discover_harnesses(path_env="", home=home)}
@@ -387,8 +387,8 @@ class ApplyByNameTest(unittest.TestCase):
             home = Path(tmp)
             config_dir = home / ".quiver" / "config"
             patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
-                       patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
-                       patch("quiver.harness.discover.live_version", lambda cmd: None))
+                       patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
+                       patch("swe.harness.discover.live_version", lambda cmd: None))
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 findings = self._findings(home)
@@ -404,7 +404,7 @@ class DiscoverCommandSelectionTest(unittest.TestCase):
     """Flag handling for --apply NAME… and --pick, with the engine mocked."""
 
     def _finding(self, name, confidence="low", status="new"):
-        from quiver.harness.discover import HarnessFinding
+        from swe.harness.discover import HarnessFinding
         return HarnessFinding(name=name, command="", path=f"/h/.{name}",
                               confidence=confidence, source="home_scan",
                               status=status, description="", tags=(), aliases=())
@@ -413,7 +413,7 @@ class DiscoverCommandSelectionTest(unittest.TestCase):
         from contextlib import redirect_stdout
         from io import StringIO
         from unittest import mock
-        from quiver.harness import discover_commands as dc
+        from swe.harness import discover_commands as dc
         apply = mock.Mock(
             return_value=apply_ret if apply_ret is not None else ([], []))
         out = StringIO()
@@ -493,7 +493,7 @@ class DiscoverCommandSelectionTest(unittest.TestCase):
         apply.assert_not_called()
 
     def test_pick_with_nothing_new_opens_no_picker(self):
-        from quiver.harness import discover_commands as dc
+        from swe.harness import discover_commands as dc
         self.assertEqual(dc._pick([self._finding("a", status="registered")]), set())
 
     def test_pick_with_nothing_ticked_says_so(self):
@@ -508,7 +508,7 @@ class DiscoverCommandSelectionTest(unittest.TestCase):
         from contextlib import redirect_stdout
         from io import StringIO
         from unittest import mock
-        from quiver.harness import discover_commands as dc
+        from swe.harness import discover_commands as dc
         refused = [{"name": "cc", "reason": "already registered under 'claude'"}]
         out = StringIO()
         with patch.object(dc, "discover_harnesses", lambda **k: [self._finding("cc")]), \
@@ -530,8 +530,8 @@ class OllamaIsNotAHarnessTest(unittest.TestCase):
             exe.chmod(0o755)
             config_dir = home / ".quiver" / "config"
             patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
-                       patch("quiver.harness.discover.EXTRA_BIN_DIRS", ()),
-                       patch("quiver.harness.discover.live_version", lambda cmd: None))
+                       patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
+                       patch("swe.harness.discover.live_version", lambda cmd: None))
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 save_registry({"claude": dict(HARNESS_CATALOG["claude"])})
                 found = {f.name for f in discover_harnesses(path_env=str(bindir), home=home)}
@@ -544,16 +544,16 @@ class ApplySkipTest(unittest.TestCase):
     def setUp(self):
         # The registry is passed in, but a save would still hit the real
         # harness.json; keep every write in memory.
-        saver = patch("quiver.harness.discover.save_registry")
+        saver = patch("swe.harness.discover.save_registry")
         saver.start()
         self.addCleanup(saver.stop)
         # live_version would spawn the made-up command.
-        version = patch("quiver.harness.discover.live_version", return_value=None)
+        version = patch("swe.harness.discover.live_version", return_value=None)
         version.start()
         self.addCleanup(version.stop)
 
     def _finding(self, name, aliases=()):
-        from quiver.harness.discover import HarnessFinding
+        from swe.harness.discover import HarnessFinding
         return HarnessFinding(name=name, command=name + "-cli",
                               path="/bin/" + name, confidence="high",
                               source="catalog", status="new", aliases=aliases)

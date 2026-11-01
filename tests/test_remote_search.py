@@ -8,8 +8,8 @@ from pathlib import Path
 
 from unittest.mock import patch
 
-from quiver.remote import search
-from quiver.sessions import search_index
+from swe.remote import search
+from swe.sessions import search_index
 from tests.test_remote_hub import _Server, _session
 from tests.test_search_index import write_index
 

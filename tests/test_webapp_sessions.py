@@ -10,18 +10,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.ledger.models import LedgerRecord, UsageEvent
-from quiver.remote import protocol
-from quiver.ledger.pricing import PricingCatalog, rates_from_entry
-from quiver.ledger.sessions import by_session
-from quiver.ledger.store import LedgerStore
-from quiver.webapp import sessions
-from quiver.webapp.api import WebApp
+from swe.ledger.models import LedgerRecord, UsageEvent
+from swe.remote import protocol
+from swe.ledger.pricing import PricingCatalog, rates_from_entry
+from swe.ledger.sessions import by_session
+from swe.ledger.store import LedgerStore
+from swe.webapp import sessions
+from swe.webapp.api import WebApp
 
 from tests.test_remote_hub import HubBase, _AttachedServer
 from tests.test_remote_owner_device import _OWNER_IP, OwnerBase
 
-STATIC = Path(__file__).resolve().parent.parent / "src" / "quiver" / "webapp" / "static"
+STATIC = Path(__file__).resolve().parent.parent / "src" / "swe" / "webapp" / "static"
 
 CATALOG = PricingCatalog({"m": rates_from_entry(
     {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06})})
@@ -396,7 +396,7 @@ class TestChatContract(unittest.TestCase):
         self.assertEqual((ask["seq"], ask["data"]["prompt"]), (asked["seq"], "Edit a.py?"))
 
     def test_send_settles_by_client_id(self):
-        from quiver.remote import inject
+        from swe.remote import inject
         fake = MagicMock()
         fake.send.return_value = inject.InjectResult(True, "sent", degraded=True)
         q = self.srv.state.bus.subscribe(self.key)
@@ -412,7 +412,7 @@ class TestChatContract(unittest.TestCase):
                          ("c-1", True, True))
 
     def test_approval_and_stop(self):
-        from quiver.remote import inject
+        from swe.remote import inject
         fake = MagicMock()
         fake.approval.return_value = inject.InjectResult(True, "approved")
         fake.control.return_value = inject.InjectResult(True, "interrupted")
@@ -837,7 +837,7 @@ return div.innerHTML;
     def test_codex_patches_from_the_decoder_render_as_diffs(self):
         """args_full exactly as tail.py journals a codex apply_patch: a
         custom tool whose input is the raw patch text."""
-        from quiver.remote import tail
+        from swe.remote import tail
         patch_text = "*** Begin Patch\n*** Update File: src/a.py\n@@\n-old\n+new\n*** End Patch"
         [msg] = tail._decode_codex({"type": "response_item", "payload": {
             "type": "custom_tool_call", "name": "apply_patch", "call_id": "c1", "input": patch_text}})
@@ -1186,7 +1186,7 @@ return div.innerHTML;
     def test_attachment_caps_match_the_hub(self):
         """The composer refuses what attachments.stage would, before
         uploading, with the hub's own size cap and extension list."""
-        from quiver.remote import attachments
+        from swe.remote import attachments
         out = self.run_js("""
           return {
             exts: T.ATTACH.exts, max: T.ATTACH.maxBytes,
@@ -1476,7 +1476,7 @@ return div.innerHTML;
         self.assertEqual(out["closed"], {"open": False, "entries": 0, "answered": None, "aborted": True})
 
 
-SESSIONS_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/sessions.js"
+SESSIONS_JS = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/sessions.js"
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")

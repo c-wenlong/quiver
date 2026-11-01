@@ -8,7 +8,7 @@ rather than looking the same as an empty result.
 
 import unittest
 
-from quiver.mcp.cli import _filter_by_patterns
+from swe.mcp.cli import _filter_by_patterns
 
 SERVERS = {
     "dv__github": {}, "dv__linear": {}, "dv__sentry": {},
@@ -86,31 +86,31 @@ class HubAsSourceTest(unittest.TestCase):
     """
 
     def test_hub_aliases_resolve(self):
-        from quiver.mcp.cli import is_hub
+        from swe.mcp.cli import is_hub
 
         for name in ("quiver", "hub", "mcp.json", "."):
             self.assertTrue(is_hub(name), name)
 
     def test_alias_matching_ignores_case(self):
-        from quiver.mcp.cli import is_hub
+        from swe.mcp.cli import is_hub
 
         self.assertTrue(is_hub("QUIVER"))
         self.assertTrue(is_hub("Hub"))
 
     def test_harness_names_are_not_the_hub(self):
-        from quiver.mcp.cli import is_hub
+        from swe.mcp.cli import is_hub
 
         for name in ("cursor", "claude", "codex", "opencode", ""):
             self.assertFalse(is_hub(name), name)
         self.assertFalse(is_hub(None))
 
     def test_hub_format_is_canonical(self):
-        from quiver.mcp.cli import get_tool_format
+        from swe.mcp.cli import get_tool_format
 
         self.assertEqual(get_tool_format("quiver"), "standard")
 
     def test_resolve_tool_arg_returns_the_canonical_hub_label(self):
-        from quiver.mcp.cli import HUB_LABEL, resolve_tool_arg
+        from swe.mcp.cli import HUB_LABEL, resolve_tool_arg
 
         for alias in ("quiver", "hub", "mcp.json", "."):
             self.assertEqual(resolve_tool_arg({}, alias), HUB_LABEL)
@@ -121,7 +121,7 @@ class HubAsSourceTest(unittest.TestCase):
         from pathlib import Path
         from unittest import mock
 
-        from quiver.mcp import cli
+        from swe.mcp import cli
 
         payload = {"mcpServers": {"dv__github": {"command": "gh"}}, "updated": "x"}
         with tempfile.TemporaryDirectory() as tmp:
@@ -136,7 +136,7 @@ class HubAsSourceTest(unittest.TestCase):
         from pathlib import Path
         from unittest import mock
 
-        from quiver.mcp import cli
+        from swe.mcp import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(cli, "MCP_SOURCE_FILE", Path(tmp) / "nope.json"):
@@ -145,7 +145,7 @@ class HubAsSourceTest(unittest.TestCase):
     def test_servers_for_source_falls_through_to_a_harness(self):
         from unittest import mock
 
-        from quiver.mcp import cli
+        from swe.mcp import cli
 
         # Raw, not canonical: --strict needs the unparsed original to spot a
         # lossy conversion, so parsing here would defeat it.
@@ -185,7 +185,7 @@ class SecretIndirectionTest(unittest.TestCase):
     def test_parses_exports_comments_and_quotes(self):
         import tempfile
 
-        from quiver.mcp import secrets
+        from swe.mcp import secrets
 
         with tempfile.TemporaryDirectory() as tmp:
             s = secrets.load_secrets(self._home(tmp))
@@ -197,7 +197,7 @@ class SecretIndirectionTest(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from quiver.mcp import secrets
+        from swe.mcp import secrets
 
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(secrets.load_secrets(Path(tmp)), {})
@@ -205,7 +205,7 @@ class SecretIndirectionTest(unittest.TestCase):
     def test_resolve_substitutes_and_leaves_shell_syntax_alone(self):
         import tempfile
 
-        from quiver.mcp import secrets
+        from swe.mcp import secrets
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._home(tmp)
@@ -227,7 +227,7 @@ class SecretIndirectionTest(unittest.TestCase):
     def test_unknown_reference_is_reported_not_blanked(self):
         import tempfile
 
-        from quiver.mcp import secrets
+        from swe.mcp import secrets
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._home(tmp)
@@ -239,7 +239,7 @@ class SecretIndirectionTest(unittest.TestCase):
     def test_round_trip_is_lossless(self):
         import tempfile
 
-        from quiver.mcp import secrets
+        from swe.mcp import secrets
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._home(tmp)
@@ -255,7 +255,7 @@ class SecretIndirectionTest(unittest.TestCase):
         # value that happened to contain that number, such as a cache path.
         import tempfile
 
-        from quiver.mcp import secrets
+        from swe.mcp import secrets
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._home(tmp)
@@ -267,7 +267,7 @@ class SecretIndirectionTest(unittest.TestCase):
     def test_redact_handles_auth_schemes(self):
         import tempfile
 
-        from quiver.mcp import secrets
+        from swe.mcp import secrets
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._home(tmp)

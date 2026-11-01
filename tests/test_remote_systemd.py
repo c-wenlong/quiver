@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.remote import systemd
+from swe.remote import systemd
 
 from tests._tempdir import temp_dir
 

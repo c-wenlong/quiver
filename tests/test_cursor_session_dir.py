@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.parsers import _cursor_session_dir
+from swe.sessions.parsers import _cursor_session_dir
 
 
 class CursorSessionDirTest(unittest.TestCase):
@@ -29,7 +29,7 @@ class CursorSessionDirTest(unittest.TestCase):
             return os.path.expanduser(path)
 
         self._patch = patch(
-            "quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
+            "swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
         )
         self._patch.start()
 

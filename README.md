@@ -149,7 +149,7 @@ Exposes recent sessions as an MCP tool (requires the `server` extra):
 
 ```bash
 pip install -e ".[server]"
-python -m quiver.mcp_server
+python -m swe.mcp_server
 ```
 
 ## Quick start
@@ -554,16 +554,16 @@ Every feature that adds files or modifies `cmd_*` handlers must pass this checkl
 
 1. ✅ Unit tests pass: `HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_*.py'`
 2. ✅ Package reinstalled: `pip install -e .`
-3. ✅ Verified with real `swe` command (not just `PYTHONPATH=src python -m quiver.cli`)
+3. ✅ Verified with real `swe` command (not just `PYTHONPATH=src python -m swe.cli`)
 4. ✅ PR opened with clear description
 
 ## Renaming
 
 quiver centralizes naming so you can change it:
 
-1. **CLI command** — `CLI_NAME` in `src/quiver/__init__.py` and `[project.scripts]` in `pyproject.toml`, then reinstall
-2. **Data dir** — `DATA_DIR_NAME` in `src/quiver/__init__.py`; the root becomes `~/.<name>`
-3. **Package name** — rename `src/quiver/`, update imports and `pyproject.toml`
+1. **CLI command** — `CLI_NAME` in `src/swe/__init__.py` and `[project.scripts]` in `pyproject.toml`, then reinstall
+2. **Data dir** — `DATA_DIR_NAME` in `src/swe/__init__.py`; the root becomes `~/.<name>`
+3. **Package name** — rename `src/swe/`, update imports and `pyproject.toml`
 
 ## Contributing
 

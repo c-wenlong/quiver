@@ -15,10 +15,10 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from quiver.init import commands as init_commands
-from quiver.init import manage
-from quiver.init.hooks import plan_hooks
-from quiver.init.layout import link_states, plan
+from swe.init import commands as init_commands
+from swe.init import manage
+from swe.init.hooks import plan_hooks
+from swe.init.layout import link_states, plan
 
 
 def _home(tmp: str, registry: dict | None = None) -> Path:

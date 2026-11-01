@@ -17,10 +17,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.paths import session_parse_cache_file_for
-from quiver.sessions import aggregator, failures, parse_cache
-from quiver.sessions.engines import jsonl_engine
-from quiver.sessions.parsers import parse_claude
+from swe.paths import session_parse_cache_file_for
+from swe.sessions import aggregator, failures, parse_cache
+from swe.sessions.engines import jsonl_engine
+from swe.sessions.parsers import parse_claude
 from tests.test_json_output import decode, run_swe
 
 OLD = 1_780_000_000

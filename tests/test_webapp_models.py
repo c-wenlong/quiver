@@ -4,8 +4,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from quiver.webapp.api import WebApp
-from quiver.webapp.pages import models
+from swe.webapp.api import WebApp
+from swe.webapp.pages import models
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp_pricing import NOW, _Store, catalog
@@ -62,7 +62,7 @@ class TestRows(_Store):
 
 class TestSearch(unittest.TestCase):
     def test_bare_exact_then_prefix_then_contains(self):
-        from quiver.ledger.pricing import PricingCatalog, rates_from_entry
+        from swe.ledger.pricing import PricingCatalog, rates_from_entry
         r = rates_from_entry({"input_cost_per_token": 1e-06, "output_cost_per_token": 1e-06})
         cat = PricingCatalog({k: r for k in (
             "vendor/kimi-k3-eu", "kimi-k3", "moonshot/kimi-k3", "kimi-k3-turbo", "x/notkimik3")})

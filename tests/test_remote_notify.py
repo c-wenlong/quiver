@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import notify, pairing, protocol, sshkeys
-from quiver.remote.hub import GLOBAL_KEY, HubState
+from swe.remote import notify, pairing, protocol, sshkeys
+from swe.remote.hub import GLOBAL_KEY, HubState
 
 from tests._tempdir import temp_dir
 
@@ -64,7 +64,7 @@ class TestConfig(unittest.TestCase):
 
     def test_saved_config_is_private(self):
         notify.save_config(self.home, {"enabled": True})
-        from quiver.paths import remote_dir_for
+        from swe.paths import remote_dir_for
         path = remote_dir_for(self.home) / "notify.json"
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
@@ -476,7 +476,7 @@ class TestPost(unittest.TestCase):
         # every https push until the OS bundle is loaded.
         import ssl
         import urllib.error
-        from quiver.remote import agent as agent_mod
+        from swe.remote import agent as agent_mod
         self.addCleanup(setattr, agent_mod, "_fallback_ctx", None)
         ctx = object()
         calls = []
@@ -491,7 +491,7 @@ class TestPost(unittest.TestCase):
             return m
 
         with patch("urllib.request.urlopen", fake), \
-             patch("quiver.harness.rate_limits._verified_context",
+             patch("swe.harness.rate_limits._verified_context",
                    return_value=ctx):
             self.n._post({"url": "https://n.test", "topic": "t"},
                          {"topic": "t"})
@@ -615,11 +615,11 @@ class TestCmdNotify(unittest.TestCase):
     """commands._cmd_notify: merge, redaction, bare display."""
 
     def setUp(self):
-        from quiver.remote import commands
+        from swe.remote import commands
         self.commands = commands
         self.home = temp_dir(self)
         self.paths_patcher = patch(
-            "quiver.remote.notify.remote_dir_for",
+            "swe.remote.notify.remote_dir_for",
             side_effect=lambda home=None: self.home / "remote")
         self.paths_patcher.start()
         self.addCleanup(self.paths_patcher.stop)

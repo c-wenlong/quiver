@@ -6,7 +6,7 @@ Instructions for any coding agent working in this repository. This file holds th
 
 `quiver` is a Python package whose console entry point is `swe`. It manages the AI coding CLIs on a machine (Claude Code, Codex, Gemini, Cursor, opencode, ...): one registry, one shared instruction file and skills tree symlinked into every harness, cross-agent session history, MCP config sync, rate limits, and coding-session reports.
 
-The core CLI is stdlib-only with no runtime dependencies. Optional extras: `server` (FastMCP session server via `python -m quiver.mcp_server`) and `test` (coverage). Python floor is 3.11; never add a 3.10 compatibility shim (3.10 users get `v0.2.9`, see [docs/testing.md](docs/testing.md#interpreter-matrix)).
+The core CLI is stdlib-only with no runtime dependencies. Optional extras: `server` (FastMCP session server via `python -m swe.mcp_server`) and `test` (coverage). Python floor is 3.11; never add a 3.10 compatibility shim (3.10 users get `v0.2.9`, see [docs/testing.md](docs/testing.md#interpreter-matrix)).
 
 | Doc | Read it before you touch |
 |---|---|
@@ -24,7 +24,7 @@ The core CLI is stdlib-only with no runtime dependencies. Optional extras: `serv
 |---|---|---|
 | macOS app | `app/mac/` | SwiftPM; see [app/mac/README.md](app/mac/README.md) |
 | iPhone app | `app/ios/` | XcodeGen and Xcode; see [app/ios/README.md](app/ios/README.md) |
-| Web app | `src/quiver/webapp/` | nothing: it ships in the Python package and `swe remote serve` serves it; see [docs/web-app.md](docs/web-app.md) |
+| Web app | `src/swe/webapp/` | nothing: it ships in the Python package and `swe remote serve` serves it; see [docs/web-app.md](docs/web-app.md) |
 
 The web app stays inside the Python package because pipx installs and the `swe` bundled in Quiver.app serve it from there.
 
@@ -67,14 +67,14 @@ HOME="$test_home" python3 -m coverage run -m unittest discover -s tests -p 'test
 python3 -m coverage combine && python3 -m coverage report
 
 # CLI from source; MCP sync subsystem directly
-PYTHONPATH=src python3 -m quiver.cli list
-python3 -m quiver.mcp list
+PYTHONPATH=src python3 -m swe.cli list
+python3 -m swe.mcp list
 
 # Docs pages under app/landing-page/: regenerate after doc or help changes
 python3 scripts/docs_site.py  # or: --check to verify freshness
 ```
 
-There is no linter or formatter, and no pytest: `tests/conftest.py` pins terminal width to 200 columns but only fires under pytest, so a unittest test that asserts on rendered width patches `quiver.console.terminal_width` itself.
+There is no linter or formatter, and no pytest: `tests/conftest.py` pins terminal width to 200 columns but only fires under pytest, so a unittest test that asserts on rendered width patches `swe.console.terminal_width` itself.
 
 ### Rules a test or CI already enforces
 
@@ -93,14 +93,14 @@ Manual `swe` runs that check a change also use `HOME="$(mktemp -d)"`, so they ne
 
 ## End-to-end verification
 
-Verify every e2e feature against the installed `swe` binary, not only unit tests. A new module under `src/quiver/` passes with `PYTHONPATH=src` but stays invisible to a stale non-editable install. For any change that adds files or changes `cmd_*` handlers:
+Verify every e2e feature against the installed `swe` binary, not only unit tests. A new module under `src/swe/` passes with `PYTHONPATH=src` but stays invisible to a stale non-editable install. For any change that adds files or changes `cmd_*` handlers:
 
 1. Write tests and run the full suite against a throwaway HOME.
 2. Reinstall with `pip install -e .` (or `pipx install --force git+...`).
 3. Run the real `swe <command>` against a temp HOME. Read `.github/workflows/ci.yml` and `release.yml` for what CI repeats; [docs/testing.md](docs/testing.md#end-to-end-checks-against-the-installed-swe) has the detail.
 4. Open a PR, one concern per PR.
 
-If it works with `PYTHONPATH=src python3 -m quiver.cli` but not with `swe`, the installed copy is stale: re-run `pip install -e .`.
+If it works with `PYTHONPATH=src python3 -m swe.cli` but not with `swe`, the installed copy is stale: re-run `pip install -e .`.
 
 ## Architecture rules
 
@@ -129,7 +129,7 @@ If it works with `PYTHONPATH=src python3 -m quiver.cli` but not with `swe`, the 
 
 - A test's temp folder comes from `temp_dir(self)` in `tests/_tempdir.py` (or `self.enterContext(tempfile.TemporaryDirectory())`), never a bare `tempfile.mkdtemp()`.
 - A test that mutates nested keys of a class-level JSON fixture must `copy.deepcopy` it first.
-- Session parser tests mock `os.path.expanduser` in `quiver.sessions.parsers`; completion tests mock `load_registry` and `SHELL_CONFIGS`.
+- Session parser tests mock `os.path.expanduser` in `swe.sessions.parsers`; completion tests mock `load_registry` and `SHELL_CONFIGS`.
 
 ## Gotchas
 

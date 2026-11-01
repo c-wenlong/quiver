@@ -6,14 +6,14 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver.init import commands as init_commands
-from quiver.init.layout import (
+from swe.init import commands as init_commands
+from swe.init.layout import (
     agents_file,
     inspect,
     link_states,
     load_registry,
     plan,
-    quiver_dir,
+    swe_dir,
     skills_dir,
 )
 
@@ -35,14 +35,14 @@ def _pin_columns(test):
     """
     from unittest import mock
 
-    from quiver.harness import columns as _columns
+    from swe.harness import columns as _columns
 
     patch = mock.patch.object(
         _columns, "load_columns", lambda: list(_columns.DEFAULT_COLUMNS))
     patch.start()
     test.addCleanup(patch.stop)
     patch2 = mock.patch(
-        "quiver.harness.commands.load_columns",
+        "swe.harness.commands.load_columns",
         lambda: list(_columns.DEFAULT_COLUMNS))
     patch2.start()
     test.addCleanup(patch2.stop)
@@ -57,11 +57,11 @@ def _seed_registry(test, names=("claude",)):
     """
     from unittest import mock
 
-    from quiver.harness.catalog import HARNESS_CATALOG
+    from swe.harness.catalog import HARNESS_CATALOG
 
     registry = {n: dict(HARNESS_CATALOG[n]) for n in names}
     patch = mock.patch(
-        "quiver.harness.commands.load_registry", lambda: dict(registry))
+        "swe.harness.commands.load_registry", lambda: dict(registry))
     patch.start()
     test.addCleanup(patch.stop)
     return registry
@@ -171,7 +171,7 @@ class CmdInitTest(unittest.TestCase):
             home = _fake_home(tmp)
             code, out = self._run(home, ["--check"])
             self.assertEqual(code, 0)
-            self.assertFalse(quiver_dir(home).exists())
+            self.assertFalse(swe_dir(home).exists())
             self.assertIn("would-create", out)
 
     def test_init_creates_scaffold_and_links(self):
@@ -196,7 +196,7 @@ class CmdInitTest(unittest.TestCase):
             code, _ = self._run(home, [])
             self.assertEqual(code, 0)
             for name in ("skills", "plugins", "hooks", "mcp", "backups"):
-                self.assertTrue((quiver_dir(home) / name).is_dir(), name)
+                self.assertTrue((swe_dir(home) / name).is_dir(), name)
 
     def test_init_repairs_a_half_built_hub(self):
         # #696: a second machine had ~/.quiver with only AGENTS.md and an
@@ -207,11 +207,11 @@ class CmdInitTest(unittest.TestCase):
             agents_file(home).write_text("mine\n")
             _, out = self._run(home, ["--check"])
             self.assertIn("plugins/", out)
-            self.assertFalse((quiver_dir(home) / "plugins").exists())
+            self.assertFalse((swe_dir(home) / "plugins").exists())
             code, _ = self._run(home, [])
             self.assertEqual(code, 0)
             for name in ("plugins", "hooks", "mcp"):
-                self.assertTrue((quiver_dir(home) / name).is_dir(), name)
+                self.assertTrue((swe_dir(home) / name).is_dir(), name)
             self.assertEqual(agents_file(home).read_text(), "mine\n")
 
     def test_existing_file_blocks_without_force(self):
@@ -236,7 +236,7 @@ class CmdInitTest(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue(target.is_symlink())
 
-            backups = list((quiver_dir(home) / "backups").iterdir())
+            backups = list((swe_dir(home) / "backups").iterdir())
             self.assertEqual(len(backups), 1)
             self.assertEqual(backups[0].read_text(), "hand written\n")
 
@@ -251,7 +251,7 @@ class CmdInitTest(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue((home / ".qwen/skills").is_symlink())
 
-            saved = list((quiver_dir(home) / "backups").glob("*qwen_skills*"))
+            saved = list((swe_dir(home) / "backups").glob("*qwen_skills*"))
             self.assertEqual(len(saved), 1)
             self.assertTrue((saved[0] / "demo" / "SKILL.md").is_file())
 
@@ -264,7 +264,7 @@ class CmdInitTest(unittest.TestCase):
             # The summary always prints the word, so assert the count instead.
             self.assertIn("0 blocked", out)
             self.assertNotIn("conflict", out)
-            self.assertEqual(len(list((quiver_dir(home) / "backups").iterdir())), 0)
+            self.assertEqual(len(list((swe_dir(home) / "backups").iterdir())), 0)
 
     def test_unknown_option_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -309,7 +309,7 @@ class LinkStatesTest(unittest.TestCase):
             # PATH must not leak the developer's own installs in: a machine
             # with gemini installed counts it installed by binary, which is
             # the answer this test asserts stays "skipped".
-            with mock.patch("quiver.init.layout.shutil.which", return_value=None):
+            with mock.patch("swe.init.layout.shutil.which", return_value=None):
                 self.assertEqual(link_states(home)["gemini"]["agents"], "skipped")
 
     def test_legacy_agents_alias_is_not_a_harness(self):
@@ -325,7 +325,7 @@ class ListLinksViewTest(unittest.TestCase):
         _seed_registry(self)
 
     def test_links_flag_skips_the_rate_limit_fetch(self):
-        from quiver.harness import commands as harness_commands
+        from swe.harness import commands as harness_commands
 
         called = []
 
@@ -334,7 +334,7 @@ class ListLinksViewTest(unittest.TestCase):
             return {}
 
         with mock.patch(
-            "quiver.harness.rate_limits.get_all_rate_limits", side_effect=_boom
+            "swe.harness.rate_limits.get_all_rate_limits", side_effect=_boom
         ):
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -347,7 +347,7 @@ class ListLinksViewTest(unittest.TestCase):
         self.assertNotIn("QUOTA", out)
 
     def test_default_view_shows_neither_usage_nor_links(self):
-        from quiver.harness import commands as harness_commands
+        from swe.harness import commands as harness_commands
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -366,7 +366,7 @@ class ListUsageOptInTest(unittest.TestCase):
         _seed_registry(self)
 
     def _run(self, args):
-        from quiver.harness import commands as harness_commands
+        from swe.harness import commands as harness_commands
 
         calls = []
 
@@ -375,7 +375,7 @@ class ListUsageOptInTest(unittest.TestCase):
             return {}
 
         with mock.patch(
-            "quiver.harness.rate_limits.get_all_rate_limits", side_effect=_spy
+            "swe.harness.rate_limits.get_all_rate_limits", side_effect=_spy
         ):
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -417,7 +417,7 @@ class ListUsageOptInTest(unittest.TestCase):
 
 class RateLimitNegativeCacheTest(unittest.TestCase):
     def test_no_data_names_round_trip_through_the_cache(self):
-        from quiver.harness import rate_limits as rl
+        from swe.harness import rate_limits as rl
 
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp) / "rate_limits_cache.json"
@@ -426,7 +426,7 @@ class RateLimitNegativeCacheTest(unittest.TestCase):
                 self.assertEqual(rl._load_cached_no_data(), {"antigravity"})
 
     def test_no_data_expires_with_the_ttl(self):
-        from quiver.harness import rate_limits as rl
+        from swe.harness import rate_limits as rl
 
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp) / "rate_limits_cache.json"
@@ -436,7 +436,7 @@ class RateLimitNegativeCacheTest(unittest.TestCase):
                     self.assertEqual(rl._load_cached_no_data(), set())
 
     def test_missing_cache_file_is_not_an_error(self):
-        from quiver.harness import rate_limits as rl
+        from swe.harness import rate_limits as rl
 
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(
@@ -452,7 +452,7 @@ class ChainLandsOnCanonicalTest(unittest.TestCase):
 
     def test_two_hop_chain_reads_linked(self):
         import tempfile
-        from quiver.init.layout import inspect
+        from swe.init.layout import inspect
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -471,7 +471,7 @@ class ChainLandsOnCanonicalTest(unittest.TestCase):
 
     def test_chain_landing_elsewhere_still_relinks(self):
         import tempfile
-        from quiver.init.layout import inspect
+        from swe.init.layout import inspect
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -508,7 +508,7 @@ class InstalledByBinaryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             (home / ".quiver" / "skills").mkdir(parents=True)
-            with mock.patch("quiver.init.layout.shutil.which",
+            with mock.patch("swe.init.layout.shutil.which",
                             side_effect=self._which):
                 instructions, skills = plan(home, registry={})
             inst = {s.label: s for s in instructions}
@@ -520,7 +520,7 @@ class InstalledByBinaryTest(unittest.TestCase):
     def test_init_links_a_never_run_crush(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            with mock.patch("quiver.init.layout.shutil.which",
+            with mock.patch("swe.init.layout.shutil.which",
                             side_effect=self._which):
                 with mock.patch.object(Path, "home", staticmethod(lambda: home)):
                     buf = io.StringIO()
@@ -541,7 +541,7 @@ class InstalledByBinaryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             (home / ".quiver" / "skills").mkdir(parents=True)
-            with mock.patch("quiver.init.layout.shutil.which", return_value=None):
+            with mock.patch("swe.init.layout.shutil.which", return_value=None):
                 instructions, skills = plan(home, registry={})
             inst = {s.label: s for s in instructions}
             self.assertEqual(inst["crush"].state, "skipped")
@@ -637,7 +637,7 @@ class InitRegistryReadTest(unittest.TestCase):
             self.assertEqual(load_registry(Path(tmp)), {})
 
     def test_corrupt_registry_raises_instead_of_reading_empty(self):
-        from quiver.configuration import CorruptConfigurationError
+        from swe.configuration import CorruptConfigurationError
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._home_with_registry(tmp, "{corrupt")
@@ -645,7 +645,7 @@ class InitRegistryReadTest(unittest.TestCase):
                 load_registry(home)
 
     def test_non_object_registry_raises_instead_of_reading_empty(self):
-        from quiver.configuration import CorruptConfigurationError
+        from swe.configuration import CorruptConfigurationError
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._home_with_registry(tmp, "[1, 2]")

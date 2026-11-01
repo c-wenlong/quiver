@@ -17,8 +17,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver.console import strip_ansi
-from quiver.find.entries import HIDE_DIRS, Entry
+from swe.console import strip_ansi
+from swe.find.entries import HIDE_DIRS, Entry
 from tests._tempdir import temp_dir
 
 
@@ -51,7 +51,7 @@ class EntryContractTest(unittest.TestCase):
 class BrowserSafetyTest(unittest.TestCase):
     def test_it_returns_rather_than_hanging_without_a_terminal(self):
         """Piping `swe find plugins -i` must not block a script forever."""
-        from quiver.find.browser import browse
+        from swe.find.browser import browse
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -60,7 +60,7 @@ class BrowserSafetyTest(unittest.TestCase):
         self.assertIn("not a terminal", strip_ansi(buf.getvalue()))
 
     def test_empty_roots_return_cleanly(self):
-        from quiver.find.browser import browse
+        from swe.find.browser import browse
 
         with redirect_stdout(io.StringIO()):
             self.assertEqual(browse([], title="T"), 0)
@@ -74,7 +74,7 @@ class BrowserSafetyTest(unittest.TestCase):
     def test_entry_labels_and_details_cannot_drive_the_terminal(self):
         """A directory can be named anything; the panes must not let an
         escape payload through while the browser owns the screen."""
-        from quiver.find.browser import _left_cell
+        from swe.find.browser import _left_cell
 
         entry = Entry(
             "x\x1b]8;;https://evil\x07y\x1b[2J\x07",
@@ -91,7 +91,7 @@ class BrowserSafetyTest(unittest.TestCase):
     def test_a_file_preview_cannot_smuggle_escapes(self):
         """The right pane prints file bytes; a crafted SKILL.md must not
         carry an OSC link or a clipboard write into the browser."""
-        from quiver.find.browser import _file_preview
+        from swe.find.browser import _file_preview
 
         d = temp_dir(self)
         f = d / "SKILL.md"
@@ -111,7 +111,7 @@ class BrowserSafetyTest(unittest.TestCase):
     def test_preview_tabs_expand_before_sanitizing(self):
         """Sanitize maps \t to one space, so it has to run after
         expandtabs or indented files lose their shape."""
-        from quiver.find.browser import _file_preview
+        from swe.find.browser import _file_preview
 
         d = temp_dir(self)
         f = d / "x.md"
@@ -121,7 +121,7 @@ class BrowserSafetyTest(unittest.TestCase):
         self.assertEqual(rows[2], "        deeper")
 
     def test_child_preview_labels_are_sanitized(self):
-        from quiver.find.browser import _preview
+        from swe.find.browser import _preview
 
         e = Entry("p", children=[Entry("kid\x1b]52;c;AAAA\x07")])
         rows = _preview(e, 10)
@@ -132,7 +132,7 @@ class BrowserSafetyTest(unittest.TestCase):
 
 class BrowseDispatchTest(unittest.TestCase):
     def _run(self, argv):
-        from quiver.find.commands import cmd_find
+        from swe.find.commands import cmd_find
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -149,24 +149,24 @@ class BrowseDispatchTest(unittest.TestCase):
 
     def test_each_browsable_topic_reaches_the_browser(self):
         for topic, getter in self.ROOT_GETTERS.items():
-            with mock.patch(f"quiver.find.roots.{getter}",
+            with mock.patch(f"swe.find.roots.{getter}",
                             return_value=[Entry("x")]), \
-                 mock.patch("quiver.find.browser.browse", return_value=0) as m:
+                 mock.patch("swe.find.browser.browse", return_value=0) as m:
                 code, _ = self._run([topic, "-i"])
             self.assertEqual(code, 0, topic)
             m.assert_called_once()
 
     def test_the_long_flag_works_too(self):
-        with mock.patch("quiver.find.roots.plugins_roots",
+        with mock.patch("swe.find.roots.plugins_roots",
                         return_value=[Entry("x")]), \
-             mock.patch("quiver.find.browser.browse", return_value=0) as m:
+             mock.patch("swe.find.browser.browse", return_value=0) as m:
             self._run(["plugins", "--interactive"])
         m.assert_called_once()
 
     def test_scope_is_passed_through(self):
-        with mock.patch("quiver.find.roots.plugins_roots",
+        with mock.patch("swe.find.roots.plugins_roots",
                         return_value=[Entry("x")]) as roots, \
-             mock.patch("quiver.find.browser.browse", return_value=0):
+             mock.patch("swe.find.browser.browse", return_value=0):
             self._run(["plugins", "-i", "--scope=all"])
         self.assertEqual(roots.call_args.kwargs.get("scope"), "all")
 
@@ -178,7 +178,7 @@ class BrowseDispatchTest(unittest.TestCase):
         self.assertIn("Cannot browse", out)
 
     def test_nothing_to_browse_says_so_rather_than_opening_blank(self):
-        with mock.patch("quiver.find.roots.plugins_roots", return_value=[]):
+        with mock.patch("swe.find.roots.plugins_roots", return_value=[]):
             code, out = self._run(["plugins", "-i"])
         self.assertEqual(code, 0)
         self.assertIn("nothing to browse", out)
@@ -193,13 +193,13 @@ class PluginRootsTest(unittest.TestCase):
     """
 
     def test_every_adapter_survives_a_bogus_home(self):
-        from quiver.find import roots
+        from swe.find import roots
 
         for fn in (roots.agents_roots, roots.skills_roots, roots.plugins_roots):
             self.assertIsInstance(fn(home=Path("/nope/nowhere")), list)
 
     def test_an_unknown_scope_does_not_raise(self):
-        from quiver.find import roots
+        from swe.find import roots
 
         home = temp_dir(self)
         for fn in (roots.agents_roots, roots.skills_roots, roots.plugins_roots):
@@ -220,14 +220,14 @@ class ThreePaneLayoutTest(unittest.TestCase):
     """
 
     def _widths(self, width, ratio):
-        from quiver.find.browser import _pane_widths
+        from swe.find.browser import _pane_widths
 
         return _pane_widths(width, ratio)
 
     def test_the_three_panes_fit_the_row(self):
         """Assert the invariant, not the overhead arithmetic: the panes
         plus the separators between them must not exceed the window."""
-        from quiver.find.browser import MIN_PANE
+        from swe.find.browser import MIN_PANE
 
         separators = 7          # two " │ " plus the leading margin
         for width in (40, 80, 120, 200):
@@ -236,7 +236,7 @@ class ThreePaneLayoutTest(unittest.TestCase):
             self.assertLessEqual(p + c_ + v + separators, budget, width)
 
     def test_no_pane_collapses_to_nothing(self):
-        from quiver.find.browser import MIN_PANE
+        from swe.find.browser import MIN_PANE
 
         for width in (20, 40, 200):
             for ratio in ((2, 3, 5), (1, 1, 20), (20, 1, 1)):
@@ -261,7 +261,7 @@ class ThreePaneLayoutTest(unittest.TestCase):
     def test_the_resize_keys_are_bound(self):
         import os
 
-        from quiver.find.browser import _read_key
+        from swe.find.browser import _read_key
 
         for seq, want in ((b"[", "wider_parent"), (b"]", "narrower_parent"),
                           (b"{", "wider_preview"), (b"}", "narrower_preview")):
@@ -272,7 +272,7 @@ class ThreePaneLayoutTest(unittest.TestCase):
             os.close(r)
 
     def test_the_footer_mentions_resizing(self):
-        from quiver.find.browser import FOOTER
+        from swe.find.browser import FOOTER
 
         self.assertIn("resize", FOOTER)
 
@@ -284,7 +284,7 @@ class PreviewTest(unittest.TestCase):
         self.d = temp_dir(self)
 
     def test_a_directory_previews_its_children(self):
-        from quiver.find.browser import _preview
+        from swe.find.browser import _preview
 
         (self.d / "skills").mkdir()
         (self.d / "commands").mkdir()
@@ -292,7 +292,7 @@ class PreviewTest(unittest.TestCase):
         self.assertTrue(any("skills" in ln for ln in lines))
 
     def test_a_text_file_previews_its_contents(self):
-        from quiver.find.browser import _preview
+        from swe.find.browser import _preview
 
         f = self.d / "SKILL.md"
         f.write_text("---\nname: wrangler\n---\n\n# Wrangler\n\nDeploy Workers.\n")
@@ -301,7 +301,7 @@ class PreviewTest(unittest.TestCase):
                         f"file contents not shown: {lines[:3]}")
 
     def test_an_oversized_file_is_described_not_dumped(self):
-        from quiver.find.browser import MAX_PREVIEW_BYTES, _preview
+        from swe.find.browser import MAX_PREVIEW_BYTES, _preview
 
         f = self.d / "big.md"
         f.write_bytes(b"x" * (MAX_PREVIEW_BYTES + 1))
@@ -309,12 +309,12 @@ class PreviewTest(unittest.TestCase):
         self.assertLess(len(lines), 20)
 
     def test_an_unreadable_path_does_not_raise(self):
-        from quiver.find.browser import _preview
+        from swe.find.browser import _preview
 
         self.assertIsInstance(_preview(Entry("x", Path("/nope/nope")), 10), list)
 
     def test_a_grouping_row_previews_its_children(self):
-        from quiver.find.browser import _preview
+        from swe.find.browser import _preview
 
         e = Entry("dv", children=[Entry("cloudflare"), Entry("blaxel")])
         lines = _preview(e, limit=10)
@@ -331,8 +331,8 @@ class SelectionBarTest(unittest.TestCase):
     def test_no_glyph_precedes_the_name(self):
         """The bar says which row is selected and colour says which rows
         descend, so a triangle on every line only ate the name column."""
-        from quiver.console import strip_ansi
-        from quiver.find.browser import _left_cell
+        from swe.console import strip_ansi
+        from swe.find.browser import _left_cell
 
         for active in (True, False):
             plain = strip_ansi(_left_cell(Entry("dv"), 20, active=active))
@@ -341,22 +341,22 @@ class SelectionBarTest(unittest.TestCase):
             self.assertTrue(plain.lstrip().startswith("dv"), plain)
 
     def test_the_selected_row_fills_its_whole_cell(self):
-        from quiver.console import visible_len
-        from quiver.find.browser import _left_cell
+        from swe.console import visible_len
+        from swe.find.browser import _left_cell
 
         cell = _left_cell(Entry("x", detail="1 item"), 30, active=True)
         self.assertIn("\x1b[48;5;", cell, "no background set")
         self.assertEqual(visible_len(cell), 30, "bar does not span the cell")
 
     def test_an_unselected_row_has_no_bar(self):
-        from quiver.find.browser import _left_cell
+        from swe.find.browser import _left_cell
 
         self.assertNotIn("48;5;", _left_cell(Entry("x"), 30, active=False))
 
     def test_the_parent_uses_a_quieter_bar(self):
         """Two bars of the same colour would compete; the parent is
         context, not the pane being driven."""
-        from quiver.find.browser import _left_cell
+        from swe.find.browser import _left_cell
 
         live = _left_cell(Entry("x"), 30, active=True, muted=False)
         parent = _left_cell(Entry("x"), 30, active=True, muted=True)
@@ -365,13 +365,13 @@ class SelectionBarTest(unittest.TestCase):
 
     def test_the_bar_closes_its_escape(self):
         """An unterminated background bleeds into the rest of the row."""
-        from quiver.find.browser import _left_cell
+        from swe.find.browser import _left_cell
 
         self.assertTrue(_left_cell(Entry("x"), 20, active=True).endswith("\x1b[0m"))
 
     def test_a_long_label_still_fits_the_bar(self):
-        from quiver.console import visible_len
-        from quiver.find.browser import _left_cell
+        from swe.console import visible_len
+        from swe.find.browser import _left_cell
 
         cell = _left_cell(Entry("z" * 90, detail="d" * 40), 24, active=True)
         self.assertEqual(visible_len(cell), 24)
@@ -387,7 +387,7 @@ class ResizeTest(unittest.TestCase):
         import io
         from contextlib import redirect_stdout
 
-        from quiver.find.browser import _render
+        from swe.find.browser import _render
 
         for height in (6, 20, 38):
             buf = io.StringIO()
@@ -404,8 +404,8 @@ class ResizeTest(unittest.TestCase):
         import io
         from contextlib import redirect_stdout
 
-        from quiver.console import visible_len
-        from quiver.find.browser import _render
+        from swe.console import visible_len
+        from swe.find.browser import _render
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -422,7 +422,7 @@ class ResizeTest(unittest.TestCase):
         import io
         from contextlib import redirect_stdout
 
-        from quiver.find.browser import _render
+        from swe.find.browser import _render
 
         many = [Entry(str(i)) for i in range(30)]
         for entries, ratio in (([Entry("a")], (3, 9, 8)),     # no range line
@@ -435,7 +435,7 @@ class ResizeTest(unittest.TestCase):
             self.assertEqual(drawn, buf.getvalue().count("\r\n"))
 
     def test_widths_are_recomputed_from_the_ratio(self):
-        from quiver.find.browser import _pane_widths
+        from swe.find.browser import _pane_widths
 
         self.assertNotEqual(_pane_widths(80, (2, 3, 5)),
                             _pane_widths(160, (2, 3, 5)))
@@ -446,7 +446,7 @@ class ResizeTest(unittest.TestCase):
         it started at."""
         from pathlib import Path
 
-        source = Path("src/quiver/find/browser.py").read_text()
+        source = Path("src/swe/find/browser.py").read_text()
         measure = source[source.index("def measure()"):]
         measure = measure[:measure.index("\n    heading")]
         self.assertIn("os.get_terminal_size", measure)
@@ -454,7 +454,7 @@ class ResizeTest(unittest.TestCase):
     def test_a_resize_handler_is_installed_and_restored(self):
         from pathlib import Path
 
-        source = Path("src/quiver/find/browser.py").read_text()
+        source = Path("src/swe/find/browser.py").read_text()
         self.assertIn("SIGWINCH", source)
         # Restored in the finally, beside the termios reset: leaving a
         # handler installed would outlive the browser.
@@ -466,7 +466,7 @@ class ResizeTest(unittest.TestCase):
         would never notice the signal."""
         from pathlib import Path
 
-        source = Path("src/quiver/find/browser.py").read_text()
+        source = Path("src/swe/find/browser.py").read_text()
         self.assertIn("select.select", source)
 
 
@@ -476,15 +476,15 @@ class BrowserMouseTest(unittest.TestCase):
     The older reader took a fixed two bytes after the Esc, so one scroll of
     the wheel read as an escape and the rest of the report came back as
     loose letters, two of which resize a pane. The reader now goes through
-    quiver.keys.
+    swe.keys.
     """
 
     def _drive(self, key_names, roots=None, select_side_effect=None,
                sizes=None):
         import os
 
-        from quiver.find import browser as browser_mod
-        from quiver.find.browser import browse
+        from swe.find import browser as browser_mod
+        from swe.find.browser import browse
 
         out = io.StringIO()
         stdin = mock.Mock()
@@ -507,7 +507,7 @@ class BrowserMouseTest(unittest.TestCase):
         size_kwargs = ({"side_effect": sizes}
                        if sizes is not None
                        else {"side_effect": OSError("no tty")})
-        with mock.patch("quiver.find.browser._supported", return_value=True), \
+        with mock.patch("swe.find.browser._supported", return_value=True), \
              mock.patch("sys.stdout", out), \
              mock.patch("sys.stdin", stdin), \
              mock.patch("termios.tcgetattr", return_value=["saved"]), \
@@ -518,14 +518,14 @@ class BrowserMouseTest(unittest.TestCase):
              mock.patch.object(os, "get_terminal_size", **size_kwargs), \
              mock.patch.object(browser_mod, "_render",
                                side_effect=count_render), \
-             mock.patch("quiver.find.browser._read_key", side_effect=key_names):
+             mock.patch("swe.find.browser._read_key", side_effect=key_names):
             code = browse(roots or [Entry("a"), Entry("b")], title="T")
         return code, out.getvalue(), seen, renders[0]
 
     def test_a_wheel_report_is_a_move_rather_than_a_cancel(self):
         import os
 
-        from quiver.find.browser import _read_key
+        from swe.find.browser import _read_key
 
         for report, want in ((b"\x1b[<64;10;5M", "up"),
                              (b"\x1b[<65;10;5M", "down")):
@@ -540,7 +540,7 @@ class BrowserMouseTest(unittest.TestCase):
         self.assertEqual(code, 0)
 
     def test_tracking_is_on_for_the_browse_and_off_before_termios(self):
-        from quiver import keys
+        from swe import keys
 
         code, out, seen, _ = self._drive(["cancel"])
         self.assertEqual(code, 0)

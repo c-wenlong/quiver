@@ -14,8 +14,8 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from quiver.harness.drift import check_code_vs_data
-from quiver.init import commands as init_commands
+from swe.harness.drift import check_code_vs_data
+from swe.init import commands as init_commands
 
 
 def _home(tmp: str, registry: dict | None) -> Path:
@@ -35,7 +35,7 @@ def _init(home: Path) -> str:
     # binary that resolves is install evidence (#68), and every harness in
     # these tests is meant to be absent from the machine.
     with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
-            mock.patch("quiver.init.layout.shutil.which", return_value=None), \
+            mock.patch("swe.init.layout.shutil.which", return_value=None), \
             redirect_stdout(out):
         init_commands.cmd_init(["--check", "--full"])
     return re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue())

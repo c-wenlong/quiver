@@ -119,7 +119,7 @@ refresh button reads everything again and starts the steps over.
 - `starred` is the registry's starred harnesses, in pin order. `error`
   is set when the registry couldn't be read.
 - `preview` is `swe setup --json`'s `data`, built in process by
-  `quiver.setup.commands.setup_preview`. A discovery or linking failure
+  `swe.setup.commands.setup_preview`. A discovery or linking failure
   arrives as `preview.instructions.error`; step 2 then shows it with Try
   again, as the sheet does when the preview call fails.
 - `first_run` is the Mac app's `FirstRun.shouldOffer` check: no shared
@@ -135,7 +135,7 @@ refresh button reads everything again and starts the steps over.
 `POST /v1/app/setup/apply` with `{"starred": ["claude", "gemini"],
 "adopt": "/home/dev/.claude/CLAUDE.md" | null}` is `swe setup --apply
 --json --starred=claude,gemini [--adopt=<file>]`, in process
-(`quiver.setup.commands.apply_setup`, which Doctor's setup fix also
+(`swe.setup.commands.apply_setup`, which Doctor's setup fix also
 runs), and makes the starred set exactly that list. The page
 sends the ticks in the grid's order, then any other ticked harness. The
 reply is `{"applied": <the envelope's applied>, "first_run", "starred"}`.

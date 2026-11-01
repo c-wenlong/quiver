@@ -12,10 +12,10 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver import paths
-from quiver.github import cli as ghcli
-from quiver.github import gh, manage
-from quiver.github import issues as gh_issues
+from swe import paths
+from swe.github import cli as ghcli
+from swe.github import gh, manage
+from swe.github import issues as gh_issues
 
 OK_ENV = gh.GhEnv(installed=True, authenticated=True, login="octocat")
 
@@ -82,7 +82,7 @@ class TestIssueWorktree(unittest.TestCase):
             return manage.run_git(["clone", "-q", "--bare",
                                    str(self.origin), args[3]])
 
-        patcher = patch("quiver.github.gh.run_gh", side_effect=run_gh)
+        patcher = patch("swe.github.gh.run_gh", side_effect=run_gh)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -201,7 +201,7 @@ class TestIssueWorktree(unittest.TestCase):
             return real(*args, **kwargs)
 
         results = {}
-        with patch("quiver.github.gh.run_gh", side_effect=slow_clone):
+        with patch("swe.github.gh.run_gh", side_effect=slow_clone):
             threads = [threading.Thread(
                 target=lambda n=n: results.update(
                     {n: manage.issue_worktree("o/r", n, self.home)}))
@@ -215,7 +215,7 @@ class TestIssueWorktree(unittest.TestCase):
             self.assertEqual(results[n].status, "ok", results[n].error)
 
     def test_clone_failure_names_the_step(self):
-        with patch("quiver.github.gh.run_gh",
+        with patch("swe.github.gh.run_gh",
                    return_value=gh.GhResult("upstream-error",
                                             error="denied")):
             result, notes = self.make()
@@ -325,9 +325,9 @@ class TestIssueCli(unittest.TestCase):
             return _Proc(returncode=1, stderr=f"unstubbed: {joined}")
 
         out, err = io.StringIO(), io.StringIO()
-        with patch("quiver.github.gh.probe_env", return_value=env), \
+        with patch("swe.github.gh.probe_env", return_value=env), \
              patch("subprocess.run", run), \
-             patch("quiver.github.repos.repo_at", return_value=None), \
+             patch("swe.github.repos.repo_at", return_value=None), \
              redirect_stdout(out), redirect_stderr(err):
             rc = ghcli.main(list(args))
         return rc, out.getvalue(), err.getvalue()
@@ -505,7 +505,7 @@ class TestIssueCli(unittest.TestCase):
         made = gh.GhResult("ok", data={
             "path": "/w/o__r-issue5", "branch": "quiver/issue-5",
             "base": "origin/main", "created": True})
-        with patch("quiver.github.manage.issue_worktree",
+        with patch("swe.github.manage.issue_worktree",
                    return_value=made) as wt:
             rc, out, _ = self._run(
                 ["issue", "worktree", "5", "--repo=o/r", "--json"])
@@ -521,7 +521,7 @@ class TestIssueCli(unittest.TestCase):
         self.assertNotIn("error", data)
 
     def test_worktree_failure(self):
-        with patch("quiver.github.manage.issue_worktree",
+        with patch("swe.github.manage.issue_worktree",
                    return_value=gh.GhResult("upstream-error",
                                             error="Fetch failed: x")):
             rc, out, _ = self._run(

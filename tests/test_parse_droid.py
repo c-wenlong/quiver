@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.parsers import parse_droid
+from swe.sessions.parsers import parse_droid
 
 
 class ParseDroidTest(unittest.TestCase):
@@ -48,7 +48,7 @@ class ParseDroidTest(unittest.TestCase):
             os.utime(jsonl, (time.time(), time.time()))
 
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser",
+                "swe.sessions.parsers.os.path.expanduser",
                 side_effect=lambda p: str(sessions_root) + "/" if p.endswith("sessions/") else os.path.expanduser(p),
             ):
                 # Expanduser only for the sessions path we care about
@@ -57,7 +57,7 @@ class ParseDroidTest(unittest.TestCase):
                         return str(sessions_root) + "/"
                     return os.path.expanduser(path)
 
-                with patch("quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
+                with patch("swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
                     sessions = parse_droid()
 
             self.assertEqual(len(sessions), 1)
@@ -98,7 +98,7 @@ class ParseDroidTest(unittest.TestCase):
                     return str(sessions_root) + "/"
                 return os.path.expanduser(path)
 
-            with patch("quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
+            with patch("swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
                 sessions = parse_droid()
 
             self.assertEqual(len(sessions), 1)

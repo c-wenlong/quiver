@@ -10,8 +10,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.webapp.pages import PageContext, PageError
-from quiver.webapp.pages import plugins as page
+from swe.webapp.pages import PageContext, PageError
+from swe.webapp.pages import plugins as page
 
 try:  # `unittest discover -s tests` puts tests/ itself on sys.path
     from test_plugin_catalog import _CatalogHome

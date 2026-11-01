@@ -20,10 +20,10 @@ client sees it.
 
 | Piece | Where | What |
 |---|---|---|
-| Pages | `src/quiver/webapp/static/` | Plain HTML, CSS and JS. No build step, no framework, no CDN. Same Devin-derived look as the Mac app (`Theme.swift`); the CSS variables in `styles.css` carry the same names. |
-| Page data | `src/quiver/webapp/api.py`, `src/quiver/webapp/pages/` | Builds each page's JSON from the domain services, in process, the way `/v1/usage` does. |
-| Ledger | `src/quiver/ledger/` | The Python port of `QuiverCore/Ledger`: scans harness logs into its own SQLite store and prices tokens. |
-| Routes | `src/quiver/remote/hub.py` | `/` serves the app and its assets as flat names beside it (`_serve_static`, names checked by `webapp/static.py`); `/v1/app/*` serves their data. Old `/app/…` paths redirect to the same name at the root. |
+| Pages | `src/swe/webapp/static/` | Plain HTML, CSS and JS. No build step, no framework, no CDN. Same Devin-derived look as the Mac app (`Theme.swift`); the CSS variables in `styles.css` carry the same names. |
+| Page data | `src/swe/webapp/api.py`, `src/swe/webapp/pages/` | Builds each page's JSON from the domain services, in process, the way `/v1/usage` does. |
+| Ledger | `src/swe/ledger/` | The Python port of `QuiverCore/Ledger`: scans harness logs into its own SQLite store and prices tokens. |
+| Routes | `src/swe/remote/hub.py` | `/` serves the app and its assets as flat names beside it (`_serve_static`, names checked by `webapp/static.py`); `/v1/app/*` serves their data. Old `/app/…` paths redirect to the same name at the root. |
 
 The hub already runs on the always-on machine, binds 127.0.0.1 and is
 published by Tailscale Serve, so the web app needs no new port, process or
@@ -125,9 +125,9 @@ parallel without touching a shared file. A page with the sidebar id
 
 | File | What |
 |---|---|
-| `src/quiver/webapp/pages/skills.py` | `get(ctx, args) -> dict` answers `GET /v1/app/skills` (`args`: each query parameter's first value). An optional `post(ctx, action, body) -> dict` answers `POST /v1/app/skills/<action>`. Raise `PageError(status, code, message)` to refuse. `ctx.state` is the hub's `HubState`, `ctx.home` its home. |
-| `src/quiver/webapp/static/pages/skills.js` | `registerPage("skills", render)`. The bundle runs each script in its own function scope, so private names never collide with another page's. `render(id)` paints `#panel` with the shared helpers in `app.js` (`api`, `esc`, `icon`, `pageHeader`, `renderGate`) and `manage.js` (`pageError`, `bindRefresh`); take `const gen = routeGen` before awaiting and drop the reply when it changed. |
-| `src/quiver/webapp/static/pages/skills.css` | Optional styles, using the tokens in `styles.css`. |
+| `src/swe/webapp/pages/skills.py` | `get(ctx, args) -> dict` answers `GET /v1/app/skills` (`args`: each query parameter's first value). An optional `post(ctx, action, body) -> dict` answers `POST /v1/app/skills/<action>`. Raise `PageError(status, code, message)` to refuse. `ctx.state` is the hub's `HubState`, `ctx.home` its home. |
+| `src/swe/webapp/static/pages/skills.js` | `registerPage("skills", render)`. The bundle runs each script in its own function scope, so private names never collide with another page's. `render(id)` paints `#panel` with the shared helpers in `app.js` (`api`, `esc`, `icon`, `pageHeader`, `renderGate`) and `manage.js` (`pageError`, `bindRefresh`); take `const gen = routeGen` before awaiting and drop the reply when it changed. |
+| `src/swe/webapp/static/pages/skills.css` | Optional styles, using the tokens in `styles.css`. |
 | `tests/test_webapp_skills.py` | The page's data, and the route with auth. |
 | `docs/web-app/skills.md` | What the page shows, its payload, and what differs from the Mac app. |
 
@@ -148,8 +148,8 @@ own stores.
 
 ## Going back
 
-Nothing in `app/mac/` changes. To drop the web app, delete `src/quiver/webapp/`,
+Nothing in `app/mac/` changes. To drop the web app, delete `src/swe/webapp/`,
 `docs/web-app/`,
-`src/quiver/ledger/`, the root static handler (`_serve_static`) and the
+`src/swe/ledger/`, the root static handler (`_serve_static`) and the
 `/v1/app/` branches in `hub.py`, and
 `~/.quiver/data/web-ledger/`.

@@ -1143,7 +1143,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   roadmap is now `app/ios/ROADMAP.md`). Build with
   `app/mac/script/build-app.sh` and install with
   `app/mac/script/install-app.sh`. The web app stays in
-  `src/quiver/webapp/`, inside the Python package. An app installed
+  `src/swe/webapp/`, inside the Python package. An app installed
   before this change can't rebuild itself from Settings › Updates once
   the checkout has the new layout; run `app/mac/script/install-app.sh`
   once.
@@ -1529,7 +1529,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over the real `item_completed` turns) and the span's first prompt
   overwrote the stored session title, sometimes with an injected turn
   like a `<local-command-caveat>` block. `SearchIndexer.beginFile` now
-  primes appends the way `src/quiver/sessions/search_writer.py` does:
+  primes appends the way `src/swe/sessions/search_writer.py` does:
   the head's first `session_meta` restores the `history_mode`, and only
   an explicit title record may rename the session. Appends are also
   gated to claude/codex/pi, Python's `APPENDABLE` set — any other
@@ -3083,7 +3083,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [GHSA-84m7-p3x7-pcfv](https://github.com/advisories/GHSA-84m7-p3x7-pcfv)
   (CVE-2026-59951): a stateful Streamable HTTP server never reclaimed
   sessions, so a client could grow its memory without bound. Quiver's
-  session server (`python -m quiver.mcp_server`) runs over stdio, which
+  session server (`python -m swe.mcp_server`) runs over stdio, which
   the advisory lists as unaffected, so there was no live exposure; the
   floor only keeps a fresh install off the vulnerable range.
 
@@ -3869,7 +3869,7 @@ service / model layering, tests with an 84% coverage floor).
   utilization ties. Existing outage caching keeps the last successful reading
   visible when Antigravity is closed.
 - **Security: SSRF / LFI fix in `swe mcp <tool> status` health check.**
-  `src/quiver/mcp/cli.py::check_server_health` now validates that any
+  `src/swe/mcp/cli.py::check_server_health` now validates that any
   URL it fetches via `urllib.request.urlopen` strictly starts with
   `http://` or `https://` (case-insensitive) before issuing the
   HEAD request. Without this guard, an attacker who can write a
@@ -3879,7 +3879,7 @@ service / model layering, tests with an 84% coverage floor).
   both `http` server types (direct URL field) and `wrapped` server
   types (URL inside `args`). (PR #2.)
 - **Security: Bandit B324 / FIPS-compliant `hashlib.md5` in Kimi
-  parser.** `src/quiver/sessions/parsers.py::parse_kimi::load_hash_map`
+  parser.** `src/swe/sessions/parsers.py::parse_kimi::load_hash_map`
   now passes `usedforsecurity=False` to the single
   `hashlib.md5(p.encode())` call — the hash is used purely to build
   a stable map-key from a path string, never for authentication or
@@ -3888,7 +3888,7 @@ service / model layering, tests with an 84% coverage floor).
   `usedforsecurity` was added in Python 3.9; the project's
   `requires-python = ">=3.10"` covers it natively. (PR #17.)
 - **Performance: memoize `os.path.realpath` in the session
-  aggregator's `cwd` filter loop.** `src/quiver/sessions/aggregator.py::get_all_sessions`
+  aggregator's `cwd` filter loop.** `src/swe/sessions/aggregator.py::get_all_sessions`
   used to issue an `os.path.realpath` syscall on every session's
   path when filtering by `cwd` — O(N) disk stats for what is
   functionally O(U) unique paths (most sessions share a project
@@ -3903,10 +3903,10 @@ service / model layering, tests with an 84% coverage floor).
   nested agent session trees. `os.scandir()` returns DirEntry
   objects whose `is_dir()` / `is_file()` / `stat()` reuse cached
   metadata from the directory iteration itself, collapsing the N+
-  syscalls into one. Touched files: `src/quiver/sessions/parsers.py`
-  (parse_cursor, parse_antigravity), `src/quiver/sessions/engines/jsonl_engine.py`
-  (5 sites), `src/quiver/sessions/engines/json_engine.py` (2 sites —
-  nested parent+session-dir loops), `src/quiver/sessions/models_analytics.py`
+  syscalls into one. Touched files: `src/swe/sessions/parsers.py`
+  (parse_cursor, parse_antigravity), `src/swe/sessions/engines/jsonl_engine.py`
+  (5 sites), `src/swe/sessions/engines/json_engine.py` (2 sites —
+  nested parent+session-dir loops), `src/swe/sessions/models_analytics.py`
   (3 sites — claude + freebuff paths). Every site is wrapped in
   `with os.scandir(...) as <var>_it:` so the directory FD is
   released on scope exit (caught and fixed during triage — bare

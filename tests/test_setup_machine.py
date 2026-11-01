@@ -66,7 +66,7 @@ class SetupMachineCheckoutTests(unittest.TestCase):
         return sha
 
     def run_step(self, *args):
-        env = dict(self.env, QUIVER_SETUP_REPO=str(self.repo))
+        env = dict(self.env, SWE_SETUP_REPO=str(self.repo))
         return subprocess.run(["bash", str(SCRIPT), "--only=checkout", *args],
                               env=env, capture_output=True, text=True)
 
@@ -193,7 +193,7 @@ class SetupMachineCheckoutTests(unittest.TestCase):
     def test_linked_worktree_refuses(self):
         wt = self.repo.parent / "wt"
         self.git(self.repo, "worktree", "add", "--quiet", "-b", "side", str(wt))
-        env = dict(self.env, QUIVER_SETUP_REPO=str(wt))
+        env = dict(self.env, SWE_SETUP_REPO=str(wt))
         r = subprocess.run(["bash", str(SCRIPT), "--only=checkout"], env=env,
                            capture_output=True, text=True)
         self.assertNotEqual(r.returncode, 0)

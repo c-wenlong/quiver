@@ -22,7 +22,7 @@ Nix users can skip the venv entirely: `nix develop` opens a shell with Python,
 
 ## Project layout
 
-The CLI is organized by domain under `src/quiver/`:
+The CLI is organized by domain under `src/swe/`:
 
 | Path | Role |
 | --- | --- |

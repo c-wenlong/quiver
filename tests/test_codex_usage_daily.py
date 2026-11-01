@@ -113,13 +113,13 @@ class CodexUsageDailyTest(unittest.TestCase):
         return env
 
     def _fetch(self, env, account_dir=None, timeout=5.0):
-        from quiver.harness.codex_usage import fetch_codex_usage_daily
+        from swe.harness.codex_usage import fetch_codex_usage_daily
 
         with patch.dict(os.environ, env, clear=True):
             return fetch_codex_usage_daily(account_dir, timeout=timeout)
 
     def _run(self, args):
-        from quiver.harness.commands import cmd_harness_usage_daily
+        from swe.harness.commands import cmd_harness_usage_daily
 
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -178,7 +178,7 @@ class CodexUsageDailyTest(unittest.TestCase):
         self.assertEqual(report["summary"]["lifetime_tokens"], 0)
 
     def test_classify_error_falls_back_to_unavailable(self):
-        from quiver.harness.codex_usage import _classify_error
+        from swe.harness.codex_usage import _classify_error
 
         self.assertEqual(_classify_error(None), "unavailable")
         self.assertEqual(_classify_error({"code": -32000, "message": "boom"}),
@@ -187,7 +187,7 @@ class CodexUsageDailyTest(unittest.TestCase):
                          "unsupported")
 
     def test_human_mode_unsupported_and_unavailable_exit_one(self):
-        from quiver.harness.codex_usage import print_codex_usage_daily
+        from swe.harness.codex_usage import print_codex_usage_daily
 
         for status in ("unsupported", "unavailable"):
             out, err = io.StringIO(), io.StringIO()
@@ -229,7 +229,7 @@ class CodexUsageDailyTest(unittest.TestCase):
             self.assertTrue(out or err, args)
 
     def test_harness_dispatch_reaches_usage_daily(self):
-        from quiver.setup.commands import cmd_harness
+        from swe.setup.commands import cmd_harness
 
         env = self._fake_codex()
         out, err = io.StringIO(), io.StringIO()
@@ -248,7 +248,7 @@ class CodexUsageDailyTest(unittest.TestCase):
         env = dict(os.environ)
         env["PATH"] = self.bin_dir  # nothing inside
         with patch.dict(os.environ, env, clear=True):
-            from quiver.harness.codex_usage import fetch_codex_usage_daily
+            from swe.harness.codex_usage import fetch_codex_usage_daily
 
             report = fetch_codex_usage_daily(timeout=2.0)
         self.assertEqual(report["status"], "unavailable")
@@ -297,7 +297,7 @@ class CodexUsageDailyTest(unittest.TestCase):
         os.makedirs(account_dir)
         env = self._fake_codex("sleep")
         with patch.dict(os.environ, env, clear=True):
-            with patch("quiver.harness.codex_usage.DEFAULT_TIMEOUT", 0.2):
+            with patch("swe.harness.codex_usage.DEFAULT_TIMEOUT", 0.2):
                 code, out, err = self._run(
                     ["codex", f"--account-dir={account_dir}"])
         self.assertEqual(code, 1)

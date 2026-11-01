@@ -21,7 +21,7 @@ from pathlib import Path
 
 from tests.test_webapp import MANAGE_JS, app_js_function
 
-PAGES = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages"
+PAGES = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages"
 
 # The shared prelude: DOM stub, the globals app.js/manage.js/format.js
 # provide, and the fetch/api route tables each flow fills first.
@@ -184,7 +184,7 @@ const choose = (sel, label) => { sel.value = optionsOf(sel).find((x) => x[1] ===
 
 STUB += app_js_function("currentRoute") + app_js_function("bindSearch", MANAGE_JS)
 
-MENU_JS = (Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/model-menu.js")
+MENU_JS = (Path(__file__).resolve().parents[1] / "src/swe/webapp/static/model-menu.js")
 
 # Writes go through app.js's own send(), over the stubbed fetch.
 STUB += app_js_function("apiSend") + "const apiPost = (path, body) => apiSend(\"POST\", path, body);\n"

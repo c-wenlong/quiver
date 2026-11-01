@@ -2,7 +2,7 @@
 
 The old ``interactive_select`` hand-rolled raw-mode key handling and hung
 on a bare Esc. These tests pin the replacement contract at the seam:
-``cmd_sync`` calls ``quiver.mcp.cli.multiselect`` with the server names as
+``cmd_sync`` calls ``swe.mcp.cli.multiselect`` with the server names as
 ``Choice`` rows, treats ``None`` (q/Esc/Ctrl-C) as an empty selection, and
 pre-ticks the rows the old widget defaulted to.
 """
@@ -15,9 +15,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from quiver.mcp import cli as cli_mod
-from quiver.mcp.cli import cmd_sync
-from quiver.multiselect import Choice, _render as ms_render
+from swe.mcp import cli as cli_mod
+from swe.mcp.cli import cmd_sync
+from swe.multiselect import Choice, _render as ms_render
 
 
 class SyncPickerTest(unittest.TestCase):

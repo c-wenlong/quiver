@@ -12,28 +12,28 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver.console import strip_ansi
-from quiver.harness.archive import _derive_usage as _REAL_DERIVE_USAGE
+from swe.console import strip_ansi
+from swe.harness.archive import _derive_usage as _REAL_DERIVE_USAGE
 from tests._tempdir import temp_dir
 
 
 class ArchiveStoreTest(unittest.TestCase):
     """Archive state lives on the harness's own row in harness.json now
-    (see quiver.harness.registry), so the file patched here is that, not a
-    standalone archived.json — the shim in quiver.harness.archive is what
+    (see swe.harness.registry), so the file patched here is that, not a
+    standalone archived.json — the shim in swe.harness.archive is what
     is under test."""
 
     def setUp(self):
         self.dir = temp_dir(self)
         self.file = self.dir / "harness.json"
-        from quiver.harness import registry
+        from swe.harness import registry
 
         for target, value in (("HARNESS_FILE", self.file), ("CONFIG_DIR", self.dir),
                               ("TOOLS_FILE", self.dir / "tools.json")):
             p = mock.patch.object(registry, target, value)
             p.start()
             self.addCleanup(p.stop)
-        from quiver.harness import archive
+        from swe.harness import archive
 
         self.mod = archive
 
@@ -122,10 +122,10 @@ class ListScopeTest(unittest.TestCase):
     }
 
     def _run(self, args, archived):
-        from quiver.harness import commands
+        from swe.harness import commands
 
         with mock.patch.object(commands, "load_registry", return_value=dict(self.REGISTRY)), \
-             mock.patch("quiver.harness.archive.load_archive", return_value=archived):
+             mock.patch("swe.harness.archive.load_archive", return_value=archived):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = commands.cmd_list(list(args))
@@ -186,11 +186,11 @@ class ArchiveCommandTest(unittest.TestCase):
         def _unarchive(name):
             return self.entries.pop(name, None)
 
-        from quiver.harness import commands
+        from swe.harness import commands
 
         for target, fn in (("load_archive", lambda: dict(self.entries)),
                            ("archive", _archive), ("unarchive", _unarchive)):
-            p = mock.patch(f"quiver.harness.archive.{target}", fn)
+            p = mock.patch(f"swe.harness.archive.{target}", fn)
             p.start()
             self.addCleanup(p.stop)
         p = mock.patch.object(commands, "load_registry", lambda: dict(self.registry))
@@ -263,35 +263,35 @@ class HarnessRouterTest(unittest.TestCase):
     the first layer of commands short."""
 
     def test_the_old_top_level_names_are_gone(self):
-        from quiver.cli import COMMANDS
+        from swe.cli import COMMANDS
 
         for name in ("star", "archive", "unstar", "favourite"):
             self.assertNotIn(name, COMMANDS, name)
 
     def test_hs_is_an_alias_for_harness(self):
-        from quiver.cli import COMMANDS
+        from swe.cli import COMMANDS
 
         self.assertIn("hs", COMMANDS)
         self.assertIs(COMMANDS["hs"], COMMANDS["harness"])
 
     def test_harness_star_routes_to_the_star_command(self):
-        from quiver.setup.commands import cmd_harness
+        from swe.setup.commands import cmd_harness
 
-        with mock.patch("quiver.harness.commands.cmd_star", return_value=0) as m:
+        with mock.patch("swe.harness.commands.cmd_star", return_value=0) as m:
             with redirect_stdout(io.StringIO()):
                 cmd_harness(["star", "claude"])
         m.assert_called_once_with(["claude"])
 
     def test_harness_archive_routes_to_the_archive_command(self):
-        from quiver.setup.commands import cmd_harness
+        from swe.setup.commands import cmd_harness
 
-        with mock.patch("quiver.harness.commands.cmd_archive", return_value=0) as m:
+        with mock.patch("swe.harness.commands.cmd_archive", return_value=0) as m:
             with redirect_stdout(io.StringIO()):
                 cmd_harness(["archive", "kiro", "why"])
         m.assert_called_once_with(["kiro", "why"])
 
     def test_an_unknown_subcommand_is_an_error(self):
-        from quiver.setup.commands import cmd_harness
+        from swe.setup.commands import cmd_harness
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -300,7 +300,7 @@ class HarnessRouterTest(unittest.TestCase):
         self.assertIn("Unknown harness subcommand", strip_ansi(buf.getvalue()))
 
     def test_the_help_lists_both_verbs(self):
-        from quiver.setup.commands import cmd_harness
+        from swe.setup.commands import cmd_harness
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -319,21 +319,21 @@ def _drive_statepicker(key_names, count=3):
     """Run the tri-state picker on ``count`` active rows, feeding it
     ``key_names``. Returns (result, everything drawn, what was drawn by
     each termios restore)."""
-    from quiver.multiselect import StateChoice, statepicker
+    from swe.multiselect import StateChoice, statepicker
 
     choices = [StateChoice(key=f"h{i}", label=f"h{i}") for i in range(count)]
     out = io.StringIO()
     stdin = mock.Mock()
     stdin.fileno.return_value = 0
     seen = []
-    with mock.patch("quiver.multiselect._supported", return_value=True), \
+    with mock.patch("swe.multiselect._supported", return_value=True), \
          mock.patch("sys.stdout", out), \
          mock.patch("sys.stdin", stdin), \
          mock.patch("termios.tcgetattr", return_value=["saved"]), \
          mock.patch("termios.tcsetattr",
                     side_effect=lambda *a: seen.append(out.getvalue())), \
          mock.patch("tty.setraw"), \
-         mock.patch("quiver.multiselect._read_state_key",
+         mock.patch("swe.multiselect._read_state_key",
                     side_effect=key_names):
         result = statepicker(choices)
     return result, out.getvalue(), seen
@@ -343,7 +343,7 @@ class StatePickerTest(unittest.TestCase):
     """Tri-state rows: active, starred, archived."""
 
     def test_the_three_states_cycle_and_wrap(self):
-        from quiver.multiselect import STATES
+        from swe.multiselect import STATES
 
         seen = []
         for presses in range(len(STATES) + 1):
@@ -357,7 +357,7 @@ class StatePickerTest(unittest.TestCase):
         self.assertEqual(result[0].state, "archived")
 
     def test_every_state_has_a_glyph(self):
-        from quiver.multiselect import STATE_GLYPH, STATES
+        from swe.multiselect import STATE_GLYPH, STATES
 
         for state in STATES:
             self.assertIn(state, STATE_GLYPH)
@@ -365,7 +365,7 @@ class StatePickerTest(unittest.TestCase):
     def test_keys_map_to_the_states_they_name(self):
         import os
 
-        from quiver.multiselect import _read_state_key
+        from swe.multiselect import _read_state_key
 
         for seq, want in ((b"s", "starred"), (b"x", "archived"), (b"c", "active"),
                           (b" ", "next"), (b"\x1b[C", "next"), (b"\x1b[D", "prev"),
@@ -379,7 +379,7 @@ class StatePickerTest(unittest.TestCase):
     def test_a_long_list_is_windowed_rather_than_drawn_whole(self):
         """Drawing more rows than the terminal has scrolls it, after which
         rewinding by a fixed count smears the widget down the screen."""
-        from quiver.multiselect import StateChoice, _state_render
+        from swe.multiselect import StateChoice, _state_render
 
         rows = [StateChoice(key=f"h{i}", label=f"h{i}") for i in range(40)]
         buf = io.StringIO()
@@ -389,7 +389,7 @@ class StatePickerTest(unittest.TestCase):
         self.assertIn("of 40", strip_ansi(buf.getvalue()))
 
     def test_the_window_follows_the_cursor(self):
-        from quiver.multiselect import StateChoice, _state_render
+        from swe.multiselect import StateChoice, _state_render
 
         rows = [StateChoice(key=f"h{i}", label=f"h{i}") for i in range(40)]
         buf = io.StringIO()
@@ -398,7 +398,7 @@ class StatePickerTest(unittest.TestCase):
         self.assertIn("h38", strip_ansi(buf.getvalue()))
 
     def test_an_empty_registry_returns_nothing_rather_than_hanging(self):
-        from quiver.multiselect import statepicker
+        from swe.multiselect import statepicker
 
         self.assertEqual(statepicker([]), [])
 
@@ -425,7 +425,7 @@ class HarnessEditTest(unittest.TestCase):
                                    "archived_at": "2026-08-21T10:00:00"}
             return self.archived[name]
 
-        from quiver.harness import commands
+        from swe.harness import commands
 
         self.commands = commands
         patches = [
@@ -436,9 +436,9 @@ class HarnessEditTest(unittest.TestCase):
                               lambda n: self.stars.append(n)),
             mock.patch.object(commands, "unstar_name",
                               lambda n: self.stars.remove(n) if n in self.stars else None),
-            mock.patch("quiver.harness.archive.load_archive", lambda: dict(self.archived)),
-            mock.patch("quiver.harness.archive.archive", _archive),
-            mock.patch("quiver.harness.archive.unarchive",
+            mock.patch("swe.harness.archive.load_archive", lambda: dict(self.archived)),
+            mock.patch("swe.harness.archive.archive", _archive),
+            mock.patch("swe.harness.archive.unarchive",
                        lambda n: self.archived.pop(n, None)),
         ]
         for p in patches:
@@ -456,7 +456,7 @@ class HarnessEditTest(unittest.TestCase):
             return choices
 
         replies = list(answers)
-        with mock.patch("quiver.multiselect.statepicker", fake_picker), \
+        with mock.patch("swe.multiselect.statepicker", fake_picker), \
              mock.patch.object(self.commands, "read_line",
                                side_effect=lambda *a, **k: replies.pop(0)):
             buf = io.StringIO()
@@ -525,7 +525,7 @@ class HarnessEditTest(unittest.TestCase):
         def boom(*a, **k):
             raise KeyboardInterrupt
 
-        with mock.patch("quiver.multiselect.statepicker",
+        with mock.patch("swe.multiselect.statepicker",
                         lambda choices, **kw: [
                             setattr(ch, "state", "archived") or ch
                             for ch in choices if ch.key == "kiro"
@@ -554,7 +554,7 @@ class UsageLevelTest(unittest.TestCase):
     """
 
     def setUp(self):
-        from quiver.harness import archive
+        from swe.harness import archive
 
         self.mod = archive
 
@@ -596,14 +596,14 @@ class UsagePersistenceTest(unittest.TestCase):
     def setUp(self):
         self.dir = temp_dir(self)
         self.file = self.dir / "harness.json"
-        from quiver.harness import registry
+        from swe.harness import registry
 
         for target, value in (("HARNESS_FILE", self.file), ("CONFIG_DIR", self.dir),
                               ("TOOLS_FILE", self.dir / "tools.json")):
             p = mock.patch.object(registry, target, value)
             p.start()
             self.addCleanup(p.stop)
-        from quiver.harness import archive
+        from swe.harness import archive
 
         self.mod = archive
         p = mock.patch.object(archive, "_derive_usage", lambda name: "trial")
@@ -650,7 +650,7 @@ class UsagePersistenceTest(unittest.TestCase):
     def test_a_failure_to_read_history_does_not_block_archiving(self):
         # setUp stubs _derive_usage; put the real one back for this test.
         with mock.patch.object(self.mod, "_derive_usage", _REAL_DERIVE_USAGE), \
-             mock.patch("quiver.sessions.usage.session_counts",
+             mock.patch("swe.sessions.usage.session_counts",
                         side_effect=RuntimeError("boom")):
             entry = self.mod.archive("kiro", "thin wrapper")
         self.assertEqual(entry["usage"], "unknown")
@@ -662,13 +662,13 @@ class UsageColumnTest(unittest.TestCase):
                 for n in ("claude", "kiro")}
 
     def _render(self, archived, columns=("mark", "name", "usage")):
-        from quiver.harness import commands
+        from swe.harness import commands
 
         with mock.patch.object(commands, "load_registry", return_value=dict(self.REGISTRY)), \
              mock.patch.object(commands, "load_columns", return_value=list(columns)), \
              mock.patch.object(commands, "_session_counts", return_value={}), \
              mock.patch.object(commands, "_broken_tools", return_value=set()), \
-             mock.patch("quiver.harness.archive.load_archive", return_value=archived):
+             mock.patch("swe.harness.archive.load_archive", return_value=archived):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 commands.cmd_list(["--scope=all"])
@@ -692,7 +692,7 @@ class UsageColumnTest(unittest.TestCase):
             self.assertNotIn(level, row)
 
     def test_the_column_is_configurable_like_the_others(self):
-        from quiver.harness.columns import BY_KEY
+        from swe.harness.columns import BY_KEY
 
         self.assertIn("usage", BY_KEY)
         self.assertFalse(BY_KEY["usage"].locked)
@@ -701,8 +701,8 @@ class UsageColumnTest(unittest.TestCase):
         self.assertNotIn("USAGE", self._render(self.ARCH, columns=("mark", "name")))
 
     def test_the_legend_explains_every_level(self):
-        from quiver.harness.archive import USAGE_LEVELS
-        from quiver.harness.commands import cmd_list_legend
+        from swe.harness.archive import USAGE_LEVELS
+        from swe.harness.commands import cmd_list_legend
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -723,13 +723,13 @@ class UsageFlagTest(unittest.TestCase):
                                   "usage": usage or "trial"}
             return self.entries[name]
 
-        from quiver.harness import commands
+        from swe.harness import commands
 
         self.commands = commands
         for target, fn in (("load_archive", lambda: dict(self.entries)),
                            ("archive", _archive),
                            ("unarchive", lambda n: self.entries.pop(n, None))):
-            p = mock.patch(f"quiver.harness.archive.{target}", fn)
+            p = mock.patch(f"swe.harness.archive.{target}", fn)
             p.start()
             self.addCleanup(p.stop)
         p = mock.patch.object(commands, "load_registry",
@@ -775,9 +775,9 @@ class HarnessListRoutingTest(unittest.TestCase):
     """
 
     def _call(self, args):
-        from quiver.setup.commands import cmd_harness
+        from swe.setup.commands import cmd_harness
 
-        with mock.patch("quiver.harness.commands.cmd_list", return_value=0) as m:
+        with mock.patch("swe.harness.commands.cmd_list", return_value=0) as m:
             with redirect_stdout(io.StringIO()):
                 code = cmd_harness(list(args))
         return code, m
@@ -799,14 +799,14 @@ class HarnessListRoutingTest(unittest.TestCase):
         m.assert_called_once_with(["edit", "--reset"])
 
     def test_the_top_level_shortcut_is_the_same_callable(self):
-        from quiver.cli import COMMANDS
-        from quiver.harness.commands import cmd_list
+        from swe.cli import COMMANDS
+        from swe.harness.commands import cmd_list
 
         self.assertIs(COMMANDS["list"], cmd_list)
         self.assertIs(COMMANDS["ls"], cmd_list)
 
     def test_the_container_help_lists_it_first(self):
-        from quiver.setup.commands import cmd_harness
+        from swe.setup.commands import cmd_harness
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -817,14 +817,14 @@ class HarnessListRoutingTest(unittest.TestCase):
         self.assertEqual(verbs[0], "list")
 
     def test_completion_offers_list_under_harness(self):
-        import quiver.completion as comp
+        import swe.completion as comp
 
         for parent in ("harness", "hs"):
             names = [n for n, _ in comp.get_completions([parent, ""])]
             self.assertIn("list", names, parent)
 
     def test_completion_offers_list_flags_one_level_deep(self):
-        import quiver.completion as comp
+        import swe.completion as comp
 
         flags = [n for n, _ in comp.get_completions(["hs", "list", "--sc"])]
         self.assertTrue(any(f.startswith("--scope") for f in flags), flags)
@@ -843,13 +843,13 @@ class ReasonColumnTest(unittest.TestCase):
     def _render(self, columns, scope="all", archived=None):
         import re
 
-        from quiver.harness import commands
+        from swe.harness import commands
 
         with mock.patch.object(commands, "load_registry", return_value=dict(self.REGISTRY)), \
              mock.patch.object(commands, "load_columns", return_value=list(columns)), \
              mock.patch.object(commands, "_session_counts", return_value={}), \
              mock.patch.object(commands, "_broken_tools", return_value=set()), \
-             mock.patch("quiver.harness.archive.load_archive",
+             mock.patch("swe.harness.archive.load_archive",
                         return_value=self.ARCH if archived is None else archived):
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -906,7 +906,7 @@ class ReasonColumnTest(unittest.TestCase):
         self.assertEqual(len(set(block)), 1, sorted(set(block)))
 
     def test_they_are_ordinary_configurable_columns(self):
-        from quiver.harness.columns import BY_KEY
+        from swe.harness.columns import BY_KEY
 
         for key in ("reason", "archived"):
             self.assertIn(key, BY_KEY)
@@ -918,7 +918,7 @@ class StatePickerMouseTest(unittest.TestCase):
 
     The older reader took a fixed two bytes after the Esc, so one scroll of
     the wheel read as a cancel and left the rest of the report to come back
-    as loose letters. Both readers now go through quiver.keys.
+    as loose letters. Both readers now go through swe.keys.
     """
 
     def _drive(self, key_names, count=3):
@@ -927,7 +927,7 @@ class StatePickerMouseTest(unittest.TestCase):
     def test_a_wheel_report_is_a_move_rather_than_a_cancel(self):
         import os
 
-        from quiver.multiselect import _read_state_key
+        from swe.multiselect import _read_state_key
 
         for report, want in ((b"\x1b[<64;10;5M", "up"),
                              (b"\x1b[<65;10;5M", "down")):
@@ -942,7 +942,7 @@ class StatePickerMouseTest(unittest.TestCase):
         self.assertIsNotNone(result)
 
     def test_tracking_is_on_for_the_widget_and_off_before_termios(self):
-        from quiver import keys
+        from swe import keys
 
         result, out, seen = self._drive(["enter"])
         self.assertIsNotNone(result)

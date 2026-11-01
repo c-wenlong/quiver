@@ -8,10 +8,10 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from quiver.harness.discover import HarnessFinding
-from quiver.mcp.discover import MergeResult, McpFinding
-from quiver.setup.commands import cmd_setup
-from quiver.skills.symlinks import SkillsSymlinkHint
+from swe.harness.discover import HarnessFinding
+from swe.mcp.discover import MergeResult, McpFinding
+from swe.setup.commands import cmd_setup
+from swe.skills.symlinks import SkillsSymlinkHint
 
 
 def _finding(name="tool", confidence="high", status="new"):
@@ -42,13 +42,13 @@ class _SetupHarness(unittest.TestCase):
         # PATH is stubbed so the developer's own installs cannot leak in: a
         # binary that resolves is install evidence (#68), and every harness
         # in these tests is meant to be absent until its dir is made by hand.
-        which_patch = patch("quiver.init.layout.shutil.which", return_value=None)
+        which_patch = patch("swe.init.layout.shutil.which", return_value=None)
         which_patch.start()
         self.addCleanup(which_patch.stop)
 
     def _run(self, args, findings=(), mcp=(), hints=(), apply_map=None):
         """Run cmd_setup with discovery mocked and stdin forced non-tty."""
-        from quiver.setup import commands as sc
+        from swe.setup import commands as sc
         merge = MergeResult(added=[], updated=[], orphaned=[], pruned=[])
         mocks = {
             "apply_findings": Mock(return_value=[]),
@@ -136,7 +136,7 @@ class SetupCommandTest(_SetupHarness):
         self.assertEqual(code, 0)
 
     def test_interactive_prompt_declined_stays_dry(self):
-        from quiver.setup import commands as sc
+        from swe.setup import commands as sc
         with patch.object(sc, "discover_harnesses", lambda: [_finding()]), \
                 patch.object(sc, "discover_mcp_servers", lambda **k: []), \
                 patch.object(sc, "skills_symlink_hints", lambda **k: []), \
@@ -149,7 +149,7 @@ class SetupCommandTest(_SetupHarness):
         self.assertIn("Dry-run only", out.getvalue())
 
     def test_interactive_prompt_eof_returns_130(self):
-        from quiver.setup import commands as sc
+        from swe.setup import commands as sc
         with patch.object(sc, "discover_harnesses", lambda: [_finding()]), \
                 patch.object(sc, "discover_mcp_servers", lambda **k: []), \
                 patch.object(sc, "skills_symlink_hints", lambda **k: []), \
@@ -161,7 +161,7 @@ class SetupCommandTest(_SetupHarness):
         self.assertEqual(code, 130)
 
     def test_interactive_accept_applies(self):
-        from quiver.setup import commands as sc
+        from swe.setup import commands as sc
         apply_h = Mock(return_value=["kiro"])
         merge = MergeResult(added=["linear"], updated=[], orphaned=[], pruned=[])
         apply_m = Mock(return_value=merge)
@@ -256,7 +256,7 @@ class SetupLinksTest(_SetupHarness):
         self.assertEqual((self.home / ".quiver" / "AGENTS.md").read_text(), "already mine\n")
 
     def test_starred_sets_exactly_the_ticked_harnesses(self):
-        from quiver.harness import registry
+        from swe.harness import registry
         reg = {"claude": {"command": "claude"}, "codex": {"command": "codex"},
                "droid": {"command": "droid", "state": "starred", "pin": 1}}
         saved = {}
@@ -311,7 +311,7 @@ class SetupLinksTest(_SetupHarness):
     def test_a_discovery_failure_still_emits_the_json_envelope(self):
         # A crash before any apply step ran (unwritable config dir, corrupt
         # registry) must still answer --json with a well-formed envelope.
-        from quiver.setup import commands as sc
+        from swe.setup import commands as sc
 
         for extra, key in ((["--apply"], "applied"), ([], "instructions")):
             with self.subTest(extra=extra):
@@ -331,7 +331,7 @@ class SetupLinksTest(_SetupHarness):
         # live under module-level paths that Path.home() cannot redirect,
         # so load/save are mocked — without this the test would rewrite
         # the developer's real ~/.quiver/config/harness.json.
-        from quiver.harness import registry
+        from swe.harness import registry
 
         saved = {}
         with patch.object(registry, "load_registry", lambda: {}), \
@@ -342,7 +342,7 @@ class SetupLinksTest(_SetupHarness):
         self.assertNotIn("errors", json.loads(out)["data"]["applied"])
 
     def test_starred_failure_is_reported_in_errors(self):
-        from quiver.setup import commands as sc
+        from swe.setup import commands as sc
 
         with patch.object(
             sc, "_set_starred", Mock(side_effect=OSError("registry locked"))
@@ -354,7 +354,7 @@ class SetupLinksTest(_SetupHarness):
         self.assertNotIn("starred", applied)
 
     def test_preview_linking_failure_is_an_error_field_not_a_traceback(self):
-        from quiver.setup import commands as sc
+        from swe.setup import commands as sc
 
         err = io.StringIO()
         with patch.object(
@@ -374,7 +374,7 @@ class SetupLinksTest(_SetupHarness):
         # Ctrl-D / Ctrl-C.
         import contextlib
 
-        from quiver.setup import commands as sc
+        from swe.setup import commands as sc
 
         none = MergeResult(added=[], updated=[], orphaned=[], pruned=[])
         quiet = {
@@ -418,7 +418,7 @@ class SetupLinksTest(_SetupHarness):
                         cmd_setup(argv)
 
     def test_interactive_accept_apply_failure_reports_instead_of_traceback(self):
-        from quiver.setup import commands as sc
+        from swe.setup import commands as sc
 
         with patch.object(sc, "discover_harnesses", lambda: [_finding("kiro")]), \
                 patch.object(sc, "discover_mcp_servers", lambda **k: []), \
@@ -439,7 +439,7 @@ class SetupLinksTest(_SetupHarness):
     def test_interactive_accept_eof_still_propagates(self):
         # The apply-step guard re-raises Ctrl-D/Ctrl-C instead of
         # reporting it as an apply failure.
-        from quiver.setup import commands as sc
+        from swe.setup import commands as sc
 
         with patch.object(sc, "discover_harnesses", lambda: [_finding("kiro")]), \
                 patch.object(sc, "discover_mcp_servers", lambda **k: []), \

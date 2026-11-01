@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import quiver.harness.path_health as path_health
-from quiver.harness.path_health import (
+import swe.harness.path_health as path_health
+from swe.harness.path_health import (
     find_off_path_tools,
     is_dir_on_path,
     search_dirs_for_command,
@@ -23,7 +23,7 @@ class PathHealthTest(unittest.TestCase):
             binary.chmod(0o755)
 
             with patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "NVM_DIR": str(home / ".nvm")}):
-                with patch("quiver.harness.path_health.shutil.which", return_value=None):
+                with patch("swe.harness.path_health.shutil.which", return_value=None):
                     hits = search_dirs_for_command("mastracode", home=home)
 
             self.assertTrue(hits)
@@ -41,8 +41,8 @@ class PathHealthTest(unittest.TestCase):
 
             registry = {"ghost": {"command": "ghostcli"}}
             with patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "NVM_DIR": str(home / ".nvm")}):
-                with patch("quiver.harness.path_health.shutil.which", return_value=None):
-                    with patch("quiver.harness.path_health.Path.home", return_value=home):
+                with patch("swe.harness.path_health.shutil.which", return_value=None):
+                    with patch("swe.harness.path_health.Path.home", return_value=home):
                         orphans = find_off_path_tools(registry)
 
             self.assertEqual(len(orphans), 1)

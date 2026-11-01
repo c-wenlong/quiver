@@ -7,7 +7,7 @@ unwrap the query, and prefer the CLI's own ``title`` from ``meta.json``.
 
 import unittest
 
-from quiver.sessions.parsers import _cursor_session_title
+from swe.sessions.parsers import _cursor_session_title
 
 WRAPPED = (
     "<timestamp>Wednesday, Sep 2, 2026, 12:15 PM (UTC+8)</timestamp>\n"

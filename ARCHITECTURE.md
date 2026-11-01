@@ -7,7 +7,7 @@ session history and rate limits.
 The CLI is stdlib-only, with no runtime dependencies at all.
 
 Three clients sit on top of it: the macOS app in `app/mac/`, the iPhone
-app in `app/ios/`, and the web app in `src/quiver/webapp/`, which ships in
+app in `app/ios/`, and the web app in `src/swe/webapp/`, which ships in
 the Python package so the hub can serve it.
 
 This file is the overview; each topic below has a deeper document in `docs/`:

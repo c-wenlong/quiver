@@ -20,10 +20,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quiver.harness.discover import HarnessFinding
-from quiver.init import hub as hub_mod
-from quiver.webapp.pages import PageError
-from quiver.webapp.pages import setup as setup_page
+from swe.harness.discover import HarnessFinding
+from swe.init import hub as hub_mod
+from swe.webapp.pages import PageError
+from swe.webapp.pages import setup as setup_page
 from tests.test_init_hub import _hub_repo
 from tests.test_remote_hub import HubBase
 from tests.test_webapp import app_js_function
@@ -50,15 +50,15 @@ class _Home:
         (home / ".claude").mkdir()
         self.claude_md = home / ".claude" / "CLAUDE.md"
         self.claude_md.write_text("my own rules\n")
-        from quiver.setup import commands as sc
+        from swe.setup import commands as sc
         self._patches = [
-            patch("quiver.harness.registry.CONFIG_DIR", config),
-            patch("quiver.harness.registry.HARNESS_FILE", self.registry_file),
-            patch("quiver.harness.registry.TOOLS_FILE", config / "tools.json"),
+            patch("swe.harness.registry.CONFIG_DIR", config),
+            patch("swe.harness.registry.HARNESS_FILE", self.registry_file),
+            patch("swe.harness.registry.TOOLS_FILE", config / "tools.json"),
             patch.object(Path, "home", staticmethod(lambda: home)),
-            patch("quiver.init.layout.shutil.which", return_value=None),
-            patch("quiver.harness.tools.is_installed", return_value=False),
-            patch("quiver.webapp.pages.setup.shutil.which", return_value=None),
+            patch("swe.init.layout.shutil.which", return_value=None),
+            patch("swe.harness.tools.is_installed", return_value=False),
+            patch("swe.webapp.pages.setup.shutil.which", return_value=None),
             patch.object(sc, "discover_harnesses", lambda: [_finding(n) for n in self.findings]),
             patch.object(sc, "discover_mcp_servers", lambda **k: []),
         ]
@@ -112,7 +112,7 @@ class TestGet(_Home, unittest.TestCase):
             "gemini": {"command": "gemini", "state": "archived"},
             "ollama": {"command": "ollama", "state": "starred", "pin": 2},
         }))
-        with patch("quiver.harness.tools.is_installed", return_value=True):
+        with patch("swe.harness.tools.is_installed", return_value=True):
             data = setup_page.get(self.ctx(), {})
         found = [p["id"] for p in data["agents"]["providers"] if p["installed"]]
         # An archived harness is left out, as swe list leaves it out.
@@ -129,7 +129,7 @@ class TestGet(_Home, unittest.TestCase):
         # An installed agent has no install block, so no website either.
         self.assertNotIn("website", rows["claude"])
         self.assertNotIn("app", rows["gemini"])
-        with patch("quiver.harness.installers.installed_app",
+        with patch("swe.harness.installers.installed_app",
                    return_value="/Applications/Gemini.app"):
             rows = {p["id"]: p for p in setup_page.get(self.ctx(), {})["agents"]["providers"]}
         self.assertEqual(rows["gemini"]["app"], "/Applications/Gemini.app")
@@ -145,7 +145,7 @@ class TestGet(_Home, unittest.TestCase):
         self.assertFalse(setup_page.get(self.ctx(), {})["first_run"])
 
     def test_preview_is_swe_setup_json(self):
-        from quiver.setup.commands import cmd_setup, setup_preview
+        from swe.setup.commands import cmd_setup, setup_preview
         out = io.StringIO()
         with redirect_stdout(out), patch("sys.stdin.isatty", return_value=False):
             cmd_setup(["--json"])
@@ -190,13 +190,13 @@ class TestApply(_Home, unittest.TestCase):
     def test_apply_holds_the_shared_config_lock(self):
         # Setup writes mcp.json and relinks skills: it must wait for an
         # MCP or Skills page write, which hold this same lock.
-        from quiver.webapp import pages
-        from quiver.webapp.pages import mcp, skills
+        from swe.webapp import pages
+        from swe.webapp.pages import mcp, skills
 
         self.assertIs(mcp._WRITE_LOCK, pages.CONFIG_LOCK)
         self.assertIs(skills._WRITE_LOCK, pages.CONFIG_LOCK)
         held = []
-        with patch("quiver.setup.commands.apply_setup",
+        with patch("swe.setup.commands.apply_setup",
                    side_effect=lambda *a, **k: held.append(
                        pages.CONFIG_LOCK.locked()) or {}):
             self.post(starred=[], adopt=None)
@@ -246,7 +246,7 @@ class TestApply(_Home, unittest.TestCase):
         self.assertEqual(reply["starred"], ["ollama", "claude"])
 
     def test_a_failed_discovery_is_a_503_and_writes_nothing(self):
-        from quiver.setup import commands as sc
+        from swe.setup import commands as sc
 
         def broken():
             raise OSError("PATH unreadable")
@@ -294,12 +294,12 @@ class TestRerun(_Home, unittest.TestCase):
         return registry
 
     def test_doctors_setup_fix_twice_adds_no_folder_or_harness(self):
-        from quiver.setup.commands import apply_setup
+        from swe.setup.commands import apply_setup
         registry = self.assert_rerun_is_a_no_op(lambda: apply_setup(self.home))
         self.assertEqual(registry, ["claude"])
 
     def test_the_cli_apply_twice_adds_no_folder_or_harness(self):
-        from quiver.setup.commands import cmd_setup
+        from swe.setup.commands import cmd_setup
 
         def run():
             with redirect_stdout(io.StringIO()), \
@@ -336,9 +336,9 @@ class TestInstall(_Home, unittest.TestCase):
             kwargs["stdout"].write(b"==> Pouring kilo\n")
             return subprocess.CompletedProcess(argv, returncode)
 
-        with patch("quiver.harness.commands.shutil.which", side_effect=where), \
-                patch("quiver.harness.commands.subprocess.run", side_effect=run or installer) as stub, \
-                patch("quiver.harness.tools.live_version", return_value="1.0.0"):
+        with patch("swe.harness.commands.shutil.which", side_effect=where), \
+                patch("swe.harness.commands.subprocess.run", side_effect=run or installer) as stub, \
+                patch("swe.harness.tools.live_version", return_value="1.0.0"):
             reply = setup_page.post(self.ctx(), "install", body)
         return reply, stub
 
@@ -409,7 +409,7 @@ class _HubClone(_Home):
         self.src = _hub_repo(Path(tmp.name))
         setup_page._JOBS.clear()
         self.addCleanup(setup_page._JOBS.clear)
-        register = patch("quiver.init.hub.register_marketplaces", return_value=[])
+        register = patch("swe.init.hub.register_marketplaces", return_value=[])
         self.register = register.start()
         self.addCleanup(register.stop)
 
@@ -452,7 +452,7 @@ class TestHubClone(_HubClone, unittest.TestCase):
             return subprocess.CompletedProcess(
                 args, 128, "", "fatal: unable to access 'https://me:tok@h/r.git/': 403")
 
-        with patch("quiver.init.hub._git", fail):
+        with patch("swe.init.hub._git", fail):
             reply = self.clone("https://me:tok@h/r.git")
             hub = _wait_for_clone(self.home)
         self.assertNotIn("tok", json.dumps(reply) + json.dumps(hub))
@@ -468,7 +468,7 @@ class TestHubClone(_HubClone, unittest.TestCase):
 
         # _git's own timeout handling, with the run git would have timed out in.
         real_git = hub_mod._git
-        with patch("quiver.init.hub._git", lambda args, timeout, run: real_git(args, timeout, slow)):
+        with patch("swe.init.hub._git", lambda args, timeout, run: real_git(args, timeout, slow)):
             self.clone("https://h/r.git")
             hub = _wait_for_clone(self.home)
         self.assertEqual(hub["job"]["state"], "failed")
@@ -557,7 +557,7 @@ class TestRoute(_Home, HubBase):
         self.assertFalse(json.loads(data)["first_run"])
 
     def test_install_through_the_hub(self):
-        with patch("quiver.webapp.pages.doctor._run_install", return_value=None) as ran:
+        with patch("swe.webapp.pages.doctor._run_install", return_value=None) as ran:
             status, data = self.srv.request(
                 "POST", "/v1/app/setup/install", body={"id": "gemini", "via": "npm"},
                 headers={**self.auth(), "Origin": self.origin()})
@@ -576,7 +576,7 @@ class TestRoute(_Home, HubBase):
         self.assertEqual(status, 401)
         # Pairing writes ~/.quiver/data/remote: local state the clone lands beside.
         auth = self.auth()
-        with patch("quiver.init.hub.register_marketplaces", return_value=[]):
+        with patch("swe.init.hub.register_marketplaces", return_value=[]):
             status, data = self.srv.request("POST", "/v1/app/setup/hub", body={"url": str(src)},
                                             headers={**auth, "Origin": self.origin()})
             self.assertEqual(status, 200, data)
@@ -626,7 +626,7 @@ class TestLoadOrder(unittest.TestCase):
     after the page was left still clears the loading flag."""
 
     def run_js(self, body):
-        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/setup.js"
+        page = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/setup.js"
         prelude = ("let routeGen = 1; const answers = [];\n"
                    "const api = () => new Promise((resolve) => answers.push(resolve));\n"
                    "function registerPage() {}\n" + app_js_function("currentRoute"))

@@ -8,10 +8,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.harness import doctor_fix
-from quiver.harness.doctor import plugin_findings
-from quiver.harness.doctor_fix import FixRefused
-from quiver.harness.drift import check_dangling_symlinks
+from swe.harness import doctor_fix
+from swe.harness.doctor import plugin_findings
+from swe.harness.doctor_fix import FixRefused
+from swe.harness.drift import check_dangling_symlinks
 
 try:  # `unittest discover -s tests` puts tests/ itself on sys.path
     from _tempdir import temp_dir
@@ -100,12 +100,12 @@ class PluginFindingsTest(_FakeHome, unittest.TestCase):
         self.assertIsNone(found.action)
 
     def test_a_broken_drift_read_is_one_warning(self):
-        with mock.patch("quiver.find.plugin_drift.plugin_drift", side_effect=OSError("boom")):
+        with mock.patch("swe.find.plugin_drift.plugin_drift", side_effect=OSError("boom")):
             (found,) = plugin_findings(self.home)
         self.assertEqual(found.check, "plugins.unchecked")
 
     def test_the_runner_reruns_drift_by_id(self):
-        with mock.patch("quiver.find.plugin_drift.apply_fix") as apply:
+        with mock.patch("swe.find.plugin_drift.apply_fix") as apply:
             error = doctor_fix.RUNNERS["plugin-fix"](
                 self.home, {}, {"id": "claude:unregistered:/x"})
         apply.assert_called_once_with(self.home, "claude:unregistered:/x")
@@ -222,8 +222,8 @@ class WebRunTest(unittest.TestCase):
     def test_a_run_without_an_action_carries_the_remedy(self):
         from types import SimpleNamespace
 
-        from quiver.harness.models import DoctorFinding, DoctorReport
-        from quiver.webapp.pages import doctor as page
+        from swe.harness.models import DoctorFinding, DoctorReport
+        from swe.webapp.pages import doctor as page
 
         remedy = {"kind": "action", "action": "plugin-fix", "id": "claude:unregistered:/m"}
         report = DoctorReport([DoctorFinding("plugins.unregistered", "warning", "m", "fix",
@@ -231,10 +231,10 @@ class WebRunTest(unittest.TestCase):
                                              remedies=(remedy,))])
         home = temp_dir(self)
         ctx = SimpleNamespace(home=home, machine={"name": "box"})
-        with mock.patch("quiver.harness.commands.doctor_report", return_value=report), \
-                mock.patch("quiver.webapp.pages.repositories.harnesses", return_value=[]), \
-                mock.patch("quiver.find.plugin_drift.apply_fix") as apply, \
-                mock.patch("quiver.webapp.pages.plugins.clear_cache") as cleared:
+        with mock.patch("swe.harness.commands.doctor_report", return_value=report), \
+                mock.patch("swe.webapp.pages.repositories.harnesses", return_value=[]), \
+                mock.patch("swe.find.plugin_drift.apply_fix") as apply, \
+                mock.patch("swe.webapp.pages.plugins.clear_cache") as cleared:
             reply = page.post(ctx, "run", {"check": "plugins.unregistered", "message": "m"})
         apply.assert_called_once_with(home, "claude:unregistered:/m")
         cleared.assert_called_once()

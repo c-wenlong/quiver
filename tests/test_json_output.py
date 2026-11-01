@@ -37,7 +37,7 @@ def run_swe(home: Path, *args: str) -> subprocess.CompletedProcess:
         "NO_COLOR": "1",
     })
     return subprocess.run(
-        [sys.executable, "-m", "quiver.cli", *args],
+        [sys.executable, "-m", "swe.cli", *args],
         capture_output=True, text=True, env=env, timeout=60,
     )
 
@@ -627,7 +627,7 @@ class ExcludeSkipsTheFetcherTest(unittest.TestCase):
         from contextlib import redirect_stdout
         from unittest import mock
 
-        from quiver.harness import commands
+        from swe.harness import commands
 
         asked = []
         self.deadlines = []
@@ -646,11 +646,11 @@ class ExcludeSkipsTheFetcherTest(unittest.TestCase):
             mock.patch.object(commands, "_session_counts", return_value={}),
             mock.patch.object(commands, "_broken_tools", return_value=set()),
             mock.patch.object(commands, "is_installed", return_value=False),
-            mock.patch("quiver.harness.archive.load_archive", dict),
-            mock.patch("quiver.harness.rate_limits.get_all_rate_limits", side_effect=fake_get_all),
+            mock.patch("swe.harness.archive.load_archive", dict),
+            mock.patch("swe.harness.rate_limits.get_all_rate_limits", side_effect=fake_get_all),
             # -r would otherwise clear the developer's real session caches.
-            mock.patch("quiver.sessions.aggregator.invalidate_cache"),
-            mock.patch("quiver.sessions.usage.invalidate_counts_cache"),
+            mock.patch("swe.sessions.aggregator.invalidate_cache"),
+            mock.patch("swe.sessions.usage.invalidate_counts_cache"),
         ]
         for p in patches:
             p.start()
@@ -664,7 +664,7 @@ class ExcludeSkipsTheFetcherTest(unittest.TestCase):
         # The app reads limits through --json from a fresh process each time,
         # where a provider's first fetch can take over the 2s piped cap; under
         # that cap it would always fall back to an old cached reading.
-        from quiver.harness.rate_limits import _RATE_LIMIT_FETCH_DEADLINE_TTY
+        from swe.harness.rate_limits import _RATE_LIMIT_FETCH_DEADLINE_TTY
         self.run_list("--usage", "--json")
         self.assertEqual(self.deadlines, [_RATE_LIMIT_FETCH_DEADLINE_TTY])
 
