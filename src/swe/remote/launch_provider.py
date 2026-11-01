@@ -38,7 +38,9 @@ process's environment. Error notes name variables, never values.
 
 from __future__ import annotations
 
+import json
 import re
+import sys
 from pathlib import Path
 
 # A provider slug on the wire and in harness.json.
@@ -335,3 +337,28 @@ def configured(name: str, keys: dict[str, str],
     caps = capability(name, reg) or {}
     return [slug for slug, entry in caps.items()
             if not _resolve(entry, keys)[1]]
+
+
+def keys_path(home: Path | None = None) -> Path:
+    """This machine's provider keys file. The hub never sends keys: a
+    satellite reads its own."""
+    from swe.paths import provider_keys_path_for
+
+    return provider_keys_path_for(home)
+
+
+def wrap_argv(name: str, provider: str, argv: list[str], *,
+              keys_file: Path, reg: dict | None = None) -> list[str]:
+    """``argv`` behind ``provider_exec.py``, which reads ``keys_file``
+    and execs the harness with ``provider``'s variables. The wrapper's
+    argv carries variable names and fixed values only, never a key.
+    Raises ValueError when ``name`` doesn't take ``provider``."""
+    note = provider_error(name, provider, reg)
+    if note:
+        raise ValueError(note)
+    entry = (capability(name, reg) or {})[provider]
+    spec = json.dumps({"keys": entry["keys"], "set": entry["set"]},
+                      separators=(",", ":"), sort_keys=True)
+    script = Path(__file__).with_name("provider_exec.py")
+    return [sys.executable, "-I", str(script), f"--keys={keys_file}",
+            f"--spec={spec}", "--", *argv]

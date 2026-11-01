@@ -154,7 +154,7 @@ class TestCommandValidation(unittest.TestCase):
         self.assertEqual(out, {"machine": "", "harness": "codex",
                                "cwd": "/srv/app", "prompt": "go",
                                "model": None, "effort": None,
-                               "yolo": False})
+                               "yolo": False, "provider": None})
         bad = [
             {"harness": "Bad Name", "cwd": "/a", "prompt": "go"},
             {"harness": ["claude"], "cwd": "/a", "prompt": "go"},
