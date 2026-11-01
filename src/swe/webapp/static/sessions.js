@@ -1385,8 +1385,8 @@ function nsProviderHtml(machine, busy) {
   const pick = nsProviderPick(machine);
   const opts = [`<option value=""${pick ? "" : " selected"}>Harness default</option>`]
     .concat(slugs.map((s) => `<option value="${esc(s)}"${s === pick ? " selected" : ""}>${esc(names[s] || s)}</option>`));
-  return `<div class="caption">Provider</div>
-    <select class="field" id="ns-provider"${busy ? " disabled" : ""}>${opts.join("")}</select>`;
+  return `<label class="caption" for="ns-provider">Provider</label>
+    <select class="field" id="ns-provider" aria-label="Provider"${busy ? " disabled" : ""}>${opts.join("")}</select>`;
 }
 
 /* Repaints alone, like the Autonomy row: a harness re-default from a

@@ -288,7 +288,9 @@ struct YoloField: View {
 /// takes whose key is set on the machine. The row hides on a machine
 /// row too old to carry `providers_at_launch` and for a harness with
 /// none on offer. `selection` is a slug, nil for the harness default;
-/// the sheet clears it when a harness or machine change drops the slug.
+/// the sheet clears it when a harness or machine change drops the slug,
+/// and the menu shows only a slug the row still offers, so a machine
+/// refresh that drops it reads Harness default, as the launch will send.
 struct ProviderField: View {
     let machine: Machine
     let harness: String?
@@ -296,15 +298,21 @@ struct ProviderField: View {
     /// A launch in flight locks the menu with the sheet's other inputs.
     var disabled = false
 
+    /// The pick as the launch will send it (`providerPick`).
+    private var effective: String? {
+        NewSessionOptions.providerPick(selection, for: harness, on: machine)
+    }
+
     private var label: String {
-        selection.map { NewSessionOptions.providerName($0, on: machine) } ?? "Harness default"
+        effective.map { NewSessionOptions.providerName($0, on: machine) } ?? "Harness default"
     }
 
     var body: some View {
         if NewSessionOptions.showsProviderField(harness, on: machine) {
             GroupLabel(text: "Provider")
             Menu {
-                Picker("Provider", selection: $selection) {
+                Picker("Provider", selection: Binding(get: { effective },
+                                                      set: { selection = $0 })) {
                     Text("Harness default").tag(String?.none)
                     ForEach(NewSessionOptions.providers(harness, on: machine), id: \.self) { slug in
                         Text(NewSessionOptions.providerName(slug, on: machine)).tag(String?.some(slug))
