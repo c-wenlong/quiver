@@ -154,6 +154,19 @@ class TestSessionUnread(unittest.TestCase):
                     unreadShown({ key: "k", unread: true, last_active_at: 42 })];""")
         self.assertEqual(out, [42, False, False])
 
+    def test_closing_keeps_what_it_showed_read_if_the_post_fails(self):
+        out = self.run_js("""
+            answer = () => { throw new Error("offline"); };
+            await SessionUnread.opened("k", 100);
+            SessionUnread.activity("k", 130);
+            SessionUnread.activity("k", 120);
+            await SessionUnread.closed("k");
+            unreadReconcile([{ key: "k", unread: true, last_active_at: 130 }]);
+            return [unread.marks.get("k"), unreadShown({ key: "k", unread: true, last_active_at: 130 }),
+                    unreadShown({ key: "k", unread: true, last_active_at: 131 })];""")
+        # The reply shown at 130 stays read; one after it lights the dot.
+        self.assertEqual(out, [130, False, True])
+
     def test_opening_another_chat_closes_the_first(self):
         out = self.run_js("""
             await SessionUnread.opened("a", 1);

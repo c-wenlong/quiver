@@ -126,7 +126,7 @@ stays open and the tab shows, live messages post again at most every
 showed. A hidden tab posts nothing, since the hub's cursor is the time
 of the post. The next list read drops marks the hub has caught up with
 (`unreadReconcile`).
-Marks hold only hub times, never the browser's clock. `SessionUnread`
+A close keeps the newest reply it showed marked read, so a failed or late closing post can't relight it. Marks hold the hub's times and message stamps, never the browser's clock. `SessionUnread`
 in sessions.js holds the rules; chat.js calls it.
 
 The iPhone's swipe-left actions sit behind each row's More actions

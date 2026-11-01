@@ -1956,7 +1956,7 @@ const SessionChat = (() => {
     if (ev.type === "message.appended") {
       appendMessage(d, live, ev.seq);
       // A hidden tab isn't reading: its read waits for the tab to show.
-      if (live && document.visibilityState !== "hidden") unreadHook("activity", chat.key);
+      if (live && document.visibilityState !== "hidden") unreadHook("activity", chat.key, d.ts);
     } else if (ev.type === "session.status") {
       const status = d.status || "";
       // The turn ended (or stopped to ask) without a message to show.

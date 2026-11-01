@@ -862,6 +862,8 @@ function repaintList() {
 const READ_EVERY_MS = 3000;
 const unread = {
   openKey: null, marks: new Map(), timer: null, due: null,
+  // The newest message stamp the open chat showed with the tab visible.
+  shown: 0,
   // Swapped by tests.
   visible: () => typeof document === "undefined" || document.visibilityState !== "hidden",
   setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (t) => clearTimeout(t),
@@ -874,8 +876,9 @@ function unreadShown(r) {
 }
 
 /* A mark never moves back. Its times are the hub's (the row's
- * `last_active_at` and the read's answered `at`), never this browser's
- * clock or a transcript's, so a clock running ahead can't hide a reply
+ * `last_active_at`, the read's answered `at`) or a shown message's own
+ * stamp, from the machine whose transcript sets `last_active_at`; never
+ * this browser's clock, so a clock running ahead can't hide a reply
  * that came after. */
 function unreadMark(key, at) {
   const next = Math.max(Number(at) || 0, unread.marks.get(key) || 0);
@@ -913,6 +916,7 @@ const SessionUnread = {
   opened(key, activity) {
     if (unread.openKey && unread.openKey !== key) SessionUnread.closed(unread.openKey);
     unread.openKey = key;
+    unread.shown = 0;
     unreadMark(key, activity);
     unreadCancel();
     return unreadPost(key);
@@ -924,8 +928,9 @@ const SessionUnread = {
   },
   /* A live message in the open chat: one post per READ_EVERY_MS at most,
    * so a burst (or a reply that keeps streaming) costs a few requests. */
-  activity(key) {
+  activity(key, at) {
     if (key !== unread.openKey) return;
+    unread.shown = Math.max(unread.shown, Number(at) || 0);
     if (unread.timer != null) return;
     unread.due = key;
     unread.timer = unread.setTimer(() => {
@@ -941,6 +946,10 @@ const SessionUnread = {
     if (!key || key !== unread.openKey) return Promise.resolve();
     unread.openKey = null;
     unreadCancel();
+    // What it showed stays read here even if the closing post fails or
+    // lands after the next list read.
+    unreadMark(key, unread.shown);
+    unread.shown = 0;
     return unread.visible() ? unreadPost(key) : Promise.resolve();
   },
 };
