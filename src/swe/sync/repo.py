@@ -26,7 +26,6 @@ older than this swe still keeps them out. They are reported as held back.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import io
 import os
 import shutil
@@ -452,6 +451,11 @@ def sync(home: Path, dry_run: bool = False, relink=None) -> dict:
 
 @contextlib.contextmanager
 def _sync_lock(git_dir: Path):
+    # Imported here: `swe --help` must start on a platform without fcntl.
+    try:
+        import fcntl
+    except ImportError:
+        raise SyncError("swe sync needs fcntl (macOS or Linux)") from None
     path = git_dir / "swe-sync.lock"
     try:
         handle = open(path, "a+")
