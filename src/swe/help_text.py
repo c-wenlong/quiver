@@ -814,6 +814,9 @@ to use their own login state and environment."""
                                             error. Approval prompts get lock-screen
                                             Allow/Deny buttons posting back over
                                             the tailnet. {c('cyan', '--off')} disables.
+                                            {c('cyan', '--service-status=on')} also pushes when
+                                            a model provider or agent platform
+                                            starts or ends an incident.
 
   {c('cyan', 'swe remote ssh [--on|--off]')}            The phone's SSH console, for when
                                             the hub itself is down. It dials

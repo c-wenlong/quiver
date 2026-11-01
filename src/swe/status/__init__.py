@@ -12,6 +12,7 @@ Service status page:
   Google Cloud's ``incidents.json`` into a ``Report``.
 - ``poller``: the polling floors, conditional requests, ``Retry-After``
   cooldowns and the ``~/.swe/cache/web-service-status.json`` cache.
+- ``alerts``: which provider incidents the hub pushes, once each.
 
 Stdlib only. Keep the rules in step with the Swift ones.
 """

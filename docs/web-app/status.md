@@ -65,6 +65,7 @@ card appears behind the sheet and the row reads Added.
 | `tracked.py` | `CustomStatusServices.swift` | the tracked extras, in `~/.swe/data/web-status-services.json` |
 | `parsers.py` | `StatusParser.swift` | Statuspage / incident.io `summary.json` and Google Cloud `incidents.json` into a `Report` |
 | `poller.py` | `ServiceStatusService.swift` | polling floors, conditional requests, `Retry-After` cooldowns, the cache file, `forget` (`ServiceStatusService.forget`) |
+| `alerts.py` | `ServiceStatusAlerts.swift` | which provider incidents push: the hub's `service` notify events when `service_status` is on in `notify.json` (see [remote-control.md](../remote-control.md)) |
 
 The poller asks a page at most every five minutes (one minute for
 Refresh), never during a cooldown (429 or 503: `Retry-After`, else 15
