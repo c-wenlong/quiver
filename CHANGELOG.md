@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Provider menu on the launch sheets (Mac, web, iPhone).** The
+  new-session sheet shows a Provider menu beside Model: Harness default,
+  or a provider whose key is set on the target machine and that the
+  harness takes (`providers_at_launch`, labelled from
+  `provider_names`). The launch sends only the slug. The menu hides on
+  a machine whose agent is too old or has no keyed provider for that
+  harness. Part of [#526](https://github.com/c-wenlong/quiver/issues/526).
 - **Launch a harness on a provider from the keys file.** `POST
   /v1/sessions` takes `provider: "<slug>"` and `swe use` takes
   `--provider=<slug>`: the launching machine starts the harness with
