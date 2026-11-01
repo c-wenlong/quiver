@@ -113,6 +113,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Launch providers declared per harness.</strong> <code>harness.json</code> gains
+<code>capabilities.provider</code>: for each provider slug a harness takes at
+launch, the variables it reads for the key (filled from named
+variables in the keys file) and any fixed values such as
+<code>ANTHROPIC_BASE_URL</code>. <code>launch_provider.PROVIDER_FALLBACK</code> covers
+OpenCode (24 providers), Pi (16) and Claude Code (Anthropic, plus
+DeepSeek, Kimi, MiniMax and OpenRouter through their
+Anthropic-compatible endpoints), each tried on a real install with
+fake keys. No launch uses it yet. Part of
+<a href="https://github.com/c-wenlong/quiver/issues/526">#526</a>.</p>
+</li>
 <li><p><strong>Doctor folds in <code>swe mcp doctor</code>.</strong> <code>swe doctor</code> now warns about
 each MCP server a harness config holds that fails a local check (a
 stdio binary missing, an empty env value, a bad URL scheme) as
