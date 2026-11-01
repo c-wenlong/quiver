@@ -318,6 +318,18 @@ class TestFixAll(_TempHome, unittest.TestCase):
         self.assertEqual(reply["result"]["ran"], [])
         self.assertEqual(reply["result"]["skipped"][0]["actions"], ["install"])
 
+    def test_fix_all_clears_the_plugins_cache_after_a_plugin_fix(self):
+        remedy = {"kind": "action", "action": "plugin-fix", "id": "claude:unregistered:/m"}
+        report = DoctorReport([DoctorFinding("plugins.unregistered", "warning", "m", "fix",
+                                             harness="claude", action="plugin-fix",
+                                             remedies=(remedy,))])
+        with patch("swe.harness.commands.doctor_report", return_value=report), \
+                patch("swe.find.plugin_drift.apply_fix", side_effect=OSError("boom")), \
+                patch("swe.webapp.pages.plugins.clear_cache") as cleared:
+            reply = doctor_page.post(self.ctx, "fix-all", {})
+        self.assertEqual(reply["result"]["ran"][0]["error"], "boom")
+        cleared.assert_called_once()
+
     def test_fix_all_waits_for_a_run(self):
         doctor_page._RUN_LOCK.acquire()
         try:
@@ -520,7 +532,8 @@ class TestFindingIds(unittest.TestCase):
                 "doctorPage.fixAll = {ran: [{action: 'setup', fix: 'swe setup --apply', error: null},"
                 " {action: 'init', fix: 'swe init', error: '<disk> full'}],"
                 " fixed: [{check: 'setup.hub', message: 'm'}],"
-                " not_cleared: [{check: 'setup.registry', message: 'r'}], skipped: []};\n"
+                " not_cleared: [{check: 'setup.registry', message: 'r'}], skipped: [],"
+                " still_failing: [{check: 'setup.registry', message: 'r'}, {check: 'npm', message: 'n'}]};\n"
                 "const done = doctorFixAllCard();\n"
                 "doctorPage.fixAll = null; doctorPage.confirmingFixAll = true;\n"
                 "process.stdout.write(JSON.stringify([done, doctorFixAllCard()]));\n")
@@ -530,7 +543,7 @@ class TestFindingIds(unittest.TestCase):
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         summary, confirm = json.loads(done.stdout)
-        self.assertIn("Fixed 1 finding, 1 fix failed; 1 left for you below.", summary)
+        self.assertIn("Fixed 1 finding, 1 fix failed; 2 left for you below.", summary)
         self.assertIn("&lt;disk&gt; full".replace("&gt;", ">"), summary)
         self.assertIn("the 2 local fixes in order", confirm)
         self.assertIn('data-doctor="fixall-go"', confirm)

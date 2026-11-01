@@ -81,7 +81,7 @@ struct DoctorSection: View {
     static func fixAllLine(_ run: FixRun) -> String {
         guard !run.ran.isEmpty else { return "Nothing to fix here: what is left needs you." }
         let failed = run.ran.filter { $0.error != nil }.count
-        let left = run.notCleared.count + run.skipped.count
+        let left = run.stillFailing.count
         var line = "Fixed \(run.fixed.count) finding\(run.fixed.count == 1 ? "" : "s")"
         if failed > 0 { line += ", \(failed) fix\(failed == 1 ? "" : "es") failed" }
         if left > 0 { line += "; \(left) left for you below" }

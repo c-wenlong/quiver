@@ -202,9 +202,12 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         {"schema": 1, "data": {"dry_run": false,
           "ran": [{"action": "setup", "fix": "swe setup --apply", "findings": [], "error": null},
                   {"action": "init", "fix": "swe init", "findings": [], "error": "disk full"}],
-          "fixed": [{"check": "setup.hub", "message": "m"}], "still_failing": [],
+          "fixed": [{"check": "setup.hub", "message": "m"}],
           "skipped": [{"check": "off-path", "message": "codex", "actions": ["install"]}],
-          "not_cleared": [], "fixable_left": []}}
+          "not_cleared": [{"check": "setup.registry", "message": "none"}],
+          "still_failing": [{"check": "npm", "severity": "warning", "message": "npm not found"},
+                            {"check": "setup.registry", "severity": "warning", "message": "none"}],
+          "fixable_left": []}}
         """#.utf8)
         let runner = ScriptedRunner([
             (["doctor", "--fix"], .init(status: 1, stdout: result, stderr: "")),
@@ -217,9 +220,27 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         #expect(model.fixAllResult?.fixed.count == 1)
         #expect(model.fixAllResult?.firstError == "disk full")
         #expect(model.fixAllResult?.skipped.count == 1)
+        #expect(model.fixAllResult?.notCleared.map(\.check) == ["setup.registry"])
+        #expect(model.fixAllResult?.stillFailing.count == 2)
         #expect(model.running.isEmpty)
         model.dismissFixAll()
         #expect(model.fixAllResult == nil)
+    }
+
+    @Test func pluginRepairsWaitForThePluginsTurn() async throws {
+        let runner = ScriptedRunner([(["doctor"], .init(status: 0, stdout: findings, stderr: ""))])
+        let work = PluginWork()
+        let model = DoctorModel(swe: SweClient(runner: runner), work: work)
+        #expect(work.begin())
+        let finding = DoctorReport.Finding(check: "plugins.stale", severity: .warning,
+                                           message: "m", fix: "f", action: .pluginReinstall)
+        await model.run(finding)
+        await model.fixAll()
+        #expect(!runner.calls.contains { $0.contains("--fix") || $0.contains("--fix=plugins.stale") })
+        #expect(model.runErrors[finding.id]?.contains("still running") == true)
+        #expect(model.fixAllError?.contains("still running") == true)
+        work.end()
+        #expect(model.running.isEmpty)
     }
 
     @Test func runCallsTheActionsSweCommand() async throws {

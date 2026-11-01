@@ -138,13 +138,24 @@ def _fix_all(home: Path) -> dict:
     """The batch, each step behind the lock its own Run takes."""
     from swe.harness.commands import doctor_report
 
+    from swe.webapp.pages import plugins
+
+    ran_plugins = []
+
     def guard(action: str, run) -> str | None:
         if action == "plugin-fix":
+            ran_plugins.append(action)
             return _with_plugin_lock(lambda: _guarded(lambda h: run(), home))
         return _guarded(lambda h: run(), home)
 
-    return doctor_fix.run_fixes(
-        home, lambda: doctor_report(home).to_json()["findings"], guard=guard)
+    try:
+        return doctor_fix.run_fixes(
+            home, lambda: doctor_report(home).to_json()["findings"], guard=guard)
+    finally:
+        # A plugin repair, even a failed one, may have changed what the
+        # Plugins page shows: it reads afresh rather than from its cache.
+        if ran_plugins:
+            plugins.clear_cache()
 
 
 @contextmanager

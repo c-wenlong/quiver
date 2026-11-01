@@ -161,7 +161,8 @@ function doctorFixAllCard() {
   const r = p.fixAll;
   if (!r) return "";
   const failed = r.ran.filter((s) => s.error);
-  const left = (r.not_cleared || []).length + (r.skipped || []).length;
+  // Everything still in the report counts, manual findings included.
+  const left = (r.still_failing || []).length;
   const line = r.ran.length
     ? `Fixed ${r.fixed.length} finding${r.fixed.length === 1 ? "" : "s"}${failed.length ? `, ${failed.length} fix${failed.length === 1 ? "" : "es"} failed` : ""}${left ? `; ${left} left for you below` : ""}.`
     : "Nothing to fix here: what is left needs you.";

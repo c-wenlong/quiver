@@ -156,17 +156,22 @@ public struct FixRun: Decodable, Sendable, Equatable {
     public let fixed: [Ref]
     public let notCleared: [Ref]
     public let skipped: [Ref]
+    /// Every finding in scope still there, manual ones included.
+    public let stillFailing: [Ref]
 
+    // SweClient decodes with .convertFromSnakeCase: not_cleared arrives
+    // as notCleared, so the keys carry no raw values.
     private enum CodingKeys: String, CodingKey {
-        case ran, fixed, skipped
-        case notCleared = "not_cleared"
+        case ran, fixed, skipped, notCleared, stillFailing
     }
 
-    public init(ran: [Step], fixed: [Ref], notCleared: [Ref], skipped: [Ref]) {
+    public init(ran: [Step], fixed: [Ref], notCleared: [Ref], skipped: [Ref],
+                stillFailing: [Ref] = []) {
         self.ran = ran
         self.fixed = fixed
         self.notCleared = notCleared
         self.skipped = skipped
+        self.stillFailing = stillFailing
     }
 
     public init(from decoder: any Decoder) throws {
@@ -175,6 +180,7 @@ public struct FixRun: Decodable, Sendable, Equatable {
         fixed = try box.decode([Ref].self, forKey: .fixed)
         notCleared = try box.decodeIfPresent([Ref].self, forKey: .notCleared) ?? []
         skipped = try box.decodeIfPresent([Ref].self, forKey: .skipped) ?? []
+        stillFailing = try box.decodeIfPresent([Ref].self, forKey: .stillFailing) ?? []
     }
 
     /// The first fix that failed, for the row or the summary.
@@ -185,14 +191,20 @@ extension SweClient {
     /// `swe doctor --fix --json`: Fix all. Exits 1 when a fix failed or
     /// one is still owed, with the JSON either way.
     public func fixAll() async throws -> FixRun {
-        try await call(["doctor", "--fix", "--json"], allowFailure: true)
+        try await call(["doctor", "--fix", "--json"], allowFailure: true,
+                       timeout: Self.fixTimeout)
     }
+
+    /// A plugin command alone may take five minutes, and a batch runs
+    /// several: stopping early could leave a reinstall half done.
+    static let fixTimeout: Duration = .seconds(1800)
 
     /// One finding's fix by name, as the web's Run sends it: swe finds
     /// the finding in a fresh report and refuses one that is gone.
     public func fix(check: String, message: String, action: String) async throws -> FixRun {
         try await call(["doctor", "--fix=\(check)", "--message=\(message)",
-                        "--action=\(action)", "--json"], allowFailure: true)
+                        "--action=\(action)", "--json"], allowFailure: true,
+                       timeout: Self.fixTimeout)
     }
 }
 
@@ -243,8 +255,19 @@ public final class DoctorModel {
     /// earlier refresh cannot overwrite a newer one.
     private var generation = 0
 
-    public init(swe: SweClient) {
+    /// The Plugins page's one-change-at-a-time turn: a plugin repair here
+    /// must not overlap an install or uninstall there (a reinstall could
+    /// undo an uninstall made meanwhile). The app hands over its own.
+    public var work: PluginWork
+
+    public init(swe: SweClient, work: PluginWork = PluginWork()) {
         self.swe = swe
+        self.work = work
+    }
+
+    /// The plugin actions, which take `work` for their run.
+    static func touchesPlugins(_ action: DoctorReport.Finding.Action) -> Bool {
+        action == .pluginFix || action == .pluginReinstall
     }
 
     /// Checks or a fix are in flight, so the report is about to change:
@@ -302,6 +325,12 @@ public final class DoctorModel {
                 _ = try await swe.applyDiscovery()
             case .undeclare, .marketplaceDrop, .pluginFix, .pluginReinstall,
                  .danglingLink, .mcpSync:
+                let plugin = Self.touchesPlugins(action)
+                if plugin && !work.begin() {
+                    runErrors[finding.id] = "A plugin change is still running. Wait for it, then try again."
+                    break
+                }
+                defer { if plugin { work.end() } }
                 let run = try await swe.fix(check: finding.check, message: finding.message,
                                             action: action.rawValue)
                 if let error = run.firstError { runErrors[finding.id] = error }
@@ -336,6 +365,13 @@ public final class DoctorModel {
         runStarted = Date()
         defer { runStarted = nil }
         do {
+            // Fix all can install plugins: it takes the Plugins turn too.
+            guard work.begin() else {
+                fixAllError = "A plugin change is still running. Wait for it, then try again."
+                running.remove(Self.fixAllID)
+                return
+            }
+            defer { work.end() }
             await HarnessesModel.registryWrites.acquire()
             defer { HarnessesModel.registryWrites.release() }
             fixAllResult = try await swe.fixAll()
