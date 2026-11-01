@@ -430,6 +430,15 @@ Every check exists as a pure `check_*` function (plain data in, findings
 out, no I/O) for unit testing, and `run_drift_checks()` wires the real
 data in for `cmd_doctor`.
 
+Fixing is separate from finding. `harness/doctor_fix.py` holds one runner
+per finding `action` and the order a batch runs them in; `swe doctor
+--fix` and the web Doctor page's Run both call it. Batch actions only add or relink (`setup`,
+`discover`, `init`) and run in that order, re-reading the report after
+each step, since a missing hub hides every link check. Click actions
+(`install`, and the drops that delete entries a synced settings file may
+still want elsewhere) run only for one named finding. Plain `swe doctor`
+never writes.
+
 The principle behind all four, made explicit once capabilities-first
 landed: a warning must be actionable. Before that change, a registry entry
 the fallback table didn't know about, or a table entry the registry

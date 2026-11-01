@@ -174,6 +174,7 @@ swe list -n                  # bypass caches and refresh starred harness usage
 swe info claude              # command, version, path, tags, aliases
 swe check                    # probe installed tools and refresh versions
 swe doctor                   # diagnose Node/npm/PATH issues, plus registry drift
+swe doctor --fix             # run the safe local fixes it found, then check again
 swe find                     # where shared assets live and what links to them, as counts
 swe find plugins --full      # every plugin row, not just the counts
 swe plugins                  # every marketplace's plugins, installed or not

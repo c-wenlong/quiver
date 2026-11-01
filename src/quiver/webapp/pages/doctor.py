@@ -41,6 +41,7 @@ from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 
+from quiver.harness import doctor_fix
 from quiver.webapp.pages import PageError, home_path, tilde
 from quiver.webapp.pages.harness import REGISTRY_LOCK
 
@@ -168,12 +169,7 @@ def _report(ctx) -> dict:
 # Each returns what went wrong, for the row, or None.
 
 def _run_setup(home: Path) -> str | None:
-    from quiver.setup.commands import apply_setup
-
-    applied = apply_setup(home)
-    # The app shows a linking pass that stopped (links.error); a step that
-    # failed outright (errors) is shown too rather than dropped.
-    return applied.get("links", {}).get("error") or "; ".join(applied.get("errors") or []) or None
+    return doctor_fix.RUNNERS["setup"](home, {}, None)
 
 
 def _run_init(home: Path, force: bool = False) -> str | None:
@@ -216,66 +212,40 @@ def _short(path: Path, home: Path) -> str:
 
 
 def _run_discover(home: Path) -> str | None:
-    from quiver.harness.discover import apply_findings, discover_harnesses
-
-    apply_findings(discover_harnesses(), min_confidence="high")
-    return None
+    return doctor_fix.RUNNERS["discover"](home, {}, None)
 
 
 def _run_install(home: Path, name: str, via: str) -> str | None:
-    from quiver.harness.commands import install_harness
-
-    return install_problem(install_harness(name, via), name)
+    return doctor_fix.RUNNERS["install"](home, {"harness": name, "via": via}, None)
 
 
 def _run_undeclare(
     home: Path, name: str, targets: list, settings: list
 ) -> str | None:
-    """Drop the hook entries invoking a ``targets`` token, per file.
-
-    ``drop_script_declarations`` refuses a managed file itself; the
-    guard here only joins the per-file errors into the row's message.
-    """
-    from quiver.webapp.pages import plugins
-
-    if not plugins._WRITE_LOCK.acquire(blocking=False):
-        return "A plugin change is still running. Wait for it, then try again."
-    try:
-        from quiver.harness.registry import load_registry
-        from quiver.hooks.settings import drop_script_declarations
-
-        registry = load_registry()
-        errors = []
-        for raw in settings:
-            try:
-                drop_script_declarations(Path(raw), targets, registry, name, home)
-            except Exception as exc:  # noqa: BLE001 - per-file errors all show
-                errors.append(str(exc) or type(exc).__name__)
-        return "; ".join(errors) or None
-    finally:
-        plugins._WRITE_LOCK.release()
+    """Drop the hook entries invoking a ``targets`` token, per file, behind
+    the Plugins page's write lock (both rewrite the settings file)."""
+    return _with_plugin_lock(lambda: doctor_fix.RUNNERS["undeclare"](
+        home, {"harness": name}, {"targets": targets, "settings": settings}))
 
 
 def _run_marketplace_drop(home: Path, in_file: list, cli: list) -> str | None:
+    return _with_plugin_lock(lambda: doctor_fix.RUNNERS["marketplace-drop"](
+        home, {}, {"settings_entries": in_file, "cli_entries": cli}))
+
+
+def _with_plugin_lock(run) -> str | None:
     from quiver.webapp.pages import plugins
 
     if not plugins._WRITE_LOCK.acquire(blocking=False):
         return "A plugin change is still running. Wait for it, then try again."
     try:
-        from quiver.harness.doctor import drop_marketplace_entries
-
-        return drop_marketplace_entries(home, in_file, cli)
+        return run()
     finally:
         plugins._WRITE_LOCK.release()
 
 
-def install_problem(result, name: str) -> str | None:
-    """What a captured install says went wrong, with the end of its output,
-    or None once the command is on PATH."""
-    if result.action is not None:
-        return None if result.path else f"Installed, but {name}'s command is still not on PATH."
-    tail = "\n".join(line for line in (result.output or "").strip().splitlines()[-8:])
-    return result.error + ("\n" + tail if tail else "")
+# The one implementation lives with the CLI's runners.
+install_problem = doctor_fix.install_problem
 
 
 RUNNERS = {"setup": _run_setup, "init": _run_init, "discover": _run_discover,

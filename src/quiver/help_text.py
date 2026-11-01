@@ -158,6 +158,18 @@ HELP = {
         f"""\
   {c('cyan', 'swe doctor')}                   Report node/npm, global bin PATH, nvm, off-PATH tools
   {c('cyan', 'swe doctor --json')}            Findings as JSON: ok, plus check, severity, message, fix
+  {c('cyan', 'swe doctor --fix')}             Run every safe local fix, then check again
+  {c('cyan', 'swe doctor --fix=<check>')}     Only findings under that check (setup, drift.hooks)
+  {c('cyan', 'swe doctor --fix --dry-run')}   Show what --fix would run, run nothing (alias: --check)
+  {c('cyan', 'swe doctor --fix=<check> --message=<text> [--action=<a>]')}
+                               Run one finding's fix, as a Run button does
+
+  Plain {c('cyan', 'swe doctor')} only reads. {c('cyan', '--fix')} runs the local repairs
+  in order (setup, discover, init), reading the report again after each,
+  and prints what it fixed and what is left. Installs and the drops that
+  delete entries (undeclare, marketplace-drop) never run in a batch: they
+  run only for one finding named with --message. With --json, --fix prints
+  {{dry_run, ran, fixed, still_failing, skipped, not_cleared, fixable_left}}.
 
   Catches the common failure mode: {c('dim', 'npm install -g')} under nvm while
   interactive/non-interactive shells use Homebrew Node (tool missing from PATH).
@@ -172,7 +184,9 @@ HELP = {
   0  healthy
   1  off-PATH tools, global bin not on PATH, or an error-severity drift
      finding. Warn-level drift (stale help, code-table mismatches, symlink
-     notices) is printed but does not fail the exit code."""
+     notices) is printed but does not fail the exit code.
+  With --fix: 0 when every fix worked and none in scope is left; findings
+  that need a person (logins, installs, PATH edits) do not count."""
     ),
     "install": (
         "Show or run a harness's install command per package manager",

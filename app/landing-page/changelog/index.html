@@ -125,6 +125,20 @@ session goes idle, or when the stream reconnects. The rules live in
 and its port in <code>pages/chat.js</code>. Closes
 <a href="https://github.com/c-wenlong/quiver/issues/1444">#1444</a>.</p>
 </li>
+<li><p><strong><code>swe doctor --fix</code>.</strong> Runs every safe local fix doctor found, in
+order (setup, then discover, then init), reads the report again after
+each step, and prints what it fixed and what is left.
+<code>--fix=&lt;check&gt;</code> scopes it (<code>--fix=setup</code>), <code>--dry-run</code> (or <code>--check</code>)
+previews, and <code>--json</code> prints <code>{dry_run, ran, fixed, still_failing, skipped, not_cleared, fixable_left}</code>. A fix that runs cleanly but
+leaves its finding (an empty discovery, a real file in the way) is
+listed as needing a person and never retried, so <code>--fix</code> settles.
+Installs and the drops that delete entries never run in a batch;
+<code>--fix=&lt;check&gt; --message=&lt;text&gt; [--action=&lt;a&gt;]</code> runs one finding's
+fix, as a Run button does. A failed fix is reported and the rest still
+run. Plain <code>swe doctor</code> still writes nothing. The runners moved to
+<code>harness/doctor_fix.py</code>, which the web Doctor page now calls too. Part
+of <a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
+</li>
 <li><p><strong>Unread dots on session rows: iPhone, web and Mac.</strong> A session row
 shows a small dot when the agent said something since you last opened
 that chat on this device, from the hub's per-device <code>unread</code> flag.
