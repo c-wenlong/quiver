@@ -27,8 +27,10 @@ public struct ServiceStatusAlertState: Codable, Equatable, Sendable {
     /// Services a `started` alert went out for and no `resolved` has
     /// followed, with the incident it named.
     public var down: [String: String] = [:]
-    /// The first poll ran. It only records what is already open.
-    public var primed = false
+    /// Services that have had a first reading. That reading only records
+    /// what is already open, so a page that was slow or down at launch
+    /// doesn't announce old news when it first answers.
+    public var seeded: [String] = []
 
     public init() {}
 
@@ -36,7 +38,7 @@ public struct ServiceStatusAlertState: Codable, Equatable, Sendable {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         delivered = try box.decodeIfPresent([String].self, forKey: .delivered) ?? []
         down = try box.decodeIfPresent([String: String].self, forKey: .down) ?? [:]
-        primed = try box.decodeIfPresent(Bool.self, forKey: .primed) ?? false
+        seeded = try box.decodeIfPresent([String].self, forKey: .seeded) ?? []
     }
 
     /// Plenty for a handful of providers' incidents; the oldest go first.
@@ -44,20 +46,23 @@ public struct ServiceStatusAlertState: Codable, Equatable, Sendable {
 }
 
 /// The notification rule. Only the two provider groups notify, from a
-/// minor incident up (the menu line's bar for them). Scheduled
-/// maintenance never does. A service with no reading is left as it was:
-/// an unreachable page is not an outage, and not a recovery either.
+/// minor incident up (the menu line's bar for them), one alert per new
+/// incident. Scheduled maintenance never does. A service's first reading
+/// only seeds. A service with no reading is left as it was: an
+/// unreachable page is not an outage, and not a recovery either.
 public enum ServiceStatusAlerts {
     /// Advance `state` by one poll and return what to announce. With
     /// `notify` false (the switch is off) the incidents are still
     /// recorded, so turning it on later doesn't announce old news.
     public static func step(_ state: inout ServiceStatusAlertState, statuses: [ServiceStatus],
                             notify: Bool) -> [ServiceStatusAlert] {
-        let announce = notify && state.primed
         var alerts: [ServiceStatusAlert] = []
         for status in statuses where status.service.group.isProvider {
             guard let report = status.report else { continue }
             let id = status.service.id
+            let first = !state.seeded.contains(id)
+            if first { state.seeded.append(id) }
+            let announce = notify && !first
             let generic = "\(id)@status"
             if report.health >= ServiceStatusSummary.threshold(for: status.service.group) {
                 let incidents = report.incidents.filter { !$0.isMaintenance }
@@ -66,11 +71,13 @@ public enum ServiceStatusAlerts {
                     : incidents.map { ("\(id)@\($0.id)", Optional($0.name)) }
                 let fresh = keyed.filter { !state.delivered.contains($0.0) }
                 for (key, _) in fresh { state.delivered.append(key) }
-                guard let first = fresh.first, announce else { continue }
-                state.down[id] = first.1 ?? ""
-                alerts.append(ServiceStatusAlert(
-                    kind: .started, serviceID: id, serviceName: status.service.name,
-                    health: report.health, incident: first.1, pageURL: status.service.pageURL))
+                guard announce else { continue }
+                for (_, name) in fresh {
+                    state.down[id] = name ?? ""
+                    alerts.append(ServiceStatusAlert(
+                        kind: .started, serviceID: id, serviceName: status.service.name,
+                        health: report.health, incident: name, pageURL: status.service.pageURL))
+                }
             } else {
                 // An incident-less blip has no id to remember, so its key
                 // clears once the page is back to normal.
@@ -85,10 +92,10 @@ public enum ServiceStatusAlerts {
         // A page the user stopped tracking can't resolve; let it go quietly.
         let tracked = Set(statuses.map(\.service.id))
         state.down = state.down.filter { tracked.contains($0.key) }
+        state.seeded.removeAll { !tracked.contains($0) }
         if state.delivered.count > ServiceStatusAlertState.cap {
             state.delivered.removeFirst(state.delivered.count - ServiceStatusAlertState.cap)
         }
-        state.primed = true
         return alerts
     }
 

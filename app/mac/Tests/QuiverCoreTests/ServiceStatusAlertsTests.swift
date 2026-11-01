@@ -28,10 +28,12 @@ import Testing
         ServiceStatusAlerts.step(&state, statuses: statuses, notify: notify)
     }
 
-    /// A primed state, as after the first poll on a quiet day.
+    /// A seeded state, as after the first poll on a quiet day.
     private func primed() throws -> ServiceStatusAlertState {
         var state = ServiceStatusAlertState()
-        _ = step(&state, try status("claude", .operational))
+        _ = ServiceStatusAlerts.step(&state, statuses: try StatusService.all.map {
+            try status($0.id, .operational)
+        }, notify: true)
         return state
     }
 
@@ -56,6 +58,23 @@ import Testing
         _ = step(&state, try status("claude", .minor, [incident("a")]))
         let more = step(&state, try status("claude", .minor, [incident("a"), incident("b")]))
         #expect(more.map(\.incident) == ["Incident b"])
+    }
+
+    /// Two incidents opening between polls are two banners.
+    @Test func twoIncidentsAtOnce() throws {
+        var state = try primed()
+        let both = step(&state, try status("claude", .major, [incident("a"), incident("b")]))
+        #expect(both.map(\.incident) == ["Incident a", "Incident b"])
+    }
+
+    /// A page with no reading at the first poll seeds on its first answer.
+    @Test func latePageSeedsOnItsFirstReading() throws {
+        var state = ServiceStatusAlertState()
+        _ = step(&state, try status("claude", .operational), try status("openai", nil))
+        #expect(step(&state, try status("claude", .operational),
+                     try status("openai", .minor, [incident("a")])).isEmpty)
+        #expect(step(&state, try status("claude", .operational),
+                     try status("openai", .minor, [incident("a"), incident("b")])).map(\.incident) == ["Incident b"])
     }
 
     /// The same incident flapping in and out banners once each way.
@@ -103,7 +122,7 @@ import Testing
         var state = ServiceStatusAlertState()
         let down = try status("claude", .minor, [incident("a")])
         #expect(step(&state, down).isEmpty)
-        #expect(state.primed)
+        #expect(state.seeded == ["claude"])
         #expect(step(&state, down).isEmpty)
         // It never said "down", so the recovery is quiet too.
         #expect(step(&state, try status("claude", .operational)).isEmpty)

@@ -14,8 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model provider or agent platform starts an incident on its status
   page, and once more when it is back to normal. Each incident banners
   once: the same incident on the next poll, after a relaunch or after it
-  flaps is quiet, and scheduled maintenance never banners. The first
-  poll only records what is already open. A click opens Service status.
+  flaps is quiet, two incidents opening at once are two banners, and
+  scheduled maintenance never banners. Each page's first reading only
+  records what is already open. A click opens Service status.
   Part of [#528](https://github.com/c-wenlong/quiver/issues/528).
 - **Live reply text on iPhone, web and Mac.** The chat draws a reply
   word by word while a Codex app-server, opencode serve or headless
