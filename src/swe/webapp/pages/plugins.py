@@ -523,7 +523,7 @@ def sources(catalog: dict, plugins: dict, names: dict | None = None) -> list[dic
     out = []
     if local:
         out.append({"id": "local", "kind": "local", "harness": None, "title": "Local",
-                    "note": "Your Quiver hub, ~/.swe/plugins", "marketplaces": local})
+                    "note": "Your SWE hub, ~/.swe/plugins", "marketplaces": local})
     for h in order:
         if h not in by_harness:
             continue

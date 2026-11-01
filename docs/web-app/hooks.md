@@ -1,7 +1,7 @@
 # Hooks
 
 The Mac app's Hooks page (`HooksPage.swift`, `HooksModel`, `Hook`) as a
-web page. Module `quiver/webapp/pages/hooks.py`, script
+web page. Module `swe/webapp/pages/hooks.py`, script
 `static/pages/hooks.js`, styles `static/pages/hooks.css`.
 
 ## What it shows
@@ -45,7 +45,7 @@ non-archived registry name plus every name the inventory rows carry,
 plus "shared") and the name field live-checked against
 `^[A-Za-z0-9][A-Za-z0-9_-]*$`. On success the sheet stays open to show
 "Created <path>", the stanza to paste into the harness's settings file
-(quiver never writes one), a copy button, and "Then swe init links it
+(swe never writes one), a copy button, and "Then swe init links it
 into place".
 
 ## Payload

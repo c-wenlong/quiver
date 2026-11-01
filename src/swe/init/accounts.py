@@ -1,4 +1,4 @@
-"""Shared content synced into Quiver's extra account homes (#888).
+"""Shared content synced into SWE's extra account homes (#888).
 
 An extra account (a profile in ``~/.swe/accounts/profiles.json``) runs its
 harness with ``CLAUDE_CONFIG_DIR`` / ``CODEX_HOME`` pointed at

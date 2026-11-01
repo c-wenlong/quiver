@@ -764,7 +764,7 @@ def _fetch_github_copilot() -> RateLimitInfo | None:
 
     Note that ``Editor-*`` headers impersonate the official VS Code
     Copilot Chat client — the endpoint gates access on those exact
-    values. ``User-Agent: quiver/...`` alone would be rejected with
+    values. ``User-Agent: swe/...`` alone would be rejected with
     403. Outside of the ``User-Agent``, the request is wired to look
     like the official client; the ``User-Agent`` itself is set to
     ``quiver`` for traceability.
@@ -781,7 +781,7 @@ def _fetch_github_copilot() -> RateLimitInfo | None:
             "Accept": "application/json",
             "Editor-Version": "vscode/1.95.0",
             "Editor-Plugin-Version": "copilot-chat/0.26.7",
-            "User-Agent": f"quiver/{__version__}",
+            "User-Agent": f"swe/{__version__}",
         },
     )
 
@@ -1126,7 +1126,7 @@ def _fetch_claude() -> RateLimitInfo | None:
             "Authorization": f"Bearer {token}",
             "anthropic-beta": _BETA_VERSIONS["claude-oauth-usage"],
             "Accept": "application/json",
-            "User-Agent": f"quiver/{__version__}",
+            "User-Agent": f"swe/{__version__}",
         },
     )
     retry_after: list[float | None] = []
@@ -1529,7 +1529,7 @@ def _droid_request(url: str, token: str) -> urllib.request.Request:
             "Referer": _DROID_APP_REFERER,
             "x-factory-client": "web-app",
             "Authorization": f"Bearer {token}",
-            "User-Agent": f"quiver/{__version__}",
+            "User-Agent": f"swe/{__version__}",
         },
     )
 
@@ -1866,7 +1866,7 @@ def _fetch_freebuff() -> RateLimitInfo | None:
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
-            "User-Agent": f"quiver/{__version__}",
+            "User-Agent": f"swe/{__version__}",
         },
     )
     data = _fetch_json(request)
@@ -2482,7 +2482,7 @@ def _cursor_on_demand(spend: dict | None, hard: dict | None) -> dict:
     cap, ``limit_usd``), "unlimited", "disabled" or "unavailable"; ``scope``:
     "team-member" for a team seat with no personal cap ("No personal
     limit"), else "personal"; and ``used_usd``. Ported from the CLI's
-    usage-data module so Quiver says what it says.
+    usage-data module so SWE says what it says.
     """
     spend = spend if isinstance(spend, dict) else {}
 
@@ -2641,7 +2641,7 @@ def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
                 "Origin": "https://cursor.com",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
-                "User-Agent": f"quiver/{__version__}",
+                "User-Agent": f"swe/{__version__}",
             },
         )
 
@@ -2665,7 +2665,7 @@ def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
                     "Connect-Protocol-Version": "1",
                     "Content-Type": "application/json",
                     "Accept": "application/json",
-                    "User-Agent": f"quiver/{__version__}",
+                    "User-Agent": f"swe/{__version__}",
                 },
             ))
         except Exception:
@@ -2864,7 +2864,7 @@ def fetch_cursor_usage_events(
                 "Origin": "https://cursor.com",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
-                "User-Agent": f"quiver/{__version__}",
+                "User-Agent": f"swe/{__version__}",
             },
         )
 
@@ -3166,7 +3166,7 @@ def _fetch_devin(credentials_path: str | None = None) -> RateLimitInfo | None:
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": f"quiver/{__version__}",
+            "User-Agent": f"swe/{__version__}",
         },
     )
     data = _fetch_json(request, on_401=_warn_devin_401)

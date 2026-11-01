@@ -395,7 +395,7 @@ function sessionsSkeleton() {
 
 function sessionRow(r) {
   const badge = (STATUS_BADGE[r.status] ? `<span class="badge status-${r.status}">${STATUS_BADGE[r.status]}</span>` : "")
-    + (r.ownership === "attached" ? '<span class="badge ownership-attached" title="Runs under Quiver: you can send to it">Attached</span>' : "")
+    + (r.ownership === "attached" ? '<span class="badge ownership-attached" title="Runs under SWE: you can send to it">Attached</span>' : "")
     + (r.kept ? '<span class="badge" title="Detached, still running in tmux">Kept</span>' : "");
   const time = new Date(r.last_active_at * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const hit = sessionsPage.query.trim() ? transcriptHit(r.key) : null;
@@ -1170,7 +1170,7 @@ async function followLaunch(first, alive) {
 /* The note a launch that opened no chat leaves: [text, failed]. */
 function launchNote(launch, queued) {
   if (launch.state === "untracked") {
-    return ["Started. Quiver can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the machine.", false];
+    return ["Started. SWE can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the machine.", false];
   }
   if (launch.state === "failed") return [launch.note ? `The session didn't start: ${launch.note}` : "The session didn't start.", true];
   if (launch.state === "lost") return [launch.note, true];
@@ -1446,7 +1446,7 @@ function nsPaint() {
     ${!machines.length ? `<p class="note">${esc(nsNoMachineNote(ns.machines || []))}</p>` : ""}
     <div class="caption">Harness</div>
     ${harnessChips}
-    ${untracked ? `<p class="note">Quiver can't read ${esc(nsHarnessName(machine, ns.harness))} sessions yet: it starts, but no chat opens.</p>` : ""}
+    ${untracked ? `<p class="note">SWE can't read ${esc(nsHarnessName(machine, ns.harness))} sessions yet: it starts, but no chat opens.</p>` : ""}
     ${modelUi}
     <div id="ns-yolo-slot"></div>
     <div class="caption">Folder</div>

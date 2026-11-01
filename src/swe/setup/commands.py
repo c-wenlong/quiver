@@ -317,7 +317,7 @@ def cmd_setup(args):
     new_harness, new_mcp, skill_hints = _setup_findings(home)
     actionable_skills = _actionable(skill_hints)
 
-    print(f"\n{c('bold', 'quiver setup')}\n")
+    print(f"\n{c('bold', 'swe setup')}\n")
     if not apply:
         _print_hub_hint(home)
 

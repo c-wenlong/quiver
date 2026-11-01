@@ -1852,7 +1852,7 @@ const SessionChat = (() => {
           "Reattach"]
         : ["Attach this session?",
           `Attach stops ${esc(harnessLabel(r) || "the harness")} in the terminal running this session${esc(where)},
-          then resumes the session under Quiver so you can send to it from here.`,
+          then resumes the session under SWE so you can send to it from here.`,
           "Stop it and attach"];
       banner.innerHTML = `<div class="chat-banner-text"><div class="card-title">${esc(title)}</div>
           <p class="caption">${note}</p></div>
@@ -1885,7 +1885,7 @@ const SessionChat = (() => {
         <span class="opt-name">${name}</span><span class="opt-desc">${desc}</span></button>`;
     sheet.innerHTML = `<form method="dialog" class="sheet-body">
       <div class="sheet-title">Detach this session?</div>
-      <p class="caption" style="margin:0">Detaching stops Quiver's control of it;
+      <p class="caption" style="margin:0">Detaching stops SWE's control of it;
         the transcript stays readable here either way.</p>
       <div class="detach-options">
         ${opt("when_idle", "Detach when it finishes",

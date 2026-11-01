@@ -15,7 +15,7 @@ def print_skills_overview():
   {c('cyan', 'swe skills -d')}                Include descriptions
   {c('cyan', 'swe skills --json')}             Every skill, and which harnesses see it
 
-{c('bold', 'Quiver hub')}
+{c('bold', 'SWE hub')}
   {c('cyan', 'swe skills hub')}               Plugins in ~/.swe/plugins and where they are installed
 
 {c('bold', 'Where skills live')}

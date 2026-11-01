@@ -39,7 +39,7 @@ class ScanResult:
 
 
 def _homes(home: Path, vendor: str, default: str) -> list[Path]:
-    """The vendor's own home, then each extra Quiver account profile's
+    """The vendor's own home, then each extra SWE account profile's
     (``~/.swe/accounts/<vendor>/<id>/home``)."""
     out = [home / default]
     out += sorted((swe_dir_for(home) / "accounts" / vendor).glob("*/home"))

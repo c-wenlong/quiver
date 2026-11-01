@@ -52,7 +52,7 @@ pairing is deferred until a non-tailnet device actually needs in.
 ### Setting it up — `setup.py`
 
 `swe remote setup` checks every step from nothing to a paired phone, in
-order, and says for each whether it is done, something Quiver does
+order, and says for each whether it is done, something SWE does
 itself, or something a person must do, with the page to open. The Mac
 app's Settings › Remote shows the same list from `--json`.
 

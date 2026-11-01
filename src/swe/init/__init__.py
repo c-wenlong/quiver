@@ -1,4 +1,4 @@
-"""Quiver init: the ~/.swe layout and harness symlinks."""
+"""SWE init: the ~/.swe layout and harness symlinks."""
 
 from swe.init.commands import cmd_init
 

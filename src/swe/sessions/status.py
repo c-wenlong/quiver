@@ -148,7 +148,7 @@ def _claude_transcript_index(root: str) -> dict:
     """``<id>.jsonl`` -> every ``<root>/*/<id>.jsonl``.
 
     ``root`` is the projects dir of one claude home — ``~/.claude/projects``
-    by default, ``<account home>/projects`` for a Quiver extra account.
+    by default, ``<account home>/projects`` for an SWE extra account.
     Built once per ``session_statuses`` call: a glob per row re-listed every
     project dir for every session (726 rows x 241 dirs was 175k ``lstat``
     calls, most of a listing's wall time). Same matches and order as that
@@ -826,7 +826,7 @@ def _verdict(session: Session, probe, ctx: dict) -> tuple:
 
 
 def _claude_homes() -> list[str]:
-    """``~/.claude`` plus every Quiver claude account home."""
+    """``~/.claude`` plus every SWE claude account home."""
     return [os.path.expanduser("~/.claude")] + [
         str(home) for home in account_homes_for("claude")
     ]

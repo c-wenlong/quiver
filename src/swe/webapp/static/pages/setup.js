@@ -212,7 +212,7 @@ async function render() {
 }
 
 function header() {
-  return pageHeader("Setup", `Quiver's first-run setup, for ${machineName()}: the machine this hub runs on.`,
+  return pageHeader("Setup", `SWE's first-run setup, for ${machineName()}: the machine this hub runs on.`,
     `<button class="icon-button" id="page-refresh" aria-label="Check again" title="Check again">${icon("rescan")}</button>`);
 }
 
@@ -270,7 +270,7 @@ function paintLanding() {
   if (d.first_run) {
     card = `<div class="card setup-entry">
       <div class="card-title">Set up this machine</div>
-      <p class="setup-text">Quiver hasn't been set up on ${esc(machineName())} yet: there's no shared <code>${esc(file)}</code>.
+      <p class="setup-text">SWE hasn't been set up on ${esc(machineName())} yet: there's no shared <code>${esc(file)}</code>.
         Pick the agents you use, then link one AGENTS.md, one skills folder and one list of MCP servers into each of them.</p>
       <div><button class="setup-button primary" id="setup-start">Set up</button></div></div>`;
   } else {
@@ -303,9 +303,9 @@ function paintLanding() {
 
 const TITLES = {
   agents: ["Pick the agents you use",
-    "Quiver shows usage, limits and sessions for every coding agent. The ones you pick go on Accounts. Change them any time on Harnesses."],
+    "SWE shows usage, limits and sessions for every coding agent. The ones you pick go on Accounts. Change them any time on Harnesses."],
   links: ["One setup for all of them",
-    "Quiver keeps one AGENTS.md, one skills folder and one list of MCP servers, and links them into each agent."],
+    "SWE keeps one AGENTS.md, one skills folder and one list of MCP servers, and links them into each agent."],
   look: ["Pick a look", "Change it later in Settings › General. It's kept in this browser."],
 };
 
@@ -316,13 +316,13 @@ function paintWizard() {
   const body = step === "agents" ? agentsStep() : step === "links" ? linksStep() : lookStep();
   paintShell(`<section class="card setup-sheet" aria-labelledby="setup-title">
     <div class="setup-head">
-      <div class="setup-brand"><img src="/icon-192.png" alt=""><span>Quiver</span></div>
+      <div class="setup-brand"><img src="/icon-192.png" alt=""><span>SWE</span></div>
       <div class="setup-steps" role="img" aria-label="Step ${page.step + 1} of ${STEPS.length}">${dots}
         <span class="caption">${page.step + 1} of ${STEPS.length}</span></div>
     </div>
     <div class="setup-body">
       <div class="setup-titles">
-        ${step === "agents" ? `<div class="caption">Welcome to Quiver</div>` : ""}
+        ${step === "agents" ? `<div class="caption">Welcome to SWE</div>` : ""}
         <h2 class="setup-title" id="setup-title" tabindex="-1">${esc(title)}</h2>
         <p class="setup-subtitle">${esc(subtitle)}</p>
       </div>
@@ -348,7 +348,7 @@ function continueDisabled() {
 }
 
 function continueTitle() {
-  if (page.step === STEPS.length - 1) return "Start using Quiver";
+  if (page.step === STEPS.length - 1) return "Start using SWE";
   if (STEPS[page.step] !== "links") return "Continue";
   if (page.applying) return "Setting up…";
   if (needsApply()) return "Set up";
@@ -426,7 +426,7 @@ function missingBanner(p) {
   }
   return `<div class="setup-missing">
     <div class="setup-missing-row">
-      <p class="setup-text"><span class="strong">${esc(agentName(p.id))}</span> isn't installed yet. Quiver will list it anyway, and you can install it any time.</p>
+      <p class="setup-text"><span class="strong">${esc(agentName(p.id))}</span> isn't installed yet. SWE will list it anyway, and you can install it any time.</p>
       <button class="setup-button" data-install="${esc(p.id)}" aria-expanded="${open}"
         title="Install ${esc(agentName(p.id))} on ${esc(machineName())}">Install…</button>
     </div>${panel}</div>`;
@@ -635,7 +635,7 @@ function instructionsExtra(ins) {
     html += `<p class="caption">Your AGENTS.md is already there and stays as it is.</p>`;
   } else if (candidates.length) {
     const opts = candidates.map((c) => `<option value="${esc(c.path)}"${page.start === c.path ? " selected" : ""}>Your ${esc(tilde(c.path))}</option>`)
-      .concat(`<option value="seed"${page.start === "seed" ? " selected" : ""}>Quiver's starter file</option>`);
+      .concat(`<option value="seed"${page.start === "seed" ? " selected" : ""}>SWE's starter file</option>`);
     html += `<label class="setup-start"><span>Start from</span>
       <select class="field" id="setup-start-from"${page.outcome || page.applying ? " disabled" : ""}>${opts.join("")}</select></label>`;
   }
@@ -677,7 +677,7 @@ function setLook(mode) {
   if (mode === "light" || mode === "dark") root.dataset.theme = mode; else delete root.dataset.theme;
 }
 
-/* WindowSketch: a tiny Quiver window in light, dark, or both halves for
+/* WindowSketch: a tiny SWE window in light, dark, or both halves for
  * System. Fixed colours on purpose: it shows the mode, whatever is on now. */
 function sketch(mode) {
   const win = (dark) => {

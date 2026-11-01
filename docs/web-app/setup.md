@@ -6,7 +6,7 @@ on. Page id `setup`, at `#/setup`; it is not in the sidebar. While the hub
 machine has no shared `~/.swe/AGENTS.md`, opening a bare `/` goes
 here once per browser (remembered under `quiver.setup.offered`), and
 Overview shows a **Set up** card linking here. Settings links it too. Files:
-`quiver/webapp/pages/setup.py`, `static/pages/setup.js` and `setup.css`,
+`swe/webapp/pages/setup.py`, `static/pages/setup.js` and `setup.css`,
 `tests/test_webapp_setup.py`.
 
 ## What the page shows
@@ -20,14 +20,14 @@ The page opens on one card:
 
 The button reads the machine afresh (as the sheet loads its preview each
 time it opens), then starts the sheet's steps, in a card laid out like the sheet:
-the Quiver mark, the step bars and "1 of 3", the step's title and
+the SWE mark, the step bars and "1 of 3", the step's title and
 subtitle, and a footer with Skip setup, Back and Continue.
 
 1. **Pick the agents you use.** "Found on {machine}" with a count and a
    tile per agent found there, then "Show N more agents" for the rest of
    the catalog. A tile toggles its tick. The first ticks are the
    harnesses starred now. Ticking an agent that isn't installed adds the
-   sheet's banner ("… isn't installed yet. Quiver will list it anyway…")
+   sheet's banner ("… isn't installed yet. SWE will list it anyway…")
    with **Install…**, which opens swe's install commands for it, one per
    package manager. Each has **Install**, which runs it on the hub, and
    Copy; a manager that isn't on the hub's PATH is dimmed and says so in
@@ -44,7 +44,7 @@ subtitle, and a footer with Skip setup, Back and Continue.
    kept.
 2. **One setup for all of them.** Shared instructions, with the "Start
    from" picker when your agents already have instruction files (your
-   first one by default, or Quiver's starter file) and the note for each
+   first one by default, or SWE's starter file) and the note for each
    file the choice leaves alone; Skills; MCP servers, naming the servers
    setup would import. **Set up** runs setup; while it runs the button
    reads "Setting up…" and every control is off. When setup left files
@@ -69,11 +69,11 @@ subtitle, and a footer with Skip setup, Back and Continue.
    marketplace that couldn't be registered. Coming back to the page
    while a clone runs picks the polling up again.
 
-3. **Pick a look.** System, Light and Dark, each drawn as a small Quiver
+3. **Pick a look.** System, Light and Dark, each drawn as a small SWE
    window, with the Mac app's blurbs ("Matches this browser" for System).
    A click applies it at once and saves it in this browser under
    `quiver.appearance`, the key Settings › General uses, so the two stay
-   in step. Start using Quiver finishes.
+   in step. Start using SWE finishes.
 
 After setting up, Continue moves to the look; when setup left something
 to read it stays on step 2 first, as the sheet does.

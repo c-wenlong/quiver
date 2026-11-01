@@ -522,7 +522,7 @@ class TestDeviceMetadata(unittest.TestCase):
         token = pairing.mint_pair_token(self.tmp)
         cred = pairing.exchange(
             self.tmp, token, "phone",
-            meta={"kind": "iphone", "client": "Quiver Web",
+            meta={"kind": "iphone", "client": "SWE Web",
                   "os": "iOS 18.5", "node_name": "test-iphone.ts.net",
                   "display_name": "nope", "credential_hash": "nope"},
         )

@@ -406,7 +406,7 @@ class TestHandle(unittest.TestCase):
             self.assertEqual(self.n._session_title("k1"), "proj")
         with patch.object(self.state.catalog, "row_for",
                           return_value=None):
-            self.assertEqual(self.n._session_title("k1"), "Quiver")
+            self.assertEqual(self.n._session_title("k1"), "SWE")
 
 
     def test_session_title_redacted_in_every_post(self):

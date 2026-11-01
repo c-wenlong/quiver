@@ -259,7 +259,7 @@ _BAD_PROVIDER = "A provider name has to be a short label: up to 60 letters, digi
 
 
 def _unsafe(name: str) -> str:
-    return (f"{name} is also set on a line Quiver can't edit safely. "
+    return (f"{name} is also set on a line SWE can't edit safely. "
             "Change or remove that line in an editor, then edit it here.")
 
 
@@ -302,7 +302,7 @@ def load(path: Path) -> tuple[KeysFile, bytes | None]:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         # Lossy decoding would rewrite bytes on lines no one edited.
-        raise KeyFileError("unreadable", "Couldn't read the keys file: it isn't valid UTF-8, so Quiver won't rewrite it") from None
+        raise KeyFileError("unreadable", "Couldn't read the keys file: it isn't valid UTF-8, so SWE won't rewrite it") from None
     return KeysFile(text), data
 
 

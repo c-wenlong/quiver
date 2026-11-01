@@ -35,11 +35,11 @@ badge where its control would be.
 ### Integrations › Remote
 
 - **Set up remote control**: while any step `swe remote setup` checks is
-  left, a card lists them all with a Done, Needs you, Quiver does this,
+  left, a card lists them all with a Done, Needs you, SWE does this,
   Failed or Waiting badge. A step only a person can do links to its
   page (Download Tailscale, Sign in, Open admin console) or copies its
   command; "Pair a phone" mints a code like Pair a device. The steps
-  Quiver does itself are not run from here, since moving the hub can cut
+  SWE does itself are not run from here, since moving the hub can cut
   off the page it serves: the card's last row points to the Mac app's
   Set up remote control or `swe remote setup --apply` on the hub, with
   Check again. The card is gone once every step is done. Each visit to

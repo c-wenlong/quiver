@@ -272,7 +272,7 @@ def _secret(ctx, action: str, body: dict) -> dict:
 
 def _remove(ctx, body: dict) -> dict:
     """Remove: ``{"server", "from": [places]}``, the places the confirm
-    listed ("quiver" for the hub). Every one must hold the server now; a
+    listed ("quiver" for the hub, its wire name). Every one must hold the server now; a
     place it has since spread to is left alone, since the confirm didn't
     name it. The reply is ``{"removed", "absent", "page"}``."""
     from swe.harness.registry import load_registry_readonly

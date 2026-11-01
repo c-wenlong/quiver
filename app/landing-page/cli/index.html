@@ -172,7 +172,7 @@ States
   build, check and init take --json for the app's document.
 </code></pre>
 <h3 id="swe-setup"><a class="anchor" href="#swe-setup"></a><code>swe setup</code></h3>
-<p><em>Sectioned setup wizard for Quiver</em></p>
+<p><em>Sectioned setup wizard for SWE</em></p>
 <pre><code class="language-text">  swe setup                    Run all six interactive setup stages
   swe setup --quick            Only visit missing or actionable stages
   swe setup harnesses          Discover and register coding CLIs
@@ -182,7 +182,7 @@ States
   swe setup report             Configure summarizer and writer models
   swe setup check              Verify the resulting setup
 
-  Returning-user prompts show current values; Enter keeps them. Quiver creates a
+  Returning-user prompts show current values; Enter keeps them. SWE creates a
   timestamped backup before changing harness.json, mcp.json, or config.json.
 
   swe setup --apply            Apply safe discovery changes without prompts
@@ -198,7 +198,7 @@ States
   expected key file and environment variable; harness OAuth remains harness-owned.
 </code></pre>
 <h3 id="swe-config"><a class="anchor" href="#swe-config"></a><code>swe config</code></h3>
-<p><em>View or update Quiver configuration</em></p>
+<p><em>View or update SWE configuration</em></p>
 <pre><code class="language-text">  swe config                     Print resolved configuration
   swe config get &lt;key&gt;           Print one resolved dotted key
   swe config set &lt;key&gt; &lt;value&gt;   Save a string, number, boolean, or JSON array
@@ -212,7 +212,7 @@ Examples
   swe config get report.writer.model
   swe config unset report.session.model
 
-Quiver never stores model credentials in this file. Claude and Codex continue
+SWE never stores model credentials in this file. Claude and Codex continue
 to use their own login state and environment.
 </code></pre>
 <h3 id="swe-doctor"><a class="anchor" href="#swe-doctor"></a><code>swe doctor</code></h3>
@@ -484,7 +484,7 @@ Examples
   swe session -w 3
   swe session -s 2026-07-01 -e 2026-07-30
   swe session --search=login
-  swe session 30 -q quiver
+  swe session 30 -q refactor
   swe session index --on
 </code></pre>
 <h3 id="swe-report"><a class="anchor" href="#swe-report"></a><code>swe report</code></h3>
@@ -497,10 +497,10 @@ Examples
   swe report followup done &lt;id&gt;  Mark a follow-up done manually
   swe report followup work &lt;id&gt;  Resume its source or start a contextual session
 
-Before any model runs, Quiver displays session counts, exclusions, cache hits,
+Before any model runs, SWE displays session counts, exclusions, cache hits,
 planned calls, and estimated input tokens. Normal plans ask for y/N. Plans over
 configured limits require the exact phrase process all.
-When a report completes with warnings, Quiver prints the exact
+When a report completes with warnings, SWE prints the exact
 swe report warnings &lt;manifest.json&gt; command for that report.
 
 Source flags
@@ -514,7 +514,7 @@ Source flags
 
 Reports run in two passes: a cheap model summarizes each session, then a
 stronger model writes the final report from those summaries. The flags below
-pick the harness/model for each pass; leave any of them out and Quiver falls
+pick the harness/model for each pass; leave any of them out and SWE falls
 back to report.session.* / report.writer.* in swe config.
 
 Runner override flags
@@ -564,7 +564,7 @@ Flags
   swe remote setup [--apply]             Check every step to a paired phone:
                                             Tailscale, MagicDNS, HTTPS, the
                                             certificate, the hub, tailscale
-                                            serve. --apply does Quiver's part.
+                                            serve. --apply does SWE's part.
   swe remote pair [--name=N]             Mint a one-time pairing token;
                                             prints the URL to open on the phone
                                             (and a QR when qrencode is installed).

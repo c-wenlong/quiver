@@ -1,4 +1,4 @@
-"""accounts.sync.*: shared content linked into Quiver's extra account homes.
+"""accounts.sync.*: shared content linked into SWE's extra account homes.
 
 Every test builds a throwaway home with fake account homes under
 ~/.swe/accounts/<vendor>/<id>/home and a profiles.json naming them.
@@ -386,7 +386,7 @@ class SwitchOffTest(unittest.TestCase):
         self.assertTrue((_acct(home) / "skills").is_symlink())
 
 
-class QuiverGuardTest(unittest.TestCase):
+class SweGuardTest(unittest.TestCase):
     """The ~/.swe guard still refuses absorb into an account home."""
 
     def test_init_apply_refuses_to_absorb_inside_quiver(self):

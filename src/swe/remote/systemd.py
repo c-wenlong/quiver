@@ -29,7 +29,7 @@ UNIT = "quiver-remote-hub.service"
 # The satellite (``swe remote agent --install``) gets its own unit, so
 # installing one never rewrites or stops the other.
 AGENT_UNIT = "quiver-remote-agent.service"
-HUB_DESCRIPTION = "Quiver remote hub (swe remote serve)"
+HUB_DESCRIPTION = "SWE remote hub (swe remote serve)"
 # Seconds systemd waits before restarting a hub that exited (launchd's
 # ThrottleInterval twin).
 RESTART_S = 15

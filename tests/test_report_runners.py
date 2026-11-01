@@ -80,7 +80,7 @@ class RunnerArgvTest(unittest.TestCase):
             build_argv(RunnerSpec("droid", "model"))
 
     def test_cannot_override_safety_flags(self):
-        with self.assertRaisesRegex(ValueError, "managed by Quiver"):
+        with self.assertRaisesRegex(ValueError, "managed by SWE"):
             build_argv(RunnerSpec("codex", "gpt-5", ("--sandbox=danger-full-access",)))
 
     def test_other_spellings_of_the_unsafe_flags_are_refused(self):
@@ -97,7 +97,7 @@ class RunnerArgvTest(unittest.TestCase):
             ("claude", ("--allow-dangerously-skip-permissions",)),
         ):
             with self.subTest(args=args):
-                with self.assertRaisesRegex(ValueError, "managed by Quiver"):
+                with self.assertRaisesRegex(ValueError, "managed by SWE"):
                     build_argv(RunnerSpec(harness, "model", args))
 
     def test_claude_rejects_option_terminator(self):
@@ -135,7 +135,7 @@ class RunnerArgvTest(unittest.TestCase):
             ("codex", ("--ephemeral",)),
         ):
             with self.subTest(harness=harness):
-                with self.assertRaisesRegex(ValueError, "managed by Quiver"):
+                with self.assertRaisesRegex(ValueError, "managed by SWE"):
                     build_argv(RunnerSpec(harness, "model", args))
 
 

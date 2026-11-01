@@ -129,7 +129,7 @@ def resolve_harness(label: str | None, reg: dict, aliases: dict) -> str | None:
 
     None is not a failure state to work around — a row that resolves to
     nothing must never be filtered. Hiding an unrecognised row would be the
-    one silent hide this feature promises never to do; the shared quiver
+    one silent hide this feature promises never to do; the shared hub
     copy and a root nobody has registered are exactly the "unknown" case
     `swe find` exists to keep visible.
     """
@@ -267,7 +267,7 @@ def agents_roots(home: Path | None = None, scope: str = "global",
     # row of its own instead of being something you reach by accident. It
     # names no harness of its own, so the filter never touches it.
     if _exists(canonical) and _in_scope(canonical, scope, home):
-        out.append(Entry(_short(canonical, home), canonical, "quiver, the shared copy"))
+        out.append(Entry(_short(canonical, home), canonical, "swe, the shared copy"))
 
     shown, _vendored = _safe(lambda: filter_scope(nodes, scope, home), ([], 0))
     for node in sorted(shown, key=_by_path):

@@ -312,7 +312,7 @@ class Backend:
                     # can answer it.
                     try:
                         child.send(_error(message["id"], METHOD_NOT_FOUND,
-                                          "the Quiver MCP gateway does not relay "
+                                          "the SWE MCP gateway does not relay "
                                           "server-to-client requests"))
                     except OSError:
                         break
@@ -506,7 +506,7 @@ def load_hub_specs() -> tuple[dict, dict]:
     from swe.mcp.secrets import load_secrets, resolve, unresolved_names
 
     secrets = load_secrets()
-    handler = get_mcp_handler("quiver")
+    handler = get_mcp_handler("swe")
     specs: dict[str, dict] = {}
     problems: dict[str, str] = {}
     # load_json raises on a file it can't parse: the caller keeps the

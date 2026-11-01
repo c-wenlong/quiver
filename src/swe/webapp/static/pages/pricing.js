@@ -2,7 +2,7 @@
  * each one resolves to and where it came from. Ports the Mac app's
  * PricingPage: a row opens its price form (PricingEditSheet), which saves
  * your own price or removes it, POST /v1/app/pricing/save|remove. Also
- * exports the helpers the Models page shares (QuiverPricing), on window:
+ * exports the helpers the Models page shares (SWEPricing), on window:
  * the bundle runs each page script in its own scope (pages/__init__.py). */
 (() => {
   "use strict";
@@ -73,7 +73,7 @@
     return r.alias ? `${r.alias} (${r.model})` : r.model;
   }
 
-  window.QuiverPricing = { brandLogo, fullName, perMillion, harnessMenu, bindHarnessMenu, periodSelect };
+  window.SWEPricing = { brandLogo, fullName, perMillion, harnessMenu, bindHarnessMenu, periodSelect };
 
   /* ------------------------------------------------------------ page */
 
@@ -243,7 +243,7 @@
   }
 
   function sourceName(r) {
-    return { billed: `${billers(r)} bills`, free: "Free", yours: "Your price", quiver: "Quiver",
+    return { billed: `${billers(r)} bills`, free: "Free", yours: "Your price", quiver: "SWE",
       litellm: "LiteLLM", unpriced: "No price" }[r.spend_source];
   }
 
@@ -263,7 +263,7 @@
     let text = {
       free: mixed ? "Free model: usage without a logged charge is priced at $0." : "Free model: priced at $0.",
       yours: `Your price: ${rest} uses the rates you saved.`,
-      quiver: `API pricing from Quiver's own list, which fills in or corrects LiteLLM's${mixed ? ", for usage without a logged charge." : "."}`,
+      quiver: `API pricing from SWE's own list, which fills in or corrects LiteLLM's${mixed ? ", for usage without a logged charge." : "."}`,
       litellm: `API pricing from LiteLLM's price list${mixed ? ", for usage without a logged charge." : "."}`,
       unpriced: mixed ? `No price: usage without a logged charge isn't in your spend. ${set}`
         : `No price: these tokens aren't in your spend. ${set}`,
@@ -276,13 +276,13 @@
   const PERSON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="10" r="3"/><path d="M6.5 18.5c1.2-2 3.2-3 5.5-3s4.3 1 5.5 3"/></svg>';
   const GIFT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M5 12v8h14v-8M12 8v12M12 8c-1.5-3-5-3.5-5-1.5S10 8 12 8zM12 8c1.5-3 5-3.5 5-1.5S14 8 12 8z"/></svg>';
 
-  /* The biller's logo, LiteLLM's, Quiver's icon, or a symbol for your own
+  /* The biller's logo, LiteLLM's, SWE's icon, or a symbol for your own
    * price, a free model and a missing price. */
   function sourceMark(r) {
     switch (r.spend_source) {
       case "billed": return r.billed_by.slice(0, 2).map((h) => Fmt.logo(h)).join("");
       case "litellm": return '<img class="logo mono" src="/source-litellm.svg" alt="LiteLLM">';
-      case "quiver": return '<img class="logo qp-quiver" src="/icon-192.png" alt="Quiver">';
+      case "quiver": return '<img class="logo qp-swe" src="/icon-192.png" alt="SWE">';
       case "yours": return `<span class="qp-symbol">${PERSON}</span>`;
       case "free": return `<span class="qp-symbol">${GIFT}</span>`;
       default: return `<span class="qp-symbol warn">${WARN}</span>`;

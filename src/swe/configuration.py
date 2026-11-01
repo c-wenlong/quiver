@@ -1,4 +1,4 @@
-"""General user configuration for Quiver.
+"""General user configuration for SWE.
 
 The configuration file is deliberately small and credential-free.  Harness
 authentication remains owned by the harness itself (or the environment).

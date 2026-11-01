@@ -1,7 +1,7 @@
 """Declarative map of what ~/.swe owns and where each harness expects it.
 
 The premise: every harness wants the same global instructions and the same
-skill tree, but each insists on its own filename and location. Quiver keeps one
+skill tree, but each insists on its own filename and location. SWE keeps one
 real copy and symlinks it into place under whatever name the harness wants.
 
 Instruction filenames below were confirmed by grepping the installed binaries
@@ -905,7 +905,7 @@ def plan(
     return instructions, skills
 
 
-# Quiver's harness labels are the short names each tool calls itself. The
+# SWE's harness labels are the short names each tool calls itself. The
 # registry in harness.json uses a few longer keys, so translate on the way out.
 REGISTRY_ALIASES: dict[str, str] = {
     "qwen": "qwen-code",

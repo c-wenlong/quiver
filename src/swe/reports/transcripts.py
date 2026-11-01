@@ -435,7 +435,7 @@ def _find_session_file(root: Path, session_id: str, patterns: tuple[str, ...] = 
 
 
 # The transcript subdir each account-aware harness keeps inside its home,
-# so a session in a Quiver account home resolves there, not the default.
+# so a session in an SWE account home resolves there, not the default.
 _ACCOUNT_SUBDIRS = {"claude": "projects", "codex": "sessions"}
 
 

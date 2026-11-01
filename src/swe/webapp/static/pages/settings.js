@@ -80,7 +80,7 @@ settingsApplySidebar(settingsHidden());
 // SettingsGroup / SettingsSection: titles, one-line details and symbols.
 const SETTINGS_GROUPS = [
   ["App", [
-    ["general", "General", "When Quiver starts, how it looks, and which version you're running."],
+    ["general", "General", "When SWE starts, how it looks, and which version you're running."],
     ["sidebar", "Sidebar", "Which pages the sidebar lists, and their order inside each group."],
     ["notifications", "Notifications", "Alerts when a usage limit runs low."],
   ]],
@@ -88,8 +88,8 @@ const SETTINGS_GROUPS = [
     ["providers", "Providers", "Which harnesses show up across the app, and the inference plans and API keys behind them."],
   ]],
   ["Advanced", [
-    ["integrations", "Integrations", "The GitHub CLI behind the GitHub pages, the keys for the services Quiver calls, and the phones paired to watch your sessions."],
-    ["files", "Files", "Where Quiver finds swe, your API keys file and your MCP server folders, and the editor that opens them."],
+    ["integrations", "Integrations", "The GitHub CLI behind the GitHub pages, the keys for the services SWE calls, and the phones paired to watch your sessions."],
+    ["files", "Files", "Where SWE finds swe, your API keys file and your MCP server folders, and the editor that opens them."],
     ["experimental", "Experimental", "Features being tried out. They may change or go away."],
   ]],
 ];
@@ -209,7 +209,7 @@ async function renderSettings() {
 }
 
 function settingsHeader() {
-  return pageHeader("Settings", "How Quiver starts, what it shows, and where it finds things.");
+  return pageHeader("Settings", "How SWE starts, what it shows, and where it finds things.");
 }
 
 function paintSettings() {
@@ -238,7 +238,7 @@ function paintSettings() {
       </section>
     </div>
     <footer class="set-footer caption">
-      <span>Quiver ${esc(version)}</span><span>·</span>
+      <span>SWE ${esc(version)}</span><span>·</span>
       <a href="#/doctor">${settingsIcon("doctor")}Doctor</a><span>·</span>
       <a href="#/status">${icon("status")}Service status</a>
     </footer>
@@ -309,9 +309,9 @@ function generalSection() {
   const where = d && d.machine ? ` on ${d.machine}` : "";
   return `<div class="set-stack">
     ${setCard([
-      macRow("Open at login", "Start Quiver in the menu bar when you log in."),
+      macRow("Open at login", "Start SWE in the menu bar when you log in."),
       macRow("Terminal", "Used by Terminal, Sign in and Resume."),
-      macRow("Show in Dock", "Off keeps Quiver out of the Dock and the app switcher. Open it from the menu bar."),
+      macRow("Show in Dock", "Off keeps SWE out of the Dock and the app switcher. Open it from the menu bar."),
       setRow("First-run setup", "Pick the agents you use, link AGENTS.md and skills into each one, and choose the look and notifications.",
         `<a class="set-button" href="#/setup">Set up this machine</a>`),
     ])}
@@ -409,7 +409,7 @@ function inferenceTab() {
     <span class="caption count num">${visible.length === 1 ? "1 row" : `${visible.length} rows`}</span>
   </div>`;
   const body = visible.length ? visible.map(settingsKeyRow).join("")
-    : `<p class="empty set-pad">${rows.length ? "Nothing matches these filters." : `No keys yet. Add one and Quiver writes it to ${esc(prov.path)}.`}</p>`;
+    : `<p class="empty set-pad">${rows.length ? "Nothing matches these filters." : `No keys yet. Add one and SWE writes it to ${esc(prov.path)}.`}</p>`;
   return `<div class="set-stack">
     <div class="set-keys-top">
       <div class="set-keys-head"><div class="set-group-title">Keys and plans</div><div class="caption">${esc(subtitle)}</div></div>
@@ -561,7 +561,7 @@ function integrationsSection() {
   return `<div class="set-stack wide">
     ${setGroup("GitHub", "The gh install behind the GitHub pages, and the synced repo catalog the Add-repo search reads.", githubCard())}
     ${setGroup("Services", "", setCard([
-      macRow("Service keys", "Keys for the services Quiver itself calls, kept in the Mac's Keychain, with Test and Replace."),
+      macRow("Service keys", "Keys for the services SWE itself calls, kept in the Mac's Keychain, with Test and Replace."),
     ]))}
     ${setGroup("Remote", "Pair a phone to watch and steer sessions, and see which devices are paired.", remoteCards())}
   </div>`;
@@ -658,12 +658,12 @@ function remoteCards() {
 }
 
 /* `swe remote setup`'s steps, while any is left: each with its state and
- * what to do. Steps only a person can do link to the page; the ones Quiver
+ * what to do. Steps only a person can do link to the page; the ones SWE
  * does itself are run from the Mac app or the CLI, never from here, since
  * moving the hub could cut off this very page. */
 const SETUP_BADGE = {
   ok: '<span class="badge set-online">Done</span>',
-  todo: '<span class="badge">Quiver does this</span>',
+  todo: '<span class="badge">SWE does this</span>',
   needs_you: '<span class="badge set-needs">Needs you</span>',
   failed: '<span class="badge set-failed">Failed</span>',
   blocked: '<span class="badge set-waiting">Waiting</span>',
@@ -678,12 +678,12 @@ function setupCard() {
   }
   if (s.ready) return "";
   const rows = s.steps.map(setupRow);
-  // A failed step Quiver retries (a hub that stopped) is fixed the same
+  // A failed step SWE retries (a hub that stopped) is fixed the same
   // way as one it hasn't done yet.
   const quiverSteps = s.steps.some((x) => x.state === "todo"
     || (x.state === "failed" && x.action && x.action.kind === "apply"));
   const foot = quiverSteps
-    ? setRow("Steps Quiver does itself", "Open Settings › Remote › Set up remote control in the Quiver Mac app, or run swe remote setup --apply on the hub machine.",
+    ? setRow("Steps SWE does itself", "Open Settings › Remote › Set up remote control in the SWE Mac app, or run swe remote setup --apply on the hub machine.",
         '<button class="set-button" id="set-setup-recheck">Check again</button>')
     : setRow("Done one of these?", "Steps you finish in a browser show here when you check again.",
         '<button class="set-button" id="set-setup-recheck">Check again</button>');
@@ -854,7 +854,7 @@ function filesSection() {
     setRow("API keys file", `In use: ${paths.api_keys}.`),
     setRow("MCP servers folder", `In use: ${paths.mcp_servers}.`),
     macRow("Editor", "Opens a server folder from the MCP servers page."),
-  ])}<p class="caption set-note">These are the hub's paths. Pointing Quiver somewhere else is a Mac app setting.</p></div>`;
+  ])}<p class="caption set-note">These are the hub's paths. Pointing SWE somewhere else is a Mac app setting.</p></div>`;
 }
 
 /* ---------------------------------------------------------- Experimental */
@@ -884,7 +884,7 @@ function experimentalSection() {
       <button class="icon-button set-key-icon" id="set-search-resync" title="Read every transcript again now" aria-label="Re-index every transcript"${ss.running || p.searchBusy ? " disabled" : ""}>${settingsIcon("rescan")}</button>
       <button class="set-button" id="set-search-clear"${ss.running || p.searchBusy ? " disabled" : ""}>Clear search data</button>
     </div>` : "";
-  return setGroup("Session index", "How Quiver finds what a session said, not only its titles and paths.",
+  return setGroup("Session index", "How SWE finds what a session said, not only its titles and paths.",
     setCard([
       setRow("Session search", `${esc(detail)}${status}${warn}${actions}`,
         `<span class="badge">Experimental</span>${setSwitch("session-search", !!ss.enabled,
@@ -1312,7 +1312,7 @@ function bindRemote() {
       });
     bindRemint(sheet);
     if (!p.timer) {
-      // Looks the sheet up on every tick: a repaint (the Browser / Quiver
+      // Looks the sheet up on every tick: a repaint (the Browser / SWE
       // app switch, a new code) draws a new one. The countdown is only
       // rewritten when its text changes, and the button it may turn into
       // is bound each time it is drawn.

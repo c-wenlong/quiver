@@ -252,7 +252,7 @@ HELP = {
   swe session -w 3
   swe session -s 2026-07-01 -e 2026-07-30
   swe session --search=login
-  swe session 30 -q quiver
+  swe session 30 -q refactor
   swe session index --on"""
     ),
     "report": (
@@ -266,10 +266,10 @@ HELP = {
   {c('cyan', 'swe report followup done <id>')}  Mark a follow-up done manually
   {c('cyan', 'swe report followup work <id>')}  Resume its source or start a contextual session
 
-Before any model runs, Quiver displays session counts, exclusions, cache hits,
+Before any model runs, SWE displays session counts, exclusions, cache hits,
 planned calls, and estimated input tokens. Normal plans ask for y/N. Plans over
 configured limits require the exact phrase {c('bold', 'process all')}.
-When a report completes with warnings, Quiver prints the exact
+When a report completes with warnings, SWE prints the exact
 {c('cyan', 'swe report warnings <manifest.json>')} command for that report.
 
 {c('bold', 'Source flags')}
@@ -283,7 +283,7 @@ When a report completes with warnings, Quiver prints the exact
 
 Reports run in two passes: a cheap model summarizes each session, then a
 stronger model writes the final report from those summaries. The flags below
-pick the harness/model for each pass; leave any of them out and Quiver falls
+pick the harness/model for each pass; leave any of them out and SWE falls
 back to {c('cyan', 'report.session.*')} / {c('cyan', 'report.writer.*')} in {c('cyan', 'swe config')}.
 
 {c('bold', 'Runner override flags')}
@@ -302,7 +302,7 @@ back to {c('cyan', 'report.session.*')} / {c('cyan', 'report.writer.*')} in {c('
   work <id> --new --harness=X  Start a new contextual session with harness X"""
     ),
     "config": (
-        "View or update Quiver configuration",
+        "View or update SWE configuration",
         f"""\
   {c('cyan', 'swe config')}                     Print resolved configuration
   {c('cyan', 'swe config get <key>')}           Print one resolved dotted key
@@ -317,7 +317,7 @@ back to {c('cyan', 'report.session.*')} / {c('cyan', 'report.writer.*')} in {c('
   swe config get report.writer.model
   swe config unset report.session.model
 
-Quiver never stores model credentials in this file. Claude and Codex continue
+SWE never stores model credentials in this file. Claude and Codex continue
 to use their own login state and environment."""
     ),
     "models": (
@@ -632,7 +632,7 @@ to use their own login state and environment."""
                never touched or counted"""
     ),
     "setup": (
-        "Sectioned setup wizard for Quiver",
+        "Sectioned setup wizard for SWE",
         f"""\
   {c('cyan', 'swe setup')}                    Run all six interactive setup stages
   {c('cyan', 'swe setup --quick')}            Only visit missing or actionable stages
@@ -643,7 +643,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe setup report')}             Configure summarizer and writer models
   {c('cyan', 'swe setup check')}              Verify the resulting setup
 
-  Returning-user prompts show current values; Enter keeps them. Quiver creates a
+  Returning-user prompts show current values; Enter keeps them. SWE creates a
   timestamped backup before changing harness.json, mcp.json, or config.json.
 
   {c('cyan', 'swe setup --apply')}            Apply safe discovery changes without prompts
@@ -757,7 +757,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe remote setup [--apply]')}             Check every step to a paired phone:
                                             Tailscale, MagicDNS, HTTPS, the
                                             certificate, the hub, tailscale
-                                            serve. --apply does Quiver's part.
+                                            serve. --apply does SWE's part.
   {c('cyan', 'swe remote pair [--name=N]')}             Mint a one-time pairing token;
                                             prints the URL to open on the phone
                                             (and a QR when qrencode is installed).

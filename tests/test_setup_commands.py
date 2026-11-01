@@ -74,7 +74,7 @@ class SetupCommandTest(_SetupHarness):
     def test_nothing_to_do_is_clean(self):
         code, out, _ = self._run([])
         self.assertEqual(code, 0)
-        self.assertIn("quiver setup", out)
+        self.assertIn("swe setup", out)
         self.assertIn("No new high-confidence harnesses", out)
         self.assertIn("No new MCP servers", out)
         self.assertIn("Nothing to apply", out)

@@ -15,7 +15,7 @@ class Session:
     # source, "rename" for a name the user set, "auto" for one the harness
     # generated. Lets the listing mark renamed sessions apart.
     title_source: str = ""
-    # The Quiver account home the transcript sits under when it is not the
+    # The SWE account home the transcript sits under when it is not the
     # harness's default home (``~/.swe/accounts/<vendor>/<id>/home``);
     # "" for a session in the default home. The consumer labels the row
     # with the account's name and resumes under this home, not the default.
@@ -81,7 +81,7 @@ class SessionRow:
     last_active_at: float
     status: str | None
     resume: dict | None
-    # The Quiver account home holding the session's transcripts, or None
+    # The SWE account home holding the session's transcripts, or None
     # for the harness's default home.
     account_home: str | None = None
 

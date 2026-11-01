@@ -70,7 +70,7 @@ class McpEditTmpFileTest(unittest.TestCase):
         path = seen["path"]
         # Outside ~/.swe entirely, unpredictable name, mode 0600.
         self.assertNotIn(".swe", str(path))
-        self.assertIn("quiver-mcp-edit-", path.name)
+        self.assertIn("swe-mcp-edit-", path.name)
         self.assertEqual(seen["mode"], 0o600)
         # Resolved secret content reached the editor...
         self.assertIn("npx", seen["content"])

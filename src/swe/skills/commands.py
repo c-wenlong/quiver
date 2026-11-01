@@ -259,7 +259,7 @@ def cmd_skills_hub(args) -> int:
     if not plugins:
         print(c("dim", "\n  No plugins in ~/.swe/plugins yet.\n"))
         return 0
-    print(f"\n{c('bold', 'Quiver hub')}  {c('dim', data['hub'])}\n")
+    print(f"\n{c('bold', 'SWE hub')}  {c('dim', data['hub'])}\n")
     width = max(len(f"{p['name']}@{p['marketplace']}") for p in plugins) + 2
     for plugin in plugins:
         ref = f"{plugin['name']}@{plugin['marketplace']}"

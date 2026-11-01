@@ -126,7 +126,7 @@ def ok(data):
 def _routes(pages=None, schema=SCHEMA, **extra):
     routes = {
         ("GET", "/users/me"): ok({"object": "user", "type": "bot",
-                                   "name": "Quiver"}),
+                                   "name": "SWE"}),
         ("GET", f"/users/{ME}"): ok({"id": ME, "name": "Kai"}),
         ("GET", f"/databases/{DB_ID}"): ok(schema),
         ("POST", f"/databases/{DB_ID}/query"): ok(
@@ -495,7 +495,7 @@ class TestEnv(_Home):
         env, _r = self._run(routes, lambda s: s.probe())
         self.assertEqual(env.status, "ok")
         self.assertEqual(env.user_id, ME)
-        self.assertEqual(env.login, "Quiver")  # the integration's name
+        self.assertEqual(env.login, "SWE")  # the integration's name
 
 
 class TestList(_Home):

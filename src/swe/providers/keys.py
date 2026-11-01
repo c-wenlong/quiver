@@ -3,7 +3,7 @@
 The key store is ``~/.swe/secrets/providers/.api_keys`` (override via
 the ``--api-keys-dir`` CLI flag). A machine `swe init` has not migrated yet
 still reads ``~/.api_keys``, which after the move is a symlink to the new
-file. Quiver never writes a key string to disk;
+file. SWE never writes a key string to disk;
 keys are read into memory only for the duration of a single command and
 must always pass through ``mask_key()`` before being printed.
 

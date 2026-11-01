@@ -2,7 +2,7 @@
 
 The Mac app's Plugins page (`PluginsPage.swift`, `PluginExplorer.swift`)
 at `/#/plugins`: both tabs, with Health's Fix and Fix all, and the
-plugin sheet's Install, Enable, Disable and Uninstall per harness. Module `quiver/webapp/pages/plugins.py`,
+plugin sheet's Install, Enable, Disable and Uninstall per harness. Module `swe/webapp/pages/plugins.py`,
 script and styles `static/pages/plugins.js` and `plugins.css`.
 
 ## What it shows

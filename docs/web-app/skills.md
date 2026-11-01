@@ -5,7 +5,7 @@ The Mac app's Skills page (`SkillsPage.swift`, `SkillDetailView` in
 as a web page. It links and unlinks harness skills folders as the app's
 Harness links popover does, and writes a new skill as the app's New skill
 sheet does; everything else is read only. Module
-`quiver/webapp/pages/skills.py`, script `static/pages/skills.js`, styles
+`swe/webapp/pages/skills.py`, script `static/pages/skills.js`, styles
 `static/pages/skills.css`.
 
 ## What it shows
@@ -39,7 +39,7 @@ sheet does; everything else is read only. Module
 
 ## Writes
 
-quiver links whole skills folders, never single skills, so every write
+swe links whole skills folders, never single skills, so every write
 names a harness skills folder from the payload's `harnesses`. Each action
 asks first, inline in the popover: a panel says exactly what will happen
 (which folder, linked to what, whether it is backed up first) with Cancel

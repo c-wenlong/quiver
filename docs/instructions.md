@@ -27,7 +27,7 @@ chapters in index order. Before adopting chapters, put all rules you want
 to retain into the source chapters. Edit those chapters afterward: the next
 build replaces edits made directly to the generated file.
 
-Quiver's Mac AGENTS.md editor still edits the shared output directly; the
+SWE's Mac AGENTS.md editor still edits the shared output directly; the
 web app reads it. Neither client has a chapter editor. Use a text editor
 for the source chapters when you adopt this mode. A running watcher also
 replaces direct output edits with the compiled source.
@@ -65,7 +65,7 @@ a background service or change harness configuration.
 
 ## When harnesses read changes
 
-The generated file stays at the existing shared path, so Quiver's clients
+The generated file stays at the existing shared path, so SWE's clients
 and every linked harness see the updated file on disk. A harness may load
 instructions only when a chat starts. Start a new chat if the current chat
 keeps using the old instructions.

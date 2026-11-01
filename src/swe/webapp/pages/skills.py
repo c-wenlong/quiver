@@ -511,7 +511,7 @@ def _link(root: dict, home: Path) -> dict:
     if state == "blocked":
         # keep marks the only copy of something; conflict is a file in the
         # way. Neither is ever replaced from here.
-        raise PageError(409, root["state"], f"Quiver won't link {root['name']}. {explanation(root)}")
+        raise PageError(409, root["state"], f"SWE won't link {root['name']}. {explanation(root)}")
     _same_folder(root, home)
     # Every absorb folder goes with --force, the "empty" one too: init calls
     # a tree of empty subfolders empty, but link_skill_root refuses any

@@ -5,12 +5,12 @@ A port of the Mac app's Settings › Doctor (`DoctorSection.swift`,
 `#/doctor`. It is not in the sidebar, as in the app; the Settings page
 links to it, and its header links back to Settings.
 
-Files: `quiver/webapp/pages/doctor.py`, `static/pages/doctor.js`,
+Files: `swe/webapp/pages/doctor.py`, `static/pages/doctor.js`,
 `static/pages/doctor.css`, `tests/test_webapp_doctor.py`.
 
 ## What the page shows
 
-Title "Doctor", subtitle "Checks on PATH, Node and drift between quiver
+Title "Doctor", subtitle "Checks on PATH, Node and drift between swe
 and your harnesses.", then one card:
 
 | State | Card |

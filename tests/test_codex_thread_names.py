@@ -279,7 +279,7 @@ class CodexResumeArgsTest(unittest.TestCase):
     """`codex resume <uuid>`, not `codex --resume <rollout stem>`.
 
     Codex resumes through a subcommand whose argument is a thread uuid or a
-    thread name. Quiver's session id is the rollout file's stem, because that
+    thread name. SWE's session id is the rollout file's stem, because that
     is what the transcript readers look a session up by, so the uuid has to be
     lifted back out of it.
     """

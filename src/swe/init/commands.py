@@ -327,7 +327,7 @@ class InitRun:
     inst_rows: list[tuple[LinkStatus, str]]
     skill_rows: list[tuple[LinkStatus, str]]
     hook_rows: list[tuple[LinkStatus, str]]
-    # Targets in Quiver's extra account homes (accounts.sync.*), kept apart
+    # Targets in SWE's extra account homes (accounts.sync.*), kept apart
     # from the rows above: --force never applies to them, so nothing that
     # offers "replace the blocked paths" may count them.
     account_rows: list[AccountRow] = field(default_factory=list)
@@ -673,7 +673,7 @@ def cmd_init(args) -> int:
         # would be blocked, so the caller can tell "ran" from "failed".
         return emit(check_document(home, result))
 
-    header = "Quiver layout" + (c("dim", "  (check only, nothing written)") if check_only else "")
+    header = "SWE layout" + (c("dim", "  (check only, nothing written)") if check_only else "")
     print(f"\n{c('bold', header)}")
     print(f"  {c('dim', 'root')}  {swe_dir(home)}")
     if scaffold:

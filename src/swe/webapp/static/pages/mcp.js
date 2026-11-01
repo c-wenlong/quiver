@@ -423,7 +423,7 @@ function mcpSyncTargets(s, source, harnesses) {
   return { missing, differing };
 }
 
-const mcpSourceName = (src) => (src === "quiver" ? "Quiver hub" : Fmt.mark(src).name);
+const mcpSourceName = (src) => (src === "quiver" ? "SWE hub" : Fmt.mark(src).name);
 
 /* McpSyncReport.sentence: "Added to cursor and cline. Updated codex." */
 function mcpSentence(report) {
@@ -704,7 +704,7 @@ const mcpRemovePlaces = (s) => [...s.harnesses, ...(s.in_hub ? ["quiver"] : [])]
 function mcpRemoveConfirm(s) {
   const places = mcpRemovePlaces(s);
   const where = (mcpPage.data && mcpPage.data.machine) || "the hub";
-  const names = places.map((p) => (p === "quiver" ? "Quiver hub" : Fmt.mark(p).name)).join(", ");
+  const names = places.map((p) => (p === "quiver" ? "SWE hub" : Fmt.mark(p).name)).join(", ");
   return `<div class="mcp-confirm mcp-remove-confirm" role="group" aria-label="Remove ${esc(s.name)}?">
     <p>Remove ${esc(s.name)}? It goes from ${esc(names)} on ${esc(where)}.</p>
     <pre class="command">swe mcp remove ${esc(mcpShellQuote(s.name))} --from=${esc(mcpShellQuote(places.join(",")))}</pre>
@@ -736,7 +736,7 @@ async function mcpRemove(s) {
   const sheet = document.getElementById("mcp-sheet");
   if (sheet && sheet.open && sheet.dataset.server === s.name) sheet.close();
   if (mcpPage.sheet === st) mcpPage.sheet = null;
-  mcpPage.notice = `Removed ${s.name} from ${data.removed.map((p) => (p === "quiver" ? "Quiver hub" : Fmt.mark(p).name)).join(", ")}.`;
+  mcpPage.notice = `Removed ${s.name} from ${data.removed.map((p) => (p === "quiver" ? "SWE hub" : Fmt.mark(p).name)).join(", ")}.`;
   mcpAdopt(data.page);
   if (mcpOnPage()) paintMcp();
 }
@@ -848,7 +848,7 @@ function mcpOpenSheet(s) {
       form += `<div class="field-row mcp-source-row"><label class="caption" for="mcp-source">Copy from</label><span><select class="field" id="mcp-source"${
         st.running || st.done ? " disabled" : ""}>${sources.map((src) => `<option value="${esc(src)}"${src === st.source ? " selected" : ""}>${esc(mcpSourceName(src))}</option>`).join("")}</select></span></div>`;
     } else if (sources.length) {
-      form += `<div class="fields">${fact("Copy from", st.source === "quiver" ? `<span>Quiver hub</span>` : marks([st.source]))}</div>`;
+      form += `<div class="fields">${fact("Copy from", st.source === "quiver" ? `<span>SWE hub</span>` : marks([st.source]))}</div>`;
     }
     if (!targets.missing.length && !targets.differing.length) {
       form += `<p class="caption">${st.source === "quiver" ? "Every harness already has this server." : "Every harness already has this definition."}</p>`;
@@ -891,7 +891,7 @@ function mcpOpenSheet(s) {
       ${s.env_keys.length ? fact("Env vars", esc(s.env_keys.join(", "))) : ""}
       ${s.header_keys.length ? fact("Headers", esc(s.header_keys.join(", "))) : ""}</div>` : ""}
     <hr class="mcp-rule">
-    <div class="fields">${facts || fact("In", `<span class="caption">Only the Quiver hub</span>`)}</div>
+    <div class="fields">${facts || fact("In", `<span class="caption">Only the SWE hub</span>`)}</div>
     ${secrets}
     <hr class="mcp-rule">
     <div class="card-title">Sync</div>
@@ -1130,7 +1130,7 @@ function mcpAddHtml() {
   const variables = `<hr class="mcp-rule"><div class="card-title">${command ? "Env vars" : "Other headers"}</div>
     <div class="mcp-add-vars">${vars}</div>
     <div><button type="button" class="mcp-sheet-button" id="mcp-add-var"${dis}>${mcpSvg("plus")}<span>${command ? "Add variable" : "Add header"}</span></button></div>
-    <p class="caption mcp-muted">Secret values go to ~/.swe/secrets/mcp/.api_keys${where}. The Quiver hub keeps a \${NAME} reference; the harnesses you add it to get the value, as a sync gives them.</p>`;
+    <p class="caption mcp-muted">Secret values go to ~/.swe/secrets/mcp/.api_keys${where}. The SWE hub keeps a \${NAME} reference; the harnesses you add it to get the value, as a sync gives them.</p>`;
   const fits = (h) => mcpAddFits(a, h);
   const picked = d.harnesses.filter((h) => a.targets.has(h) && fits(h)).length;
   const face = `${picked} of ${d.harnesses.length} ${d.harnesses.length === 1 ? "harness" : "harnesses"}`;
@@ -1149,7 +1149,7 @@ function mcpAddHtml() {
   const leftNote = left.length && !a.picking
     ? `<p class="caption warn">${esc(left.map((h) => `${Fmt.mark(h).name}: ${mcpAddWhyNot(a, h)}`).join(" · "))}</p>` : "";
   const placesHtml = `<hr class="mcp-rule"><div class="card-title">Where</div>
-    <div class="mcp-add-where"><div><div>Add to</div><div class="caption">Always saved to the Quiver hub too</div></div>
+    <div class="mcp-add-where"><div><div>Add to</div><div class="caption">Always saved to the SWE hub too</div></div>
       <button type="button" class="field mcp-add-face" id="mcp-add-pick" aria-expanded="${a.picking}"${dis}>${esc(face)} ${mcpSvg(a.picking ? "up" : "down")}</button></div>
     ${checklist}${leftNote}
     <label class="mcp-add-where"><span>Replace if it already exists</span>
@@ -1340,7 +1340,7 @@ async function mcpAdd() {
     mcpPage.add = null;
     if (sheet && sheet.open) sheet.close();
   }
-  const places = ["Quiver hub", ...data.targets.map((t) => Fmt.mark(t.name).name)];
+  const places = ["SWE hub", ...data.targets.map((t) => Fmt.mark(t.name).name)];
   mcpPage.notice = `${data.hub === "replaced" ? "Replaced" : "Added"} ${data.name} in ${places.join(", ")}.`;
   mcpAdopt(data.page);
   if (mcpOnPage()) paintMcp();

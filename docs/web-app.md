@@ -81,7 +81,7 @@ already do, through satellites; that is a later step.
    "Started from" label is left out, the model
    filter counts tokens of the sessions in the chosen window rather than the
    app's daily rows, and usage joins only for sessions on the hub machine
-   (a satellite's rows list without tokens). Sessions only in a Quiver
+   (a satellite's rows list without tokens). Sessions only in an SWE
    account profile's home, and Devin cloud sessions, are not listed yet.
    The search box filters each row's details in the browser and, after a
    250 ms pause, asks `/v1/search` for what was said: a session whose
@@ -101,7 +101,7 @@ already do, through satellites; that is a later step.
    satellite), with the app's limit bars, plan badge, on-demand and extra
    usage rows and status lines. Harnesses can star, unstar, archive (with
    a reason) and restore, edit a row, Detect and Add harness
-   (docs/web-app/harness.md). Quiver's own Claude and Codex account
+   (docs/web-app/harness.md). SWE's own Claude and Codex account
    profiles, history, and Open app / Terminal are Mac-only.
 4. Skills, AGENTS.md, MCP servers, Plugins, Doctor: read-only first, from the
    `swe … --json` builders. Shipped.

@@ -281,7 +281,7 @@ def _request(token: str, method: str, path: str,
             headers={"Authorization": f"Bearer {token}",
                      "Notion-Version": NOTION_VERSION,
                      "Content-Type": "application/json",
-                     "User-Agent": f"quiver/{__version__}"})
+                     "User-Agent": f"swe/{__version__}"})
         try:
             with _urlopen(req, TIMEOUT) as resp:
                 text = resp.read().decode("utf-8")

@@ -603,7 +603,7 @@ def _resume_session(session) -> int:
     cmd_args = _resume_cmd_args(session)
     from swe.harness.commands import cmd_use
 
-    # A session in a Quiver account home only resumes when its harness
+    # A session in an SWE account home only resumes when its harness
     # looks there, not in the default home.
     env = None
     variable = ACCOUNT_HOME_ENV.get(session.tool_name)

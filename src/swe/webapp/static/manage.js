@@ -503,7 +503,7 @@ function editSheet(s) {
     </div>
     <div class="harness-pair">
       ${sheetField("he-displayName", "Name", sheetInput("he-displayName", d.displayName, Fmt.harnessName(s.name), off),
-        `Shown across Quiver. Empty uses ${Fmt.harnessName(s.name)}.`)}
+        `Shown across SWE. Empty uses ${Fmt.harnessName(s.name)}.`)}
       ${sheetField("he-command", "Command", sheetInput("he-command", d.command, s.name, { ...off, mono: true }),
         problem || "What swe runs to start it.", !!problem)}
     </div>

@@ -1,6 +1,6 @@
 # Architecture
 
-Quiver (`swe`) is a manager for AI coding CLIs. It unifies the things those
+SWE (`swe`) is a manager for AI coding CLIs. It unifies the things those
 CLIs each invented separately: instruction files, skills, plugins, MCP servers,
 session history and rate limits.
 
@@ -121,7 +121,7 @@ to the old path.
 ## The core idea: one file, many names
 
 Every harness wants its own instruction filename (`CLAUDE.md`, `AGENTS.md`,
-`CRUSH.md`) in its own directory. Quiver writes one file and symlinks it under
+`CRUSH.md`) in its own directory. SWE writes one file and symlinks it under
 each name, so editing one changes all of them.
 
 With chapter mode, `swe instructions build` generates that complete shared
@@ -306,7 +306,7 @@ is its own finding, `linked-manifest`: Codex skips it and installs a
 manifest it generates, with no version, so no reinstall can help until the
 link in the source is replaced by a real folder. It never writes: registration
 lives in `~/.claude/settings.json` (often Nix-managed) and
-`~/.codex/config.toml` (rewritten by Codex), which quiver must not edit.
+`~/.codex/config.toml` (rewritten by Codex), which swe must not edit.
 `swe find plugins --fix=<id>` (the app's one-click fix) is the only path
 that acts, and it does so through the harness's own CLI (or, for
 `linked-manifest`, a `cp -R` of the link's target inside the marketplace
@@ -335,7 +335,7 @@ A hidden row is never silent. Every view that filters ends with a footer —
 `N archived harnesses hidden; --harness=all to show` — so `--harness=active`
 narrows what you see without ever costing you the knowledge that something
 was narrowed. A row that cannot be resolved to a harness in `harness.json`
-at all — the shared quiver copy, an unregistered config — is never
+at all — the shared swe copy, an unregistered config — is never
 filtered either way: unknown is exactly the thing `swe find` exists to
 keep visible, regardless of `--harness`.
 
@@ -396,7 +396,7 @@ per Claude Code session. A hub entry marked `"shared": true` (`swe mcp
 gateway share`) runs once instead, in `swe mcp gateway serve`, a
 LaunchAgent (`com.cwenlong.quiver.mcp-gateway`) that serves it as MCP
 streamable HTTP at `http://127.0.0.1:8478/mcp/<name>`. While mcp.json's
-`gateway.enabled` is set (by `install`), `swe mcp sync quiver ...` writes
+`gateway.enabled` is set (by `install`), `swe mcp sync swe ...` writes
 that URL for a shared server instead of its command; Claude Desktop takes
 no URL server, so it keeps the command.
 
@@ -415,7 +415,7 @@ URL never flows back into the hub.
 
 `swe doctor` used to check one thing: Node/PATH mismatches hiding a
 globally installed harness. `harness/drift.py` adds a second, unrelated
-kind of check — places where two parts of quiver that are supposed to
+kind of check — places where two parts of swe that are supposed to
 agree have quietly drifted apart. Four checks, all read-only and cheap
 enough to run on every invocation:
 
@@ -458,7 +458,7 @@ The macOS app under `app/mac/` reads `swe` through `--json`, never by parsing
 tables. The app's own structure is [docs/app-architecture.md](docs/app-architecture.md),
 and each command below maps to its Swift decoder in
 [docs/json-contracts.md](docs/json-contracts.md). Every `--json` command prints exactly one document on stdout,
-`{"schema": 1, "data": ...}` (`quiver/json_output.py`), and nothing else:
+`{"schema": 1, "data": ...}` (`swe/json_output.py`), and nothing else:
 refusals and errors go to stderr with stdout left empty. `schema` changes
 only for a breaking change to an existing shape; adding a field is not one,
 and the app refuses a schema it does not know rather than misreading it.
@@ -475,7 +475,7 @@ instead of presenting an old reading as current.
 No `--json` output carries a secret value. MCP env and header values are
 reduced to their names, `${NAME}` references are never resolved, and
 credential-shaped parts of URLs and arguments are masked
-(`quiver/mcp/secrets.py`, `scrub_url` and `scrub_args`).
+(`swe/mcp/secrets.py`, `scrub_url` and `scrub_args`).
 
 ## Command tree
 

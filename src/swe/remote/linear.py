@@ -71,7 +71,7 @@ _TERMINAL = ("completed", "canceled", "cancelled", "duplicate")
 _VIEWER_QUERY = "query { viewer { displayName email } }"
 
 _LIST_QUERY = """\
-query QuiverTasks($filter: IssueFilter, $first: Int!, $after: String) {
+query SweTasks($filter: IssueFilter, $first: Int!, $after: String) {
   issues(first: $first, after: $after, filter: $filter, orderBy: updatedAt) {
     nodes {
       identifier title url updatedAt
@@ -86,7 +86,7 @@ query QuiverTasks($filter: IssueFilter, $first: Int!, $after: String) {
 # ``issue(id:)`` takes the human identifier ("QUI-123") as well as the
 # UUID, so a stored ref looks itself up without a search.
 _GET_QUERY = """\
-query QuiverTask($id: String!) {
+query SweTask($id: String!) {
   issue(id: $id) {
     identifier title url updatedAt description
     state { name type }
@@ -175,7 +175,7 @@ def _graphql(api_key: str, query: str,
         GRAPHQL_URL, data=body, method="POST",
         headers={"Authorization": api_key,
                  "Content-Type": "application/json",
-                 "User-Agent": f"quiver/{__version__}"})
+                 "User-Agent": f"swe/{__version__}"})
     # The agent's urlopen: a certificate failure retries against the OS
     # CA bundle (python.org builds on macOS ship none), still verified.
     from swe.remote.agent import _urlopen

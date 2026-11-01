@@ -27,7 +27,7 @@ the hub machine's (`~/.swe/config/github.json`, the same file
 The browser's own GitHub session plays no part. If `gh` is missing or
 signed out on the hub, both pages show the app's setup card
 (`brew install gh` / `gh auth login`) with a line saying to run it on the
-hub machine. No GitHub token is stored by Quiver.
+hub machine. No GitHub token is stored by SWE.
 
 ## Cache
 

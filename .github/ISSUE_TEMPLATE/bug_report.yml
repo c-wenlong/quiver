@@ -4,7 +4,7 @@
 # .github/workflows/issue-labels.yml maps each Area option to a label.
 # Rename one and update all three.
 name: Bug report
-description: Report something in Quiver that isn't working
+description: Report something in SWE that isn't working
 title: "[Bug]: "
 labels: ["bug", "needs-triage"]
 body:
@@ -17,7 +17,7 @@ body:
     id: area
     attributes:
       label: Area
-      description: Which part of Quiver is it?
+      description: Which part of SWE is it?
       options:
         - Mac app
         - CLI (swe)
@@ -56,7 +56,7 @@ body:
     attributes:
       label: Version
       description: "Mac app: Settings › General › Version. CLI: `swe version`."
-      placeholder: Quiver 1.1.1 · swe 1.1.1
+      placeholder: SWE 1.1.1 · swe 1.1.1
     validations:
       required: true
 

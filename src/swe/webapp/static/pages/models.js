@@ -2,7 +2,7 @@
  * the harnesses that ran it, its list price and your tokens. The Mac
  * app's Models page is built on Artificial Analysis benchmarks fetched
  * with an API key only the app holds; that part stays in the Mac app,
- * and the page says so. Shares helpers with pricing.js (QuiverPricing),
+ * and the page says so. Shares helpers with pricing.js (SWEPricing),
  * which loads after this file but before any page renders. */
 (() => {
   "use strict";
@@ -11,7 +11,7 @@
   const RESULT_LIMIT = 100;
   const state = { data: null, period: "month", harness: [], query: "", search: null, seq: 0, searchSeq: 0,
     menuOpen: false, timer: null };
-  const kit = () => window.QuiverPricing;
+  const kit = () => window.SWEPricing;
 
   async function render(_id, rescan = false) {
     const gen = routeGen, seq = ++state.seq;
@@ -202,7 +202,7 @@
 
   function priceCell(p) {
     if (!p) return '<span class="muted" title="No LiteLLM price for this model">—</span>';
-    const source = { litellm: "LiteLLM", quiver: "Quiver's price list", yours: "your price" }[p.source];
+    const source = { litellm: "LiteLLM", quiver: "SWE's price list", yours: "your price" }[p.source];
     const help = `${p.key}, from ${source}\nCache write ${price(p.cache_write)} / 1M`;
     return `<span title="${esc(help)}">${[p.input, p.output, p.cache_read].map(price).join(" · ")}</span>`;
   }

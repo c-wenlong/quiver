@@ -636,7 +636,7 @@ def _rewrite_store(home: Path | None, edit) -> tuple[Path, bool]:
     """Rewrite the MCP secrets file through ``edit(lines) -> lines`` under
     its lock, swapped in atomically; return (shown path, created)."""
     shown = secrets_file_for(home)
-    # Quiver's own folder is private; a store symlinked elsewhere keeps
+    # SWE's own folder is private; a store symlinked elsewhere keeps
     # whatever access its real folder has.
     shown.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if not shown.parent.is_symlink():

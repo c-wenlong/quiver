@@ -31,7 +31,8 @@ class ServerRow:
     # Whether the hub (mcp.json) defines this server. A hub-only row has
     # empty harnesses and variants.
     in_hub: bool
-    # The places (harnesses, and "quiver" for the hub) whose definition is
+    # The places (harnesses, and "quiver" for the hub — its wire name until
+    # the apps flip to "swe") whose definition is
     # reached at a URL. ``transport`` is the first definition's; a sync
     # copies one place's, so it asks this.
     remote_in: list = field(default_factory=list)

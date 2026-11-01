@@ -56,7 +56,7 @@ def _login_rows(name: str, command: str, how: str) -> dict[str, dict]:
             "kind": "relogin",
             "title": f"Sign in to {name} again",
             "summary": f"{name}'s stored login was rejected",
-            "steps": [f"{how} to renew the login Quiver reads, then refresh."],
+            "steps": [f"{how} to renew the login SWE reads, then refresh."],
             "command": command,
         },
     }
@@ -84,19 +84,19 @@ REMEDIES: dict[str, dict[str, dict]] = {
             "title": "Refresh Cursor's session",
             "summary": "Cursor's stored login is stale",
             "steps": [
-                "Run `cursor-agent` once — it renews the login Quiver reads.",
+                "Run `cursor-agent` once — it renews the login SWE reads.",
                 "If that does not help, sign in again in the Cursor app.",
             ],
             "command": "cursor-agent status",
         },
         PERMISSION_REQUIRED: {
             "kind": "grant-permission",
-            "title": "Let Quiver read Cursor's data",
+            "title": "Let SWE read Cursor's data",
             "summary": "macOS is blocking Cursor's session files",
             "steps": [
                 "Open System Settings → Privacy & Security → Files and "
                 "Folders.",
-                "Grant your terminal (or Quiver) access to Cursor's data, "
+                "Grant your terminal (or SWE) access to Cursor's data, "
                 "then refresh.",
             ],
             "url": _PRIVACY_FILES_URL,
@@ -142,12 +142,12 @@ REMEDIES: dict[str, dict[str, dict]] = {
         },
         PERMISSION_REQUIRED: {
             "kind": "grant-permission",
-            "title": "Let Quiver read Devin's credentials",
+            "title": "Let SWE read Devin's credentials",
             "summary": "macOS is blocking Devin's credentials",
             "steps": [
                 "Open System Settings → Privacy & Security → Files and "
                 "Folders.",
-                "Grant your terminal (or Quiver) access to "
+                "Grant your terminal (or SWE) access to "
                 "~/.local/share/devin, then refresh.",
             ],
             "url": _PRIVACY_FILES_URL,
@@ -201,12 +201,12 @@ REMEDIES: dict[str, dict[str, dict]] = {
         },
         PERMISSION_REQUIRED: {
             "kind": "grant-permission",
-            "title": "Let Quiver read {name}'s files",
+            "title": "Let SWE read {name}'s files",
             "summary": "macOS is blocking {name}'s files",
             "steps": [
                 "Open System Settings → Privacy & Security → Files and "
                 "Folders.",
-                "Grant your terminal (or Quiver) access, then refresh.",
+                "Grant your terminal (or SWE) access, then refresh.",
             ],
             "url": _PRIVACY_FILES_URL,
         },
