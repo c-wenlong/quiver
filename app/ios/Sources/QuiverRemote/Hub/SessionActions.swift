@@ -61,16 +61,6 @@ enum SessionAction: String, Hashable, Identifiable {
     static func menu(_ row: SessionRow) -> [SessionAction] { leading(row) + trailing(row) }
 }
 
-/// The hub's detach modes (`POST .../control {op: "detach", mode}`).
-enum DetachMode: String, CaseIterable {
-    /// Close tmux and the harness at once, even mid-turn.
-    case now
-    /// Wait for the turn to end, then close it.
-    case whenIdle = "when_idle"
-    /// Stop supervising but leave tmux running on the machine.
-    case keep
-}
-
 /// How a Detach from the list goes. A row the app knows is working asks
 /// first, since `now` would cut its turn. Any other row detaches with
 /// `when_idle`, never `now`: the cached status can be a poll old, and the

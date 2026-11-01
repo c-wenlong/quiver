@@ -123,6 +123,19 @@ rest still run. Plain <code>swe doctor</code> still writes nothing. The runners
 moved to <code>harness/doctor_fix.py</code>, which the web Doctor page now calls
 too. Part of <a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
 </li>
+<li><p><strong>iPhone: share into a session.</strong> A share extension (&quot;Quiver&quot; in the
+share sheet) sends text, links, images and files from any app to a
+session (<a href="https://github.com/c-wenlong/quiver/issues/1441">#1441</a>).
+The sheet lists the active hub's attached sessions, most recent
+first, with a hub picker when the phone has more than one, and an
+optional message. Text and links go in the message; images go up as
+JPEGs with the long edge at most 2048 px and other files stream from
+disk, one at a time, through the composer's attachments route and
+caps, then the message is sent with their refs. It reads the paired
+hubs from the App Group and shared Keychain group, and says so
+instead of sending when the phone isn't paired or the hub can't be
+reached.</p>
+</li>
 <li><p><strong>Homebrew tap.</strong> <code>brew install --cask c-wenlong/quiver/quiver</code>
 installs the Mac app and <code>brew install c-wenlong/quiver/swe</code> the CLI,
 from <a href="https://github.com/c-wenlong/homebrew-quiver">c-wenlong/homebrew-quiver</a>.

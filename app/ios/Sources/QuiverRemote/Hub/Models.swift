@@ -305,6 +305,35 @@ struct OwnershipData: Decodable {
     /// The channel an attach took (nil once observed again).
     var mode: String? = nil
 }
+/// One numbered row of the menu an agent's pane prints for an approval
+/// ("1. Yes", "2. Yes, and don't ask again", ...), as the hub's tailer
+/// sends it on `approval.requested` (`options: [{n, label}]`). The row's
+/// number is itself a decision the hub accepts
+/// (`protocol.parse_approval_command`).
+struct ApprovalOption: Decodable, Hashable, Identifiable {
+    let n: String
+    let label: String
+    var id: String { n }
+
+    init(n: String, label: String) {
+        self.n = n
+        self.label = label
+    }
+
+    private enum CodingKeys: String, CodingKey { case n, label }
+
+    /// `n` is a digit string from the pane; a number is read as one too.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let text = try? c.decode(String.self, forKey: .n) {
+            n = text
+        } else {
+            n = String(try c.decode(Int.self, forKey: .n))
+        }
+        label = (try? c.decode(String.self, forKey: .label)) ?? ""
+    }
+}
+
 struct ApprovalRequested: Decodable {
     let requestId: String?
     let prompt: String?
@@ -412,6 +441,16 @@ struct PairedDevice: Decodable, Identifiable, Hashable {
 }
 
 struct DevicesResponse: Decodable { let devices: [PairedDevice] }
+
+/// The hub's detach modes (`POST .../control {op: "detach", mode}`).
+enum DetachMode: String, CaseIterable {
+    /// Close tmux and the harness at once, even mid-turn.
+    case now
+    /// Wait for the turn to end, then close it.
+    case whenIdle = "when_idle"
+    /// Stop supervising but leave tmux running on the machine.
+    case keep
+}
 
 struct SendAccepted: Decodable { let ok: Bool?; let waiting: Bool? }
 

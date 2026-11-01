@@ -13,6 +13,7 @@ at `/` is the client for browsers and other devices.
 |---|---|
 | `Sources/QuiverRemote/Hub/` | Wire types, `HubClient` (one method per route), the SSE reader, `AppModel` (pairing, sessions, inbox), `ChatModel` (one open chat), `Attachments` (the composer's picked files), `TasksModel`, `IssuesModel` and `PullsModel` (the Tasks and GitHub tabs' data), `NewSession` (what the launch sheets offer, and the launch poll), `UsageModel` and `UsageFormat` (the Usage tab's data and number formatting), `PromptCompletion` (the prompt box's `@` and `/` menus), and the diff, markdown and page-preview helpers |
 | `Sources/QuiverRemote/Hub/SSH*.swift`, `ConsoleModel.swift` | The console: this phone's SSH key (`SSHIdentity`), the hub's `/v1/ssh` answer and the saved targets (`SSHTarget`), the SwiftNIO SSH shell with pinned host keys (`SSHShell`), and the console's state (`ConsoleModel`) |
+| `Sources/QuiverRemote/Share/`, `Sources/QuiverShare/` | The share extension: what a share carries and how it sends (`ShareItems`, `ShareModel`, compiled into the app too so the tests reach them), and the extension's own view controller and sheet |
 | `Sources/QuiverRemote/Theme/` | The Mac app's theme ported to iOS: the same hex values and roles, cards, list rows, badges, buttons |
 | `Sources/QuiverRemote/Views/` | Welcome and pairing, Sessions (with rename, fork and the new-session sheet), Chat, Inbox, Tasks, GitHub (issues and pull requests, their detail pages and launch sheets), Usage (limits and spend), Pair requests and devices, Console, the QR scanner |
 | `Tests/QuiverRemoteTests/` | Unit tests for parsing, pairing links, diffs, grouping, chat event handling, the GitHub and Tasks rules, usage formatting and the console |
@@ -58,6 +59,21 @@ and drops the old copy only once the new one is stored. A phone
 paired before this keeps its hub: the app moves the old single pairing
 into the list on first launch, and a phone paired under the old webview
 shell keeps its pairing the same way.
+
+## Share sheet
+
+The `QuiverShare` extension shows as Quiver in any app's share sheet.
+It takes text, a link, up to 10 images and files, lists the active
+hub's attached sessions (most recent first; the hub refuses a message
+to a session it only observes), and sends an optional message. Text and
+links go in the message; images go up as downscaled JPEGs and other
+files stream from disk, one at a time, through the composer's
+attachments route and caps. It reads the paired hubs from the App
+Group and the shared Keychain group, so it needs both entitlements on
+its own App ID (`com.quiver.remote.share`); without a pairing or a
+reachable hub it says so and sends nothing. The extension compiles the
+app's hub files it needs (listed under `QuiverShare` in `project.yml`)
+rather than a shared framework.
 
 ## Console
 

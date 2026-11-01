@@ -4,3 +4,4 @@ QuiverRemote-Info.plist
 build-sim/
 build-sim-*/
 *.entitlements
+QuiverShare-Info.plist
