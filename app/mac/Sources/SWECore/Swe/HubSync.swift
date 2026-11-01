@@ -138,16 +138,35 @@ public struct HubSyncResult: Decodable, Sendable, Equatable {
         /// Incoming files the merge brought.
         public let changed: Int
         public let notes: [String]
+        public let marketplaces: [Marketplace]?
+    }
+
+    public struct Marketplace: Decodable, Sendable, Equatable {
+        public let harness: String
+        public let marketplace: String
+        /// nil when the harness took it.
+        public let error: String?
+    }
+
+    /// Relink problems: a blocked path, MCP servers not copied, a
+    /// marketplace a harness refused. They don't fail the sync, but the
+    /// person has something to do, and a retry won't relink again.
+    var relinkProblems: [String] {
+        (relinked?.notes ?? []) + (relinked?.marketplaces ?? []).compactMap { row in
+            row.error.map { "\(row.marketplace) not registered in \(row.harness): \($0)." }
+        }
     }
 
     /// One line for the card, and whether it is a failure. Worded as the
     /// web card's `hubSyncOutcome`.
     public var outcome: (text: String, failed: Bool) {
+        let problems = relinkProblems
+        let extra = problems.isEmpty ? "" : " " + problems.joined(separator: " ")
         switch result {
         case "conflict":
             return ("Conflict in \(conflicts.joined(separator: ", ")). Nothing changed; resolve it in ~/.swe, then sync again.", true)
         case "push-failed":
-            return ("Committed and merged, but the push failed: \(pushError ?? "git push failed"). Sync again to retry.", true)
+            return ("Committed and merged, but the push failed: \(pushError ?? "git push failed"). Sync again to retry." + extra, true)
         case "up-to-date":
             return ("Already in sync.", false)
         default:
@@ -159,9 +178,7 @@ public struct HubSyncResult: Decodable, Sendable, Equatable {
             if relinked != nil { done.append("re-linked every harness") }
             let text = done.joined(separator: ", ")
             let line = text.isEmpty ? "Synced." : text.prefix(1).uppercased() + text.dropFirst() + "."
-            // Relink problems don't fail the sync, but they need the person.
-            let notes = relinked?.notes ?? []
-            return (notes.isEmpty ? line : line + " " + notes.joined(separator: " "), !notes.isEmpty)
+            return (line + extra, !problems.isEmpty)
         }
     }
 }

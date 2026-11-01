@@ -899,10 +899,18 @@ function hubSyncOutcome(r) {
   if (r.result === "conflict") {
     return { text: `Conflict in ${r.conflicts.join(", ")}. Nothing changed; resolve it in ~/.swe, then sync again.`, danger: true };
   }
-  if (r.result === "push-failed") {
-    return { text: `Committed and merged, but the push failed: ${r.push_error}. Sync again to retry.`, danger: true };
-  }
   if (r.result === "up-to-date") return { text: "Already in sync." };
+  // Relink problems (a blocked path, MCP servers not copied, a
+  // marketplace a harness refused) don't fail the sync, but the person
+  // has something to do about them, and a retry won't relink again.
+  const relinked = r.relinked || {};
+  const problems = [...(relinked.notes || []),
+    ...(relinked.marketplaces || []).filter((m) => m.error)
+      .map((m) => `${m.marketplace} not registered in ${m.harness}: ${m.error}.`)];
+  const extra = problems.length ? ` ${problems.join(" ")}` : "";
+  if (r.result === "push-failed") {
+    return { text: `Committed and merged, but the push failed: ${r.push_error}. Sync again to retry.${extra}`, danger: true };
+  }
   const done = [];
   if (r.commit) done.push(`committed ${hubSyncCount(r.commit.files.length, "file")}`);
   const merged = (r.merges || []).reduce((sum, m) => sum + m.commits, 0);
@@ -910,28 +918,29 @@ function hubSyncOutcome(r) {
   if (r.pushed) done.push(`pushed ${r.branch}`);
   if (r.relinked) done.push("re-linked every harness");
   const text = done.join(", ");
-  // Relink problems (a blocked path, MCP servers not copied) don't fail
-  // the sync, but the person has something to do about them.
-  const notes = (r.relinked && r.relinked.notes) || [];
   return {
-    text: (text ? text[0].toUpperCase() + text.slice(1) + "." : "Synced.")
-      + (notes.length ? ` ${notes.join(" ")}` : ""),
-    danger: notes.length > 0,
+    text: (text ? text[0].toUpperCase() + text.slice(1) + "." : "Synced.") + extra,
+    danger: problems.length > 0,
   };
 }
 
 function hubSyncCard() {
   const p = settingsPage;
   const s = p.hubSync;
+  // The refresh stays on every state, a failed first read included, so a
+  // check that failed can always be run again.
+  const refresh = `<button class="icon-button${p.hubSyncBusy ? " spinning" : ""}" id="set-hub-refresh"
+    aria-label="Fetch and check again" title="Fetch the remote and check again"${p.hubSyncBusy || p.hubSyncing ? " disabled" : ""}>${icon("rescan")}</button>`;
   if (!s) {
-    if (p.hubSyncLoadError) return setCard([setRow("Hub repo", "", "", { warning: p.hubSyncLoadError, danger: true })]);
+    if (p.hubSyncLoadError) return setCard([setRow("Hub repo", "", refresh, { warning: p.hubSyncLoadError, danger: true })]);
     return setCardSkeleton(3);
   }
   const lines = hubSyncLines(s);
-  const refresh = `<button class="icon-button${p.hubSyncBusy ? " spinning" : ""}" id="set-hub-refresh"
-    aria-label="Fetch and check again" title="Fetch the remote and check again"${p.hubSyncBusy || p.hubSyncing ? " disabled" : ""}>${icon("rescan")}</button>`;
+  // A later read that failed shows over the card it couldn't refresh.
+  const repoWarning = p.hubSyncLoadError
+    ? `Couldn't check again: ${p.hubSyncLoadError}` : s.ready ? null : lines.warning;
   const repo = setRow("Hub repo", `${lines.repo}${s.remote ? ` Remote: ${s.remote}.` : ""}`, refresh,
-    { warning: s.ready ? null : lines.warning, danger: true });
+    { warning: repoWarning, danger: true });
   if (!s.ready) return setCard([repo]);
   const outcome = p.hubSyncResult ? hubSyncOutcome(p.hubSyncResult) : null;
   const button = `<button class="set-button primary" id="set-hub-sync"${p.hubSyncing ? " disabled" : ""}

@@ -528,14 +528,23 @@ def _sync(ctx) -> dict:
 def _hub_sync(ctx, body: dict) -> dict:
     """Sync: ``swe sync --json`` in process for the hub's own ``~/.swe``.
     The answer carries the sync's document and the status card again."""
-    from swe.sync.repo import SyncError, status, sync
+    from swe.sync.repo import SyncError, default_relink, status, sync
+    from swe.webapp.pages import CONFIG_LOCK
+
+    def relink(home: Path, changed: list[str], base: str | None = None) -> dict:
+        # The relink rewrites harness configs (links, marketplaces, MCP
+        # servers), the files the MCP, Skills and Setup pages write under
+        # CONFIG_LOCK. Only this step takes it: the fetch and push can
+        # take minutes and must not hold those pages up.
+        with CONFIG_LOCK:
+            return default_relink(home, changed, base=base)
 
     if not _HUB_SYNC_LOCK.acquire(blocking=False):
         raise PageError(409, "busy", "A sync is already running. Wait for it, then try again.")
     try:
         home = home_path(ctx)
         try:
-            result = sync(home, dry_run=body.get("dry_run") is True)
+            result = sync(home, dry_run=body.get("dry_run") is True, relink=relink)
         except SyncError as exc:
             raise PageError(409, "sync_failed", str(exc)) from None
         return {"result": result, "hub_sync": status(home)}

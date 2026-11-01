@@ -20,10 +20,10 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Hashable, Senda
     /// One line under the section title.
     public var detail: String {
         switch self {
-        case .general: "When Quiver starts, how it looks, and which version you're running."
+        case .general: "When SWE starts, how it looks, and which version you're running."
         case .sidebar: "Which pages the sidebar lists, and their order inside each group."
         case .notifications: "Alerts when a usage limit runs low."
-        case .integrations: "The GitHub CLI behind the GitHub pages, the keys for the services Quiver calls, and the phones paired to watch your sessions."
+        case .integrations: "The GitHub CLI behind the GitHub pages, the keys for the services SWE calls, and the phones paired to watch your sessions."
         case .providers: "Which harnesses show up across the app, and the inference plans and API keys behind them."
         case .files: "Where SWE finds swe, your API keys file and your MCP server folders, the editor that opens them, and syncing ~/.swe."
         case .experimental: "Features being tried out. They may change or go away."

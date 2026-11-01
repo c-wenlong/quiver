@@ -40,6 +40,29 @@ import Testing
         #expect(!result.outcome.failed)
     }
 
+    /// Relink problems ride on every result that relinked, a failed push
+    /// included, since a retry won't relink again.
+    @Test func relinkProblemsShowOnSuccessAndOnAFailedPush() throws {
+        let json = #"""
+        {"result": "push-failed", "dry_run": false, "mode": "single", "branch": "main",
+         "commit": null, "merges": [{"ref": "origin/main", "commits": 1}], "conflicts": [],
+         "held_back": [], "pushed": false, "push_error": "rejected",
+         "relinked": {"changed": 1, "notes": ["1 path(s) blocked; swe init --force replaces them"],
+                      "marketplaces": [{"harness": "claude", "marketplace": "mine", "error": "no claude"}]}}
+        """#
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let failed = try decoder.decode(HubSyncResult.self, from: Data(json.utf8))
+        #expect(failed.outcome.failed)
+        #expect(failed.outcome.text == "Committed and merged, but the push failed: rejected. Sync again to retry. "
+                + "1 path(s) blocked; swe init --force replaces them mine not registered in claude: no claude.")
+        let synced = try decoder.decode(HubSyncResult.self, from: Data(
+            json.replacingOccurrences(of: "\"push-failed\"", with: "\"synced\"")
+                .replacingOccurrences(of: "\"pushed\": false", with: "\"pushed\": true").utf8))
+        #expect(synced.outcome.failed)
+        #expect(synced.outcome.text.hasPrefix("Merged 1 commit, pushed main, re-linked every harness. 1 path(s)"))
+    }
+
     /// A conflict exits 1 and still prints the document.
     @Test func conflictDecodesThroughItsNonzeroExit() async throws {
         let runner = FakeRunner(.init(status: 1, stdout: try fixture("swe-sync-conflict"), stderr: ""))

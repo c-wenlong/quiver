@@ -34,9 +34,12 @@ struct HubSyncSection: View {
     private func card(_ status: HubSyncStatus) -> some View {
         let lines = status.lines
         let remote = status.remote.map { " Remote: \($0)." } ?? ""
+        // A later read that failed shows over the card it couldn't refresh.
+        let repoWarning = loadError.map { "Couldn't check again: \($0)" }
+            ?? (status.ready ? nil : lines.warning)
         return SettingsCard {
             SettingRow(title: "Hub repo", detail: lines.repo + remote,
-                       warning: status.ready ? nil : lines.warning, danger: true) {
+                       warning: repoWarning, danger: true) {
                 refreshButton
             }
             if status.ready {

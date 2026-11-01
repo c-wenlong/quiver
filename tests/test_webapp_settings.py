@@ -1183,6 +1183,29 @@ class TestHubSync(_Settings):
         self.assertEqual(body["hub_sync"]["changes"], [])
         self.assertEqual(self.git(self.remote, "show", "main:AGENTS.md"), "# edited")
 
+    def test_relink_runs_under_the_config_lock(self):
+        from swe.webapp.pages import CONFIG_LOCK
+        from tests._tempdir import temp_dir
+
+        other = Path(temp_dir(self)) / "clone"
+        self.git(other.parent, "clone", "-q", str(self.remote), str(other))
+        (other / "skills.md").write_text("new\n")
+        self.git(other, "add", "-A")
+        self.git(other, "commit", "-q", "-m", "elsewhere")
+        self.git(other, "push", "-q", "origin", "main")
+        held = []
+
+        def relink(home, changed, base=None):
+            held.append(CONFIG_LOCK.locked())
+            return {"changed": len(changed), "linked": 0, "marketplaces": [],
+                    "mcp": None, "notes": []}
+
+        with patch("swe.sync.repo.default_relink", side_effect=relink):
+            status, body = self.post("hub_sync", {}, self.device("laptop"))
+        self.assertEqual(status, 200, body)
+        self.assertEqual(held, [True])
+        self.assertFalse(CONFIG_LOCK.locked())
+
     def test_dry_run_changes_nothing(self):
         (self.hub / "AGENTS.md").write_text("# edited\n")
         before = self.git(self.remote, "rev-parse", "main")
@@ -1212,11 +1235,15 @@ class TestHubSync(_Settings):
               "const conflict = {result: 'conflict', conflicts: ['AGENTS.md']};\n"
               "const synced = {result: 'synced', commit: {files: [{}]}, merges: [{commits: 3}],"
               " pushed: true, branch: 'main', relinked: {}};\n"
+              "const pushFailed = {result: 'push-failed', push_error: 'rejected', relinked: {notes: ['n1'],"
+              " marketplaces: [{harness: 'claude', marketplace: 'mine', error: 'no claude'}]}};\n"
               "process.stdout.write(JSON.stringify([hubSyncLines(device), hubSyncOutcome(conflict),"
-              " hubSyncOutcome(synced)]));\n")
+              " hubSyncOutcome(synced), hubSyncOutcome(pushFailed)]));\n")
         done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
-        lines, conflict, synced = json.loads(done.stdout)
+        lines, conflict, synced, push_failed = json.loads(done.stdout)
+        self.assertEqual(push_failed["text"], "Committed and merged, but the push failed: rejected. "
+                                              "Sync again to retry. n1 mine not registered in claude: no claude.")
         self.assertEqual(lines["repo"], "Device branch device/desk: merges origin/main in, "
                                         "pushes only device/desk.")
         self.assertEqual(lines["changes"], "2 uncommitted files: AGENTS.md 1, skills 1. "
