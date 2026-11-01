@@ -332,6 +332,13 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
     /// field — it would accept the flag and silently drop it, so the
     /// sheets give that row no Autonomy row at all.
     public var yoloAtLaunch: [String]?
+    /// Per launchable harness, the providers its launch takes whose key
+    /// is set on that machine (slugs only, never a key). Absent on a
+    /// machine build older than the field: it would drop a `provider`
+    /// pick, so the sheets give that row no Provider menu at all.
+    public var providersAtLaunch: [String: [String]]?
+    /// Each offered provider slug's label, e.g. "OpenRouter".
+    public var providerNames: [String: String]?
     /// The machine ledger's most recent model per harness — the Model
     /// menu's default. Always the head of `recentModels`.
     public var lastModels: [String: String]?
@@ -345,6 +352,8 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
                 harnessNames: [String: String]? = nil, untrackedHarnesses: [String]? = nil,
                 modelAtLaunch: [String]? = nil, effortAtLaunch: [String]? = nil,
                 yoloAtLaunch: [String]? = nil,
+                providersAtLaunch: [String: [String]]? = nil,
+                providerNames: [String: String]? = nil,
                 lastModels: [String: String]? = nil,
                 recentModels: [String: [String]]? = nil, lastSeenAt: Double? = nil) {
         self.id = id
@@ -358,6 +367,8 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
         self.modelAtLaunch = modelAtLaunch
         self.effortAtLaunch = effortAtLaunch
         self.yoloAtLaunch = yoloAtLaunch
+        self.providersAtLaunch = providersAtLaunch
+        self.providerNames = providerNames
         self.lastModels = lastModels
         self.recentModels = recentModels
     }
