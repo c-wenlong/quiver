@@ -1469,7 +1469,9 @@ every page, component and feature, and the hub work each needs.
 
 The Mac app reaches another machine's hub through the web app too: its
 sidebar's machine switcher (#681) loads a picked hub's `/` in a web view
-inside the window, pinned to that hub's origin. The hub treats it as a
+that takes over the window, native sidebar included, pinned to that
+hub's origin. The title-bar strip names the machine and keeps the
+machine menu for the way back. The hub treats it as a
 browser on the Mac: the owner's own tailnet node gets in with no pairing
 (the web app sends `X-Quiver-Pair: 1` from the hub's own origin), and any
 other node sees the web app's pairing card, whose credential stays in

@@ -1251,6 +1251,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mac: a picked hub's web app is the whole window now.** The machine
+  switcher used to open the hub only in the panel, so the web app's own
+  sidebar nested inside the native one. While a hub is up the window is
+  all its web app; the title-bar strip names the machine and is the
+  machine menu, the way back to This Mac or to another hub
+  ([#681](https://github.com/c-wenlong/swe/issues/681)).
+
 - **Hub: old `/app/` links keep their query string.** The redirects from
   `/app/…` and `/index.html` to the web app at `/` now carry the query
   onto `Location` (the browser already kept `#pair=` and `#approve`

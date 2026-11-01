@@ -91,10 +91,13 @@ struct MainWindow: View {
     var body: some View {
         HStack(spacing: 0) {
             // The page reflows only when the pinned state changes; a
-            // hover expansion floats over the panel instead.
+            // hover expansion floats over the panel instead. A hub's web
+            // app is the whole window, sidebar space included: it has
+            // its own sidebar, so nesting it inside this one would show
+            // two.
             Color.clear
-                .frame(width: model.sidebarCollapsed
-                    ? Theme.sidebarCollapsedWidth : sidebarWidth)
+                .frame(width: model.machines.showsHub ? 0
+                    : model.sidebarCollapsed ? Theme.sidebarCollapsedWidth : sidebarWidth)
             // A page never sizes the window: it gets the panel's space.
             PanelFrame {
                 // Another machine's hub replaces the native pages; This
@@ -107,7 +110,9 @@ struct MainWindow: View {
             }
                 .background(Theme.panel)
                 .overlay(alignment: .leading) {
-                    Theme.border.frame(width: 1)
+                    if !model.machines.showsHub {
+                        Theme.border.frame(width: 1)
+                    }
                 }
         }
         .background(Theme.wash)
@@ -120,15 +125,22 @@ struct MainWindow: View {
             FirstRunSetupSheet()
         }
         .overlay(alignment: .topLeading) {
-            Sidebar(width: sidebarWidth)
-            // The resize strip lives only while the sidebar is pinned
-            // open: not in the rail, not while it floats. Padding, not
-            // offset, keeps its hit area centred on the sidebar's edge.
-            if !model.sidebarCollapsed {
-                resizeHandle.padding(.leading, sidebarWidth - Theme.sidebarResizeHandleWidth / 2)
+            // A hub's web app is the whole window; the sidebar, and the
+            // way back to This Mac's pages through it, returns when the
+            // pick does. While a hub is up the title bar strip's machine
+            // menu does the switching.
+            if !model.machines.showsHub {
+                Sidebar(width: sidebarWidth)
+                // The resize strip lives only while the sidebar is pinned
+                // open: not in the rail, not while it floats. Padding, not
+                // offset, keeps its hit area centred on the sidebar's edge.
+                if !model.sidebarCollapsed {
+                    resizeHandle.padding(.leading, sidebarWidth - Theme.sidebarResizeHandleWidth / 2)
+                }
             }
         }
         .animation(animation, value: model.sidebarCollapsed)
+        .animation(animation, value: model.machines.showsHub)
         .animation(animation, value: model.sidebarWidth)
         // A usage failure that needs the user: one banner at a time,
         // auto-dismissing, its Fix landing on Doctor where the same
@@ -576,14 +588,15 @@ private struct SidebarToggle: NSViewRepresentable {
 
 /// The window's title bar: its height (0 in full screen) and whether
 /// the window is in full screen, where the traffic lights are hidden.
-private struct TitleBar: Equatable {
+/// Shared with `HubWebPage`, whose strip keeps the same row.
+struct TitleBar: Equatable {
     var height: CGFloat = 0
     var isFullScreen = false
 }
 
 /// Reports its window's `TitleBar` on attach and on every full-screen
 /// change.
-private struct TitleBarReader: NSViewRepresentable {
+struct TitleBarReader: NSViewRepresentable {
     @Binding var titleBar: TitleBar
 
     func makeNSView(context: Context) -> View {
