@@ -60,7 +60,7 @@ final class AppModel {
         guard SheetOverlayRegistry.shared.anyCovered else { return action() }
         withObservationTracking {
             _ = SheetOverlayRegistry.shared.anyCovered
-        } onChange: {
+        } onChange: { [self] in
             Task { @MainActor [weak self] in self?.whenUncovered(action) }
         }
     }
