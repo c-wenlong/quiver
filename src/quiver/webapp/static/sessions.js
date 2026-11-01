@@ -78,6 +78,7 @@ async function renderSessions(_id, rescan = false) {
     return;
   }
   pinOverlay(data.sessions || [], mark);
+  unreadReconcile(data.sessions);
   sessionsPage.data = data;
   paintSessions();
   scheduleTranscriptSearch();
@@ -413,7 +414,8 @@ function sessionRow(r) {
   // and a button can't hold one. Click and Enter/Space act the same.
   return `<div class="session-row" role="button" tabindex="0" data-key="${esc(r.key)}">
     <span class="session-logo" title="${esc(Fmt.harnessName(r.harness))}">${Fmt.logo(r.harness)}</span>
-    <span class="session-main"><span class="session-title"><span class="ellipsis">${esc(r.title || r.id || "Untitled")}</span>${badge}</span>
+    <span class="session-main"><span class="session-title">${unreadShown(r)
+      ? '<span class="unread-dot" role="img" aria-label="Unread" title="Unread"></span>' : ""}<span class="ellipsis">${esc(r.title || r.id || "Untitled")}</span>${badge}</span>
       <span class="session-sub">${second}</span>${snippet}</span>
     <span class="session-acts">${actHtml}<button type="button" class="row-more" data-key="${esc(r.key)}"
       aria-label="More actions" aria-haspopup="menu" title="Pin, rename or fork">${MORE_ICON}</button></span>
@@ -846,6 +848,112 @@ function patchMeta(key, meta) {
 function repaintList() {
   if (sessionsListVisible()) paintSessions();
 }
+
+/* Unread dots (#1439). The hub flags each row `unread` for this browser
+ * (its `tailnet:<node>` or paired-device cursor) and moves the cursor on
+ * POST /v1/sessions/{key}/read. The chat posts when it opens, again at
+ * most every READ_EVERY_MS while messages arrive, and once more when it
+ * closes, which covers whatever it showed. A hidden tab posts nothing:
+ * the hub's cursor is the time of the post, so a read sent while hidden
+ * would cover replies nobody saw. A dot clears at once through a local mark
+ * (key -> the newest hub time it covers); the next list read drops marks
+ * the hub has caught up with. The iPhone and Mac apps follow the same
+ * rules. */
+const READ_EVERY_MS = 3000;
+const unread = {
+  openKey: null, marks: new Map(), timer: null, due: null,
+  // The newest message stamp the open chat showed with the tab visible.
+  shown: 0,
+  // Swapped by tests.
+  visible: () => typeof document === "undefined" || document.visibilityState !== "hidden",
+  setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (t) => clearTimeout(t),
+};
+
+function unreadShown(r) {
+  if (!r || !r.unread || r.key === unread.openKey) return false;
+  const m = unread.marks.get(r.key);
+  return !(m != null && m >= (Number(r.last_active_at) || 0));
+}
+
+/* A mark never moves back. Its times are the hub's (the row's
+ * `last_active_at`, the read's answered `at`) or a shown message's own
+ * stamp, from the machine whose transcript sets `last_active_at`; never
+ * this browser's clock, so a clock running ahead can't hide a reply
+ * that came after. */
+function unreadMark(key, at) {
+  const next = Math.max(Number(at) || 0, unread.marks.get(key) || 0);
+  unread.marks.set(key, next);
+}
+
+/* After a list read: marks whose row is gone, read on the hub, or moved
+ * past the mark have nothing left to hide. */
+function unreadReconcile(rows) {
+  const byKey = new Map((rows || []).map((r) => [r.key, r]));
+  for (const [key, m] of [...unread.marks]) {
+    const r = byKey.get(key);
+    if (!r || !r.unread || (Number(r.last_active_at) || 0) > m) unread.marks.delete(key);
+  }
+  return rows;
+}
+
+async function unreadPost(key) {
+  let res;
+  try {
+    res = await apiPost(`/v1/sessions/${encodeURIComponent(key)}/read`, {});
+  } catch {
+    return;  // offline or an older hub: the dot stays cleared locally
+  }
+  if (res && res.status === 200 && res.data && typeof res.data.at === "number") unreadMark(key, res.data.at);
+}
+
+function unreadCancel() {
+  if (unread.timer != null) unread.clearTimer(unread.timer);
+  unread.timer = null;
+  unread.due = null;
+}
+
+const SessionUnread = {
+  opened(key, activity) {
+    if (unread.openKey && unread.openKey !== key) SessionUnread.closed(unread.openKey);
+    unread.openKey = key;
+    unread.shown = 0;
+    unreadMark(key, activity);
+    unreadCancel();
+    return unreadPost(key);
+  },
+  /* The open chat learned its row (a chat opened from a link has none
+   * before): the mark covers it even if the opening post failed. */
+  seen(key, activity) {
+    if (key === unread.openKey) unreadMark(key, activity);
+  },
+  /* A live message in the open chat: one post per READ_EVERY_MS at most,
+   * so a burst (or a reply that keeps streaming) costs a few requests. */
+  activity(key, at) {
+    if (key !== unread.openKey) return;
+    unread.shown = Math.max(unread.shown, Number(at) || 0);
+    if (unread.timer != null) return;
+    unread.due = key;
+    unread.timer = unread.setTimer(() => {
+      unread.timer = null;
+      // Hidden since: the read waits for the tab to show (chat.js asks
+      // again then).
+      if (!unread.visible() || unread.due !== key) return;
+      unread.due = null;
+      unreadPost(key);
+    }, READ_EVERY_MS);
+  },
+  closed(key) {
+    if (!key || key !== unread.openKey) return Promise.resolve();
+    unread.openKey = null;
+    unreadCancel();
+    // What it showed stays read here even if the closing post fails or
+    // lands after the next list read.
+    unreadMark(key, unread.shown);
+    unread.shown = 0;
+    return unread.visible() ? unreadPost(key) : Promise.resolve();
+  },
+};
+globalThis.SessionUnread = SessionUnread;
 
 /* Pins or unpins at once, then tells the hub; a refusal puts the row
  * back with a note above the filters. */

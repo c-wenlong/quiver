@@ -113,6 +113,10 @@ public final class LocalHub {
     /// while the hub is down, unknown or unpaired, which hides the group.
     public private(set) var hubRows: [HubSessionRow] = []
     public private(set) var hubMachines: [HubMachine] = []
+    /// The chat on screen and the reads posted here, which hide unread
+    /// dots before the hub's flag catches up (`UnreadDots.swift`). Kept
+    /// while the hub is down: with no overlay no row shows a dot anyway.
+    public internal(set) var unread = UnreadTracker()
     /// Pins chosen here that a list read started too early must not undo.
     var pins = SessionPinLedger()
     /// Meta applied from `session.meta` events and answered calls, in
@@ -276,6 +280,7 @@ public final class LocalHub {
                 }
             }
             metaLog.removeAll { $0.at <= metaMark }
+            unread.reconcile(rows)
             overlay = read
         } catch let error as HubError where error.isUnauthorized {
             // Only this client's credential: another call may have paired

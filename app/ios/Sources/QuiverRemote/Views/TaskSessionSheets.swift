@@ -301,7 +301,7 @@ struct LinkSessionSheet: View {
                     CardList(data: candidates) { row in
                         Button { link(row) } label: {
                             HStack(spacing: 0) {
-                                SessionRowView(row: row)
+                                SessionRowView(row: row, unread: app.isUnread(row))
                                 if busy == row.key {
                                     ProgressView().controlSize(.small)
                                         .padding(.trailing, Theme.rowHorizontal)

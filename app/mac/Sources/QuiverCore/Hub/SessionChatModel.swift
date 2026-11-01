@@ -144,6 +144,27 @@ public final class SessionChatModel {
     /// returns at once.
     var modelRetryDelays: [Duration] = [.seconds(6), .seconds(6)]
     var modelSleep: @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+    /// How long a read waits after a live message, so a burst of them
+    /// posts one `POST .../read` (`UnreadDots.swift`).
+    static let readDebounce: Duration = .seconds(3)
+    /// The wait behind `readDebounce`; tests pass one they release.
+    var readSleep: @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+    /// The read a live message scheduled, until it posts. Set only
+    /// while the chat is open.
+    private(set) var readTask: Task<Void, Never>?
+    /// The read `start()` sent once the hub listed the row; never
+    /// awaited by the chat, so a slow write can't hold up history.
+    private(set) var readOnOpen: Task<Void, Never>?
+    /// The read `stop()` sent, covering what the chat showed; for tests
+    /// to await.
+    private(set) var readFlush: Task<Void, Never>?
+    /// The chat counts as open for read state: between the first
+    /// `start()` and `stop()`.
+    private var readOpen = false
+    /// The newest activity this chat has shown (epoch seconds): the
+    /// row's `last_active_at` and every message's `ts`. Its close marks
+    /// the row read up to here.
+    private var newestActivity: Double?
     /// Bumped by every start() and stop(), so a start() still fetching
     /// history doesn't open a stream after the chat was closed.
     private var generation = 0
@@ -207,6 +228,11 @@ public final class SessionChatModel {
     public func start() async {
         generation += 1
         let gen = generation
+        // On screen now: its row's dot goes at once.
+        if !readOpen {
+            readOpen = true
+            hub.chatOpened(key)
+        }
         streamTask?.cancel()
         streamTask = nil
         // The / menu's list is fetched now, not on the first /, so the
@@ -224,6 +250,11 @@ public final class SessionChatModel {
             }
             self.row = row
             hub.noteRow(row)
+            noteActivity(row.lastActiveAt)
+            // The hub lists it, so it takes a read now, beside the
+            // history read rather than before it. A failure changes
+            // nothing, since the tracker already hid the dot.
+            readOnOpen = Task { [hub, key] in await hub.postRead(key) }
             let page = try await hub.withClient { [key] in try await $0.messages(key, limit: Self.pageSize) }
             guard gen == generation else { return }
             load(page)
@@ -260,6 +291,19 @@ public final class SessionChatModel {
         generation += 1
         streamTask?.cancel()
         streamTask = nil
+        if readOpen {
+            readOpen = false
+            hub.chatClosed(key, activity: newestActivity)
+            // The opening read stops here: one retried after a re-pair
+            // would land after the close and cover replies nobody saw.
+            readOnOpen?.cancel()
+            readOnOpen = nil
+            // One more read, due or not: it covers whatever the chat
+            // showed, history that landed after the opening read included.
+            readTask?.cancel()
+            readTask = nil
+            readFlush = Task { [hub, key] in await hub.postRead(key) }
+        }
         modelTask?.cancel()
         modelTask = nil
         connection = .connecting
@@ -458,6 +502,34 @@ public final class SessionChatModel {
         items.contains { $0.id == "approval-\(rid)" }
     }
 
+    // MARK: Read state
+
+    /// Waits out the reads `start()` and `stop()` sent, so a test's
+    /// stub sees none land after it moves on.
+    func settleReads() async {
+        await readOnOpen?.value
+        await readFlush?.value
+    }
+
+    private func noteActivity(_ at: Double?) {
+        guard let at else { return }
+        newestActivity = max(newestActivity ?? at, at)
+    }
+
+    /// Posts a read `readDebounce` after the first live message since the
+    /// last one posted; messages meanwhile ride along. Nothing once
+    /// closed.
+    private func scheduleRead() {
+        guard readOpen, readTask == nil else { return }
+        let sleep = readSleep
+        readTask = Task { [weak self] in
+            await sleep(Self.readDebounce)
+            guard let self, !Task.isCancelled, readOpen else { return }
+            readTask = nil
+            await hub.postRead(key)
+        }
+    }
+
     // MARK: Events
 
     func apply(_ env: HubEnvelope) {
@@ -477,6 +549,9 @@ public final class SessionChatModel {
             if let msg = env.decode(HubMessage.self) {
                 append(msg, seq: env.seq ?? 0)
                 showOrphans()
+                noteActivity(msg.ts)
+                // Seen live on screen: the row stays read.
+                if !replaying { scheduleRead() }
             }
         case "session.status":
             let status = env.decode(HubStatusData.self)?.status ?? ""

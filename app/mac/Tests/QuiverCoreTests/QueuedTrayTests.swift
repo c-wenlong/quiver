@@ -303,6 +303,7 @@ extension HubStubbed {
             let chat = SessionChatModel(key: "claude:s1", hub: hub)
             await chat.start()
             chat.stop()
+            await chat.settleReads()
             return chat
         }
 

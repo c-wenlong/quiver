@@ -49,13 +49,17 @@ public struct HubSessionRow: Codable, Sendable, Equatable {
     public var pinnedAt: Double?
     /// The harness's CLI can fork this session (`POST .../fork`).
     public var canFork: Bool?
+    /// The row moved since the calling device last read it (its
+    /// `last_active_at` is past that device's cursor). Nil from a hub
+    /// older than read state, which reads as read: no dot.
+    public var unread: Bool?
 
     public init(key: String, harness: String? = nil, agent: String? = nil, cwd: String? = nil,
                 title: String? = nil, status: String? = nil, machineId: String? = nil,
                 machine: String? = nil, lastActiveAt: Double? = nil,
                 ownership: String? = nil, attachable: Bool? = nil, remote: Bool? = nil,
                 model: String? = nil, harnessTitle: String? = nil, pinned: Bool? = nil,
-                pinnedAt: Double? = nil, canFork: Bool? = nil) {
+                pinnedAt: Double? = nil, canFork: Bool? = nil, unread: Bool? = nil) {
         self.key = key
         self.harness = harness
         self.agent = agent
@@ -73,6 +77,7 @@ public struct HubSessionRow: Codable, Sendable, Equatable {
         self.pinned = pinned
         self.pinnedAt = pinnedAt
         self.canFork = canFork
+        self.unread = unread
     }
 
     /// `model` short enough for a header or a list row, or nil.
