@@ -16,13 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previews, and `--json` prints `{dry_run, ran, fixed, still_failing,
   skipped, not_cleared, fixable_left}`. A fix that runs cleanly but
   leaves its finding (an empty discovery, a real file in the way) is
-  listed as needing a person and never retried, so `--fix` settles. Installs and the drops that delete entries never run in a
-  batch; `--fix=<check> --message=<text> [--action=<a>]` runs one
-  finding's fix, as a Run button does. A failed fix is reported and the
-  rest still run. Plain `swe doctor` still writes nothing. The runners
-  moved to `harness/doctor_fix.py`, which the web Doctor page now calls
-  too. Part of [#529](https://github.com/c-wenlong/quiver/issues/529).
-
+  listed as needing a person and never retried, so `--fix` settles.
+  Installs and the drops that delete entries never run in a batch;
+  `--fix=<check> --message=<text> [--action=<a>]` runs one finding's
+  fix, as a Run button does. A failed fix is reported and the rest still
+  run. Plain `swe doctor` still writes nothing. The runners moved to
+  `harness/doctor_fix.py`, which the web Doctor page now calls too. Part
+  of [#529](https://github.com/c-wenlong/quiver/issues/529).
 - **iPhone: share into a session.** A share extension ("Quiver" in the
   share sheet) sends text, links, images and files from any app to a
   session ([#1441](https://github.com/c-wenlong/quiver/issues/1441)).
