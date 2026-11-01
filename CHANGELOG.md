@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scheduled maintenance never banners. Each page's first reading only
   records what is already open. A click opens Service status.
   Part of [#528](https://github.com/c-wenlong/quiver/issues/528).
+- **Launch providers declared per harness.** `harness.json` gains
+  `capabilities.provider`: for each provider slug a harness takes at
+  launch, the variables it reads for the key (filled from named
+  variables in the keys file) and any fixed values such as
+  `ANTHROPIC_BASE_URL`. `launch_provider.PROVIDER_FALLBACK` covers
+  OpenCode (24 providers), Pi (16) and Claude Code (Anthropic, plus
+  DeepSeek, Kimi, MiniMax and OpenRouter through their
+  Anthropic-compatible endpoints), each tried on a real install with
+  fake keys. No launch uses it yet. Part of
+  [#526](https://github.com/c-wenlong/quiver/issues/526).
 - **Doctor folds in `swe mcp doctor`.** `swe doctor` now warns about
   each MCP server a harness config holds that fails a local check (a
   stdio binary missing, an empty env value, a bad URL scheme) as
