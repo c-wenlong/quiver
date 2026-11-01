@@ -1911,6 +1911,11 @@ def _doctor_fix(home: Path, args: list, json_view: bool) -> int:
         if step["error"]:
             for line in str(step["error"]).splitlines()[:8]:
                 print(c("red", f"      {line}"))
+    if result["not_cleared"]:
+        print()
+        print(c("bold", "  Ran, but still there (needs you)"))
+        for finding in result["not_cleared"]:
+            print(f"    {c('yellow', '!')} {finding['check']}: {finding['message']}")
     if result["skipped"]:
         print()
         print(c("bold", "  Needs a click per finding"))

@@ -37,6 +37,10 @@ ORDER = ("setup", "discover", "init", "marketplace-drop", "undeclare", "install"
 BATCH = frozenset({"setup", "discover", "init"})
 CLICK = frozenset({"marketplace-drop", "undeclare", "install"})
 
+# How many times a batch walks ORDER: enough for one fix to reveal
+# another's work, and bounded.
+MAX_PASSES = 3
+
 # One run fixes every finding naming these, so a batch runs each once.
 GLOBAL = frozenset({"setup", "discover", "init"})
 
@@ -221,13 +225,28 @@ def run_fixes(
     ``dry_run`` reads the report once and runs nothing: what a batch
     would run first (a later step may find more once an earlier one ran).
 
-    Returns ``{dry_run, ran, fixed, still_failing, skipped}``: each step
-    as ``{action, fix, findings, error}``, the findings gone after the
-    run, the findings in scope still there, and the click-only ones.
+    Returns ``{dry_run, ran, fixed, still_failing, skipped, not_cleared,
+    fixable_left}``: each step as ``{action, fix, findings, error}``; the
+    findings seen during the run (a later read included) that are gone
+    after it; the findings in scope still there; the ones whose only
+    fixes are click actions; the ones whose batch fix ran without an
+    error but did not clear them (they need a person, e.g. a real file in
+    the way that only ``swe init --force`` replaces); and the ones a
+    batch fix still waits for (not run here, or run and failed).
     """
     before = report()
     ran: list[dict] = []
-    skipped: list[dict] = []
+    seen = {_key(f): f for f in before}
+    tried: set = set()
+
+    def mark(name: str, f: dict):
+        return name if name in GLOBAL else (name, *_key(f))
+
+    def read() -> list:
+        findings = report()
+        for f in findings:
+            seen.setdefault(_key(f), f)
+        return findings
 
     def step(name: str, findings: list, remedy: dict | None) -> None:
         entry = {"action": name, "fix": findings[0].get("fix"),
@@ -249,36 +268,61 @@ def run_fixes(
         if len(matches) > 1:
             raise FixRefused(f"{len(matches)} findings match; fix them one at a time from the report.")
         name, remedy = resolve(matches[0], action)
+        tried.add(mark(name, matches[0]))
         step(name, matches, remedy)
     else:
+        # A fix can reveal more (setup shows the link checks), so passes
+        # repeat while something new ran. Nothing runs twice: a fix that
+        # did not clear its finding is reported once, never retried.
         current = before
-        for name in ORDER:
-            if name not in BATCH:
-                continue
-            todo = [f for f in current
-                    if in_scope(f, check) and batch_action(f) == name]
-            if not todo:
-                continue
-            groups = [todo] if name in GLOBAL else [[f] for f in todo]
-            for group in groups:
-                step(name, group, _remedy_named(group[0], name))
-            if not dry_run:
-                current = report()
-        skipped = [dict(_brief(f), actions=actions_of(f))
-                   for f in before
-                   if in_scope(f, check) and actions_of(f) and batch_action(f) is None]
+        for _ in range(MAX_PASSES):
+            progressed = False
+            for name in ORDER:
+                if name not in BATCH:
+                    continue
+                todo = [f for f in current
+                        if in_scope(f, check) and batch_action(f) == name
+                        and mark(name, f) not in tried]
+                if not todo:
+                    continue
+                groups = [todo] if name in GLOBAL else [[f] for f in todo]
+                for group in groups:
+                    tried.add(mark(name, group[0]))
+                    step(name, group, _remedy_named(group[0], name))
+                progressed = True
+                if not dry_run:
+                    current = read()
+            if dry_run or not progressed:
+                break
 
-    after = before if dry_run else report()
-    gone = {_key(f) for f in before} - {_key(f) for f in after}
+    after = before if dry_run else read()
+    after_keys = {_key(f) for f in after}
+    scoped = [f for f in after if in_scope(f, check)]
+    failed = {(s["action"], f["check"], f["message"])
+              for s in ran if s["error"] for f in s["findings"]}
+
+    def batch_tried(f: dict) -> bool:
+        name = batch_action(f)
+        return name is not None and mark(name, f) in tried
+
     return {
         "dry_run": dry_run,
         "ran": ran,
-        "fixed": [_brief(f) for f in before if _key(f) in gone],
-        "still_failing": [f for f in after if in_scope(f, check)],
-        "skipped": skipped,
+        "fixed": [_brief(f) for k, f in seen.items()
+                  if k not in after_keys and in_scope(f, check)],
+        "still_failing": scoped,
+        "skipped": [dict(_brief(f), actions=actions_of(f)) for f in scoped
+                    if actions_of(f) and batch_action(f) is None],
+        "not_cleared": [] if dry_run else [
+            _brief(f) for f in scoped
+            if batch_tried(f) and (batch_action(f), *_key(f)) not in failed],
+        "fixable_left": [_brief(f) for f in scoped
+                         if batch_action(f) is not None
+                         and (dry_run or not batch_tried(f)
+                              or (batch_action(f), *_key(f)) in failed)],
     }
 
 
 def fixable_left(result: dict) -> list[dict]:
-    """The findings still in scope that a batch could run a fix for."""
-    return [f for f in result["still_failing"] if batch_action(f) is not None]
+    """The findings in scope a batch fix still waits for."""
+    return result["fixable_left"]
