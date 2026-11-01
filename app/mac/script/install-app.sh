@@ -112,13 +112,20 @@ echo "install-app: building $ref ($commit), $config"
 builder="$src/app/mac/script/build-app.sh"
 [ -f "$builder" ] || builder="$src/app/script/build-app.sh"
 rm -rf "$out"
-SWE_BUILD_DIR="$out" SWE_SOURCE_PATH="$repo" \
+# Both variable spellings go in: a ref from before the rename has a
+# builder that only knows the QUIVER_* names, and it writes Quiver.app.
+SWE_BUILD_DIR="$out" QUIVER_BUILD_DIR="$out" \
+  SWE_SOURCE_PATH="$repo" QUIVER_SOURCE_PATH="$repo" \
   "$builder" "$config" >/dev/null
 
 # Stage next to the destination first, so the swap below is two renames
-# on one volume and the running app is down only for the restart.
+# on one volume and the running app is down only for the restart. The
+# bundle is whichever the ref built: pre-rename refs write Quiver.app,
+# which lands here under the SWE.app name.
 rm -rf "$staged"
-ditto "$out/SWE.app" "$staged"
+built="$out/SWE.app"
+[ -d "$built" ] || built="$out/Quiver.app"
+ditto "$built" "$staged"
 
 # Processes running the installed binary, matched as a literal path.
 # Only the installed copy: dev builds share the bundle id, so quitting by
@@ -149,42 +156,64 @@ if [ -e "$dest" ]; then
   mv "$dest" "$dest.old"
 fi
 mv "$staged" "$dest"
-# A remote hub or satellite LaunchAgent (swe remote serve|agent --install)
-# runs this bundle's swe. Labels were com.cwenlong.quiver.remote-* while the
-# app was Quiver.app: an old plist is moved onto the new label, repointing
-# it at this bundle when it ran an app-bundle swe.
-for role in hub agent; do
-  new_label="com.cwenlong.swe.remote-$role"
-  old_plist="$HOME/Library/LaunchAgents/com.cwenlong.quiver.remote-$role.plist"
+# The remote hub/satellite LaunchAgents (swe remote serve|agent
+# --install) and the MCP gateway all run this bundle's swe. Their labels
+# were com.cwenlong.quiver.* while the app was Quiver.app: an old plist is
+# moved onto the new label, repointing it at this bundle when it ran an
+# app-bundle swe. The old job keeps running until the new one loads —
+# a refused bootstrap drops the copy and leaves the service alone —
+# and its plist goes only once launchd has really let it go.
+uid="gui/$(id -u)"
+for pair in \
+  "com.cwenlong.quiver.remote-hub:com.cwenlong.swe.remote-hub" \
+  "com.cwenlong.quiver.remote-agent:com.cwenlong.swe.remote-agent" \
+  "com.cwenlong.quiver.mcp-gateway:com.cwenlong.swe.mcp-gateway"; do
+  old_label="${pair%%:*}"
+  new_label="${pair##*:}"
+  old_plist="$HOME/Library/LaunchAgents/$old_label.plist"
   plist="$HOME/Library/LaunchAgents/$new_label.plist"
-  if [ -f "$old_plist" ]; then
-    launchctl bootout "gui/$(id -u)/com.cwenlong.quiver.remote-$role" >/dev/null 2>&1 || true
-    if [ -f "$plist" ]; then
-      rm -f "$old_plist"
+  if [ -f "$old_plist" ] && [ ! -f "$plist" ]; then
+    cp "$old_plist" "$plist"
+    /usr/libexec/PlistBuddy -c "Set :Label $new_label" "$plist" 2>/dev/null || true
+    i=0
+    while arg="$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:$i" "$plist" 2>/dev/null)"; do
+      case "$arg" in
+        *.app/Contents/*)
+          /usr/libexec/PlistBuddy -c "Set :ProgramArguments:$i $dest${arg#*.app}" "$plist" 2>/dev/null || true ;;
+      esac
+      i=$((i + 1))
+    done
+    if launchctl bootstrap "$uid" "$plist" >/dev/null 2>&1; then
+      echo "install-app: moved $old_label to $new_label"
     else
-      cp "$old_plist" "$plist"
-      /usr/libexec/PlistBuddy -c "Set :Label $new_label" "$plist" 2>/dev/null || true
-      i=0
-      while arg="$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:$i" "$plist" 2>/dev/null)"; do
-        case "$arg" in
-          *.app/Contents/*)
-            /usr/libexec/PlistBuddy -c "Set :ProgramArguments:$i $dest${arg#*.app}" "$plist" 2>/dev/null || true ;;
-        esac
-        i=$((i + 1))
-      done
-      rm -f "$old_plist"
-      launchctl bootstrap "gui/$(id -u)" "$plist" >/dev/null 2>&1 \
-        && echo "install-app: moved the remote $role agent to $new_label" || true
+      rm -f "$plist"
     fi
   fi
-  [ -f "$plist" ] || continue
-  program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist" 2>/dev/null || true)"
-  case "$program" in
-    "$dest"/*)
-      launchctl kickstart -k "gui/$(id -u)/$new_label" >/dev/null 2>&1 \
-        && echo "install-app: restarted the remote $role on the new bundle" || true
-      ;;
-  esac
+  # Retire the old job once the new label carries it (or the machine
+  # never had it); keep it running when the move did not take.
+  if [ -f "$plist" ] || ! launchctl print "$uid/$old_label" >/dev/null 2>&1; then
+    launchctl bootout "$uid/$old_label" >/dev/null 2>&1 || true
+  fi
+  launchctl print "$uid/$old_label" >/dev/null 2>&1 || rm -f "$old_plist"
+  if [ -f "$old_plist" ] && [ ! -f "$plist" ]; then
+    echo "install-app: could not move $old_label to the new label; the old job is untouched" >&2
+  fi
+  # A job pointing at this bundle follows the swap: kickstart a loaded
+  # one, bootstrap one a failed earlier migrate left unloaded.
+  if [ -f "$plist" ]; then
+    program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist" 2>/dev/null || true)"
+    case "$program" in
+      "$dest"/*)
+        if launchctl print "$uid/$new_label" >/dev/null 2>&1; then
+          launchctl kickstart -k "$uid/$new_label" >/dev/null 2>&1 \
+            && echo "install-app: restarted $new_label on the new bundle" || true
+        else
+          launchctl bootstrap "$uid" "$plist" >/dev/null 2>&1 \
+            && echo "install-app: loaded $new_label on the new bundle" || true
+        fi
+        ;;
+    esac
+  fi
 done
 rm -rf "$dest.old"
 # The Quiver.app this replaces: quit it and drop the bundle so the Dock

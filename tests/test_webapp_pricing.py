@@ -234,7 +234,7 @@ class TestBrands(unittest.TestCase):
     def test_the_table_mirrors_the_swift_one_row_for_row(self):
         import re
         path = (Path(__file__).resolve().parents[1] / "app" / "mac" / "Sources"
-                / "QuiverCore" / "Models" / "ModelBrands.swift")
+                / "SWECore" / "Models" / "ModelBrands.swift")
         if not path.exists():
             self.skipTest("no app/mac/ in this checkout")
         swift = path.read_text()

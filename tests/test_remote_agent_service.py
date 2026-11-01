@@ -112,7 +112,8 @@ class AgentServiceTest(unittest.TestCase):
         self.assertIn("PATH", plist["EnvironmentVariables"])
         self.assertNotIn("secret-cred", path.read_text(errors="ignore"))
         self.assertFalse(launchd.plist_path(self.home).exists(), "the hub's plist stays absent")
-        self.assertEqual([c[0] for c in ctl.calls], ["bootout", "bootstrap", "bootout"])
+        self.assertEqual([c[0] for c in ctl.calls],
+                         ["bootout", "bootstrap", "bootout", "print"])
         self.assertTrue(all(launchd.AGENT_LABEL in c[-1] or
                             launchd.OLD_AGENT_LABEL in c[-1] or c[-1] == str(path)
                             for c in ctl.calls))

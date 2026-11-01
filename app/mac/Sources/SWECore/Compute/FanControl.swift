@@ -379,16 +379,67 @@ public final class FanControl {
 
     /// The installed helper as its job describes it, for this control
     /// file and the running app's signature. Blocks on launchctl, so it
-    /// never runs on the main thread.
+    /// never runs on the main thread. A helper Quiver.app installed
+    /// still watches the old control path, so it counts as outdated —
+    /// the next install replaces it — rather than absent.
     public nonisolated static func helperState(control: URL) -> FanHelperState {
-        guard FileManager.default.isExecutableFile(atPath: FanHelper.installedExecutable),
-              let data = FileManager.default.contents(atPath: FanHelper.installedPlist),
-              let job = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let arguments = job["ProgramArguments"] as? [String]
-        else { return .missing }
-        return helperState(arguments: arguments, control: control, owner: try? FanOwnerPin.current()) {
+        var installed: [String]?
+        var legacy: [String]?
+        if FileManager.default.isExecutableFile(atPath: FanHelper.installedExecutable),
+           let data = FileManager.default.contents(atPath: FanHelper.installedPlist),
+           let job = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
+            installed = job["ProgramArguments"] as? [String]
+        }
+        if FileManager.default.isExecutableFile(atPath: FanHelper.legacyInstalledExecutable),
+           let data = FileManager.default.contents(atPath: FanHelper.legacyInstalledPlist),
+           let job = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
+            legacy = job["ProgramArguments"] as? [String]
+        }
+        return helperState(installed: installed, legacy: legacy, control: control,
+                           owner: try? FanOwnerPin.current()) {
             exitStatus(of: "/bin/launchctl", ["print", "system/\(FanHelper.label)"], within: launchctlTimeout) == 0
         }
+    }
+
+    /// The verdict once both jobs' argument lists are read. The new
+    /// job's own rules apply when its files are there; otherwise a
+    /// Quiver.app helper counts as outdated — it still watches the old
+    /// control path, so the next install replaces it — never absent,
+    /// or a carried-over fan rule would quietly do nothing. A legacy
+    /// job for another control file (another account's) is not ours to
+    /// offer; the moved data root resolves to this control's path.
+    nonisolated static func helperState(installed: [String]?, legacy: [String]?,
+                                        control: URL, owner: FanOwnerPin?,
+                                        loaded: () -> Bool) -> FanHelperState {
+        if let installed {
+            return helperState(arguments: installed, control: control, owner: owner, loaded: loaded)
+        }
+        guard let legacy, let version = FanHelper.version(in: legacy) else { return .missing }
+        if let jobControl = FanHelper.parse(legacy)?.path,
+           canonicalPath(jobControl) != canonicalPath(control.path) {
+            return .missing
+        }
+        return .outdated(version: version)
+    }
+
+    /// A path with each symlink component followed, so two spellings of
+    /// one file compare equal even when the file itself does not exist
+    /// yet. The data move leaves ~/.quiver linked to ~/.swe, and the
+    /// legacy helper's --control still names it. A link's target is
+    /// resolved too, since it may sit behind links of its own.
+    nonisolated static func canonicalPath(_ path: String, depth: Int = 0) -> String {
+        guard depth < 32 else { return path }
+        var resolved = "/"
+        for component in path.split(separator: "/") {
+            resolved = (resolved as NSString).appendingPathComponent(String(component))
+            if let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: resolved) {
+                resolved = dest.hasPrefix("/")
+                    ? canonicalPath(dest, depth: depth + 1)
+                    : canonicalPath(((resolved as NSString).deletingLastPathComponent as NSString)
+                        .appendingPathComponent(dest), depth: depth + 1)
+            }
+        }
+        return resolved
     }
 
     /// Current only when the job is exactly what this app would install

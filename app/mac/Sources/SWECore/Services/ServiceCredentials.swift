@@ -94,12 +94,18 @@ public actor ServiceCredentials {
 
     public init(secrets: any SecretStoring,
                 service: String = ServiceCredentials.keychainService,
-                legacyService: String = ServiceCredentials.legacyKeychainService,
+                legacyService: String? = nil,
                 metadataURL: URL,
                 now: @escaping @Sendable () -> Date = Date.init) {
         self.secrets = secrets
         self.service = service
+        // The legacy store only ever feeds the real service: a scratch
+        // service (tests, SWE_SERVICES_KEYCHAIN) must not read, copy or
+        // delete real keys. Matching the two names disables the
+        // fallback below.
         self.legacyService = legacyService
+            ?? (service == ServiceCredentials.keychainService
+                ? ServiceCredentials.legacyKeychainService : service)
         self.metadataURL = metadataURL
         self.now = now
     }
@@ -111,9 +117,12 @@ public actor ServiceCredentials {
         if value == nil, legacyService != service,
            let legacy = await secrets.genericPassword(service: legacyService, account: name) {
             // First use since the rename: carry the key to the new
-            // service and drop the old item so it migrates exactly once.
-            try? await secrets.setGenericPassword(service: service, account: name, value: legacy)
-            try? await secrets.deleteGenericPassword(service: legacyService, account: name)
+            // service. The old item goes only once the copy exists —
+            // a failed save must not drop the one stored copy.
+            do {
+                try await secrets.setGenericPassword(service: service, account: name, value: legacy)
+                try? await secrets.deleteGenericPassword(service: legacyService, account: name)
+            } catch {}
             value = legacy
         }
         guard let value else { return nil }
@@ -141,11 +150,13 @@ public actor ServiceCredentials {
         save(metadata)
     }
 
-    /// Deletes the value and its bookkeeping.
+    /// Deletes the value and its bookkeeping. A legacy-only key whose
+    /// delete fails keeps its metadata instead of looking removed while
+    /// the key itself survives.
     public func remove(_ name: String) async throws {
         try await secrets.deleteGenericPassword(service: service, account: name)
         if legacyService != service {
-            try? await secrets.deleteGenericPassword(service: legacyService, account: name)
+            try await secrets.deleteGenericPassword(service: legacyService, account: name)
         }
         var metadata = load()
         metadata.removeValue(forKey: name)

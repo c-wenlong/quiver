@@ -66,10 +66,17 @@ across: its updater refuses an update whose bundle ID differs from the
 host's. Extra steps for that one release:
 
 - [ ] **The release notes tell Quiver.app users to install SWE.app
-  manually.** The DMG's SWE.app, or `app/mac/script/install-app.sh`,
-  removes the old bundle, migrates the LaunchAgents and carries the
-  `~/.quiver` data root over. A Quiver.app that checks the feed will see
-  the new appcast entry and fail validation — that is expected, not a bug.
+  manually.** `app/mac/script/install-app.sh` does the whole move: it
+  quits and removes Quiver.app, migrates the hub/agent/gateway
+  LaunchAgents onto the new labels repointed at SWE.app, and SWE's first
+  launch carries the `~/.quiver` data root and old preferences over.
+  Dragging SWE.app in from the DMG does only that first-launch part —
+  a remote hub, satellite or MCP gateway installed under Quiver.app
+  still points into the old bundle, so those users reinstall the service
+  (`swe remote ... --install` / `swe mcp gateway install`, then delete
+  Quiver.app) or run the script. A Quiver.app that checks the feed will
+  see the new appcast entry and fail validation — that is expected, not
+  a bug.
 - [ ] **`Casks/quiver.rb` in `c-wenlong/homebrew-quiver` is updated for
   the new artifact before tagging.** Its `url`, `name` and `app` lines
   must say `SWE` (`bump_tap` only rewrites version and sha256, so the

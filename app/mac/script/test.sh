@@ -18,7 +18,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
-limit="${SWE_TEST_LIMIT:-600}"
+limit="${SWE_TEST_LIMIT:-${QUIVER_TEST_LIMIT:-600}}"
 
 swift build --build-tests
 

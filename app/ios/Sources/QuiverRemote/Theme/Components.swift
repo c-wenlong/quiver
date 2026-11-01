@@ -417,7 +417,7 @@ struct HarnessIcon: View {
         self.size = size
     }
 
-    /// Other names the same harness goes by (as in QuiverCore's HarnessIcons).
+    /// Other names the same harness goes by (as in SWECore's HarnessIcons).
     static let aliases = ["claude-code": "claude", "claude-desktop": "claude", "github-copilot": "copilot",
                           "factory": "droid", "qwen": "qwen-code", "mistral": "mistral-vibe",
                           "codebuff": "freebuff", "command-code": "commandcode", "grok-bot": "grok"]

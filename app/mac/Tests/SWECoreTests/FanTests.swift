@@ -756,6 +756,40 @@ import Testing
         #expect(state(["/bin/sh", "-c", "true"]) == .missing)
     }
 
+    @Test func aQuiverHelperCountsAsOutdatedNotMissing() throws {
+        // Quiver.app's daemon still names the old control root; the
+        // data move leaves ~/.quiver a link to ~/.swe, so resolving the
+        // two paths lands on this control file. It is replaced on the
+        // next install, so it is outdated — not absent, which would
+        // leave a saved fan rule silently dead.
+        let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
+        let swe = dir.url.appending(path: ".swe")
+        try FileManager.default.createDirectory(at: swe, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: dir.url.appending(path: ".quiver"), withDestinationURL: swe)
+        let control = swe.appending(path: "fan/control.json")
+        let pin = FanOwnerPin.team("ABCDE12345", identifier: "com.cwenlong.swe")
+        func state(installed: [String]? = nil, legacy: [String]?) -> FanHelperState {
+            FanControl.helperState(installed: installed, legacy: legacy,
+                                   control: control, owner: pin) { true }
+        }
+        let quiverJob = [FanHelper.legacyInstalledExecutable, FanHelper.flag,
+                         "--control", dir.url.appending(path: ".quiver/fan/control.json").path,
+                         "--helper-version", "3"]
+        #expect(state(legacy: quiverJob) == .outdated(version: 3))
+        // No --control parse or a foreign account's file is not ours.
+        #expect(state(legacy: Array(quiverJob.dropLast(2))) == .outdated(version: 0))
+        #expect(state(legacy: [FanHelper.legacyInstalledExecutable, FanHelper.flag,
+                               "--control", "/Users/other/.swe/fan/control.json",
+                               "--helper-version", "3"]) == .missing)
+        #expect(state(legacy: ["/bin/sh", "-c", "true"]) == .missing)
+        #expect(state(legacy: nil) == .missing)
+        // The new job, when present, decides on its own.
+        let current = FanHelper.programArguments(control: control, owner: pin)
+        #expect(state(installed: current, legacy: quiverJob) == .current)
+    }
+
     /// The helper says its version in the status file; one from before it
     /// did reads as nil.
     @Test func theStatusCarriesTheHelpersVersion() throws {

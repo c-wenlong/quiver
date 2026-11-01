@@ -7,8 +7,14 @@ actor StubSecrets: SecretStoring {
     var items: [String: String] = [:]
     private(set) var calls: [[String]] = []
     private var nextError: Error?
+    private var nextDeleteError: Error?
 
     func setNextError(_ error: Error) { nextError = error }
+    func setNextDeleteError(_ error: Error) { nextDeleteError = error }
+    /// Moves a stored item between services, as a migration would leave it.
+    func moveItem(fromService: String, toService: String, account: String) {
+        items[key(toService, account)] = items.removeValue(forKey: key(fromService, account))
+    }
 
     private func key(_ service: String, _ account: String) -> String {
         "\(service)\u{0}\(account)"
@@ -27,6 +33,10 @@ actor StubSecrets: SecretStoring {
     }
     func deleteGenericPassword(service: String, account: String) async throws {
         calls.append(["delete", service, account])
+        if let nextDeleteError {
+            self.nextDeleteError = nil
+            throw nextDeleteError
+        }
         items.removeValue(forKey: key(service, account))
     }
 }
@@ -136,6 +146,85 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
         } catch {
             #expect(!error.localizedDescription.contains("secret-token"))
         }
+    }
+
+    @Test func aLegacyKeyMigratesToTheNewServiceOnFirstRead() async throws {
+        let secrets = StubSecrets()
+        try await secrets.setGenericPassword(
+            service: "legacy", account: "DEVIN_API_KEY", value: "tok")
+        let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
+        let credentials = ServiceCredentials(
+            secrets: secrets, service: "svc", legacyService: "legacy",
+            metadataURL: dir.url.appending(path: "config/services.json"))
+        #expect(await credentials.value(for: "DEVIN_API_KEY") == "tok")
+        #expect(await secrets.genericPassword(service: "svc", account: "DEVIN_API_KEY") == "tok")
+        #expect(await secrets.genericPassword(service: "legacy", account: "DEVIN_API_KEY") == nil)
+        // The second read comes from the new service alone.
+        let before = await secrets.calls.count
+        _ = await credentials.value(for: "DEVIN_API_KEY")
+        let calls = await secrets.calls
+        #expect(!calls[before...].contains { $0[0] == "find" && $0[1] == "legacy" })
+    }
+
+    @Test func aFailedMigrationKeepsTheOnlyStoredCopy() async throws {
+        // The copy throws: the value still answers this read, but the
+        // old item stays so later reads find it again.
+        let secrets = StubSecrets()
+        try await secrets.setGenericPassword(service: "legacy", account: "K", value: "tok")
+        await secrets.setNextError(SweError.commandFailed(status: 1, message: "keychain locked"))
+        let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
+        let credentials = ServiceCredentials(
+            secrets: secrets, service: "svc", legacyService: "legacy",
+            metadataURL: dir.url.appending(path: "config/services.json"))
+        #expect(await credentials.value(for: "K") == "tok")
+        #expect(await secrets.genericPassword(service: "legacy", account: "K") == "tok")
+        #expect(await secrets.genericPassword(service: "svc", account: "K") == nil)
+    }
+
+    @Test func aScratchServiceNeverReadsTheLegacyStore() async throws {
+        // SWE_SERVICES_KEYCHAIN exists so a test build cannot touch real
+        // keys: a custom service turns the legacy fallback off unless the
+        // caller passes a legacy service by hand.
+        let secrets = StubSecrets()
+        try await secrets.setGenericPassword(
+            service: ServiceCredentials.legacyKeychainService, account: "K", value: "tok")
+        let before = await secrets.calls.count
+        let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
+        let credentials = ServiceCredentials(
+            secrets: secrets, service: "scratch",
+            metadataURL: dir.url.appending(path: "config/services.json"))
+        #expect(await credentials.value(for: "K") == nil)
+        #expect(await credentials.status(for: "K").isSet == false)
+        try await credentials.remove("K")
+        let calls = await secrets.calls
+        #expect(calls[before...].allSatisfy { $0[1] == "scratch" })
+        #expect(await secrets.genericPassword(
+            service: ServiceCredentials.legacyKeychainService, account: "K") == "tok")
+    }
+
+    @Test func aFailedLegacyDeleteFailsRemove() async throws {
+        // The legacy-only key's delete throws: remove propagates it and
+        // the metadata stays, so the key does not look deleted while the
+        // fallback can still read it.
+        let secrets = StubSecrets()
+        let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
+        let credentials = ServiceCredentials(
+            secrets: secrets, service: "svc", legacyService: "legacy",
+            metadataURL: dir.url.appending(path: "config/services.json"))
+        try await credentials.set("K", value: "tok")
+        await secrets.moveItem(fromService: "svc", toService: "legacy", account: "K")
+        await secrets.setNextDeleteError(
+            SweError.commandFailed(status: 1, message: "keychain locked"))
+        await #expect(throws: (any Error).self) {
+            try await credentials.remove("K")
+        }
+        let status = await credentials.status(for: "K")
+        #expect(status.isSet)
+        #expect(status.added != nil)
     }
 
     @Test func probeCallsDevinSelfWithTheBearerToken() async throws {

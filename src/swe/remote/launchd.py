@@ -52,14 +52,16 @@ def plist_path(home: Path | None = None, label: str = LABEL) -> Path:
     return (home or Path.home()) / "Library" / "LaunchAgents" / f"{label}.plist"
 
 
-def bundled_swe(home: Path | None = None) -> Path | None:
+def bundled_swe(home: Path | None = None,
+                system_apps: Path = Path("/Applications")) -> Path | None:
     """SWE.app's ``swe`` shim, from ~/Applications or /Applications.
 
     Quiver.app is the fallback for the span between the rename and the
-    old bundle's removal.
+    old bundle's removal. SWE.app wins at both locations first, so a
+    stale copy in ~/Applications cannot hide the /Applications install.
     """
-    for apps in ((home or Path.home()) / "Applications", Path("/Applications")):
-        for app in ("SWE.app", "Quiver.app"):
+    for app in ("SWE.app", "Quiver.app"):
+        for apps in ((home or Path.home()) / "Applications", system_apps):
             shim = apps / app / "Contents" / "Resources" / "swe" / "bin" / "swe"
             if os.access(shim, os.X_OK):
                 return shim
@@ -150,7 +152,11 @@ def install(program: list[str], log_path: Path, path_env: str,
             if old_label and old_label != label:
                 run(["launchctl", "bootout", f"{_domain()}/{old_label}"],
                     capture_output=True, text=True, stdin=subprocess.DEVNULL)
-                plist_path(home, old_label).unlink(missing_ok=True)
+                # The old plist goes only once the old job is really
+                # gone; a still-loaded job keeps its file so it can be
+                # inspected and stopped later.
+                if not loaded_pid(run, old_label)[0]:
+                    plist_path(home, old_label).unlink(missing_ok=True)
             return path
         msg = (res.stderr or res.stdout or "").strip()
         if "input/output error" not in msg.lower() or attempt == BOOTSTRAP_TRIES - 1:
@@ -176,17 +182,21 @@ def uninstall(home: Path | None = None, run: Runner = subprocess.run,
     if res.returncode != 0 and loaded_pid(run, label)[0]:
         msg = (res.stderr or res.stdout or "").strip()
         raise RuntimeError(msg or f"launchctl bootout exited {res.returncode}")
-    existed = path.exists()
-    if existed:
+    existed = path.exists() or res.returncode == 0
+    if path.exists():
         path.unlink()
     if old_label and old_label != label:
         old = plist_path(home, old_label)
-        run(["launchctl", "bootout", f"{_domain()}/{old_label}"],
-            capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        res = run(["launchctl", "bootout", f"{_domain()}/{old_label}"],
+                  capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if res.returncode != 0 and loaded_pid(run, old_label)[0]:
+            msg = (res.stderr or res.stdout or "").strip()
+            raise RuntimeError(msg or f"launchctl bootout exited {res.returncode}")
+        existed = existed or res.returncode == 0
         if old.exists():
             old.unlink()
             existed = True
-    return existed or res.returncode == 0
+    return existed
 
 
 def loaded_pid(run: Runner = subprocess.run, label: str = LABEL) -> tuple[bool, int | None]:
@@ -206,7 +216,10 @@ def status(home: Path | None = None, run: Runner = subprocess.run,
     or None without a plist, and whether launchd runs it now.
 
     A machine the rename never reached reports its ``old_label`` job, so
-    status does not call a still-running Quiver.app agent absent.
+    status does not call a still-running Quiver.app agent absent. A
+    running job wins over a stopped one whichever label carries it: a
+    failed install leaves the new plist behind while the old job keeps
+    serving.
     """
     args: list[str] | None = None
     for name in (label,) + ((old_label,) if old_label and old_label != label else ()):
@@ -214,7 +227,9 @@ def status(home: Path | None = None, run: Runner = subprocess.run,
             read = plistlib.loads(plist_path(home, name).read_bytes()).get("ProgramArguments")
         except (OSError, ValueError, plistlib.InvalidFileException):
             continue
-        args = list(read) if isinstance(read, list) else None
         loaded, pid = loaded_pid(run, name)
-        return args, bool(loaded and pid)
-    return None, False
+        if loaded and pid:
+            return (list(read) if isinstance(read, list) else None), True
+        if args is None:
+            args = list(read) if isinstance(read, list) else None
+    return args, False

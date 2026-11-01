@@ -370,6 +370,19 @@ def service_file(service: Service = HUB, home: Path | None = None) -> Path:
     return systemd.unit_path(home, service.unit)
 
 
+def service_files(service: Service, home: Path | None = None) -> list[Path]:
+    """Every path an install of ``service`` can live at, newest first.
+
+    A pre-rename install left the old label's plist, and it keeps a job
+    running exactly like the new one's: conflict and presence checks
+    that only look at ``service_file`` would call it absent.
+    """
+    files = [service_file(service, home)]
+    if sys.platform == "darwin":
+        files.append(launchd.plist_path(home, service.old_label))
+    return files
+
+
 def service_status(service: Service = HUB, home: Path | None = None,
                    run=subprocess.run) -> tuple[list[str] | None, bool]:
     """(installed command line or None, running) for ``service``."""
@@ -389,8 +402,8 @@ def service_conflict(service: Service, home: Path | None = None) -> str | None:
     satellite would send its own hub's sessions back to it.
     """
     other = AGENT if service is HUB else HUB
-    path = service_file(other, home)
-    if not path.exists():
+    path = next((p for p in service_files(other, home) if p.exists()), None)
+    if path is None:
         return None
     if service is AGENT:
         what = "this machine's hub is installed"
@@ -907,7 +920,8 @@ def agent_service_report(home: Path | None = None, run=subprocess.run) -> dict:
     satellite, and is its background service installed and running."""
     conf = agent_mod.load_agent(home) or {}
     problem = _service_problem(AGENT)
-    path = service_file(AGENT, home)
+    path = next((p for p in service_files(AGENT, home) if p.exists()),
+                service_file(AGENT, home))
     args, running = service_status(AGENT, home, run) if problem is None else (None, False)
     return {
         "configured": bool(conf.get("hub") and conf.get("credential")),
@@ -919,7 +933,7 @@ def agent_service_report(home: Path | None = None, run=subprocess.run) -> dict:
         "service": str(path),
         "program": args,
         "log": str(remote_dir_for(home) / AGENT.log_name),
-        "hub_installed": service_file(HUB, home).exists(),
+        "hub_installed": any(p.exists() for p in service_files(HUB, home)),
     }
 
 

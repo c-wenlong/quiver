@@ -256,12 +256,15 @@ def gateway_status() -> dict:
     pid = None
     if sys.platform == "darwin":
         # Either label counts: a Quiver.app install still runs as the
-        # gateway until the renamed job replaces it.
+        # gateway until the renamed job replaces it. A loaded job wins
+        # over a stopped plist: a failed install leaves the new plist
+        # behind while the old job keeps answering.
         for name in (LABEL, OLD_LABEL):
             if launchd.plist_path(label=name).exists():
                 installed = True
-                pid = launchd.loaded_pid(label=name)[1]
-                break
+                loaded, pid = launchd.loaded_pid(label=name)
+                if loaded:
+                    break
     live = _fetch(settings["port"], "/status")
     running = {row["name"]: row for row in (live or {}).get("servers", [])
                if isinstance(row, dict) and "name" in row}
