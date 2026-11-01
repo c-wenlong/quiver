@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe doctor --fix`.** Runs every safe local fix doctor found, in
+  order (setup, then discover, then init), reads the report again after
+  each step, and prints what it fixed and what is left.
+  `--fix=<check>` scopes it (`--fix=setup`), `--dry-run` (or `--check`)
+  previews, and `--json` prints `{dry_run, ran, fixed, still_failing,
+  skipped, not_cleared, fixable_left}`. A fix that runs cleanly but
+  leaves its finding (an empty discovery, a real file in the way) is
+  listed as needing a person and never retried, so `--fix` settles.
+  Installs and the drops that delete entries never run in a batch;
+  `--fix=<check> --message=<text> [--action=<a>]` runs one finding's
+  fix, as a Run button does. A failed fix is reported and the rest still
+  run. Plain `swe doctor` still writes nothing. The runners moved to
+  `harness/doctor_fix.py`, which the web Doctor page now calls too. Part
+  of [#529](https://github.com/c-wenlong/quiver/issues/529).
 - **Unread dots on session rows: iPhone, web and Mac.** A session row
   shows a small dot when the agent said something since you last opened
   that chat on this device, from the hub's per-device `unread` flag.
