@@ -259,6 +259,13 @@ private struct HubWebView: NSViewRepresentable {
             view.topAnchor.constraint(equalTo: container.topAnchor),
             view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
+        // While a hub fills the window, keystrokes land on the web page
+        // and the strip's switcher shows its ring only when focus is
+        // really on it: left to the default key-view pick the switcher
+        // would take first responder and wear the ring from open.
+        DispatchQueue.main.async {
+            container.window?.initialFirstResponder = view
+        }
     }
 }
 
@@ -290,10 +297,15 @@ struct StripSwitcher: NSViewRepresentable {
             title = ""
             imagePosition = .imageLeft
             imageHugsTitle = true
-            // The window would otherwise hand it first responder on
-            // open and a ring would stick around the face.
-            refusesFirstResponder = true
-            focusRingType = .none
+            focusRingType = .default
+            // The normal action path, not a mouseDown override, so a
+            // keyboard press and VoiceOver's press open the menu too:
+            // while a hub fills the window this is the only machine
+            // chrome. The window hands first responder to the web view
+            // (`HubWebView`), so the ring shows only when focus is
+            // actually here.
+            target = self
+            action = #selector(showMenu(_:))
             wantsLayer = true
             layer?.cornerRadius = Theme.controlRadius
             toolTip = "Choose the machine this window shows"
@@ -336,7 +348,9 @@ struct StripSwitcher: NSViewRepresentable {
             return size
         }
 
-        override func mouseDown(with event: NSEvent) {
+        /// Click, keyboard press or VoiceOver press: the menu drops
+        /// below the face.
+        @objc private func showMenu(_: NSButton) {
             guard let app, let hub else { return }
             Self.menu(machines: app.machines, shown: hub,
                       reload: { [weak app] in
@@ -420,6 +434,13 @@ struct StripSwitcher: NSViewRepresentable {
         }
 
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override var focusRingMaskBounds: NSRect { bounds }
+
+        override func drawFocusRingMask() {
+            NSBezierPath(roundedRect: bounds, xRadius: Theme.controlRadius,
+                         yRadius: Theme.controlRadius).fill()
+        }
 
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
