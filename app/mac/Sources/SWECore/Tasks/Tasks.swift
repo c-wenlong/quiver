@@ -1053,7 +1053,10 @@ public struct ModelPick: Equatable, Sendable {
     /// elsewhere the menu shows the list's default, as if untouched, and
     /// keeps the model for a later list that has it. The choice is always
     /// one the list offers, so another harness's model never travels.
-    public mutating func refit(_ recent: [String]) {
+    /// `bare` makes that untouched default "Harness default" even when
+    /// the list has models: a launch on a picked provider (#526), whose
+    /// recent models ran on other providers. The menu still lists them.
+    public mutating func refit(_ recent: [String], bare: Bool = false) {
         switch choice {
         case .harnessDefault where picked, .other where picked: return
         default: break
@@ -1062,7 +1065,7 @@ public struct ModelPick: Equatable, Sendable {
             choice = .recent(remembered)
             picked = true
         } else {
-            choice = Self.defaultChoice(recent)
+            choice = Self.defaultChoice(bare ? [] : recent)
             picked = false
         }
     }

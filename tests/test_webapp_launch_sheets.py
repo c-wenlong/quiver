@@ -672,6 +672,23 @@ const out = {};
   out.emptyHasNoModel = !("model" in (post2 && post2.body || {}));
   out.untickedNoYolo = !("yolo" in (post2 && post2.body || {}));
   out.defaultNoProvider = !("provider" in (post2 && post2.body || {}));
+  // An untouched model drops to Harness default while a provider is
+  // picked (its recent models ran elsewhere) and comes back without one.
+  await openNewSession();
+  await tick();
+  q("#ns-folder").value = "/tmp/wt"; q("#ns-folder").oninput(); await tick();
+  q("#ns-prompt").value = "say ok"; q("#ns-prompt").oninput();
+  chip("codex").onclick(); await tick();
+  out.providerAutoBefore = picked(menu());
+  choose(prov(), "OpenRouter");
+  out.providerAutoCleared = picked(menu());
+  choose(prov(), "Harness default");
+  out.providerAutoBack = picked(menu());
+  choose(prov(), "OpenRouter");
+  choose(menu(), "gpt-5");
+  q("#ns-start").onclick(); await tick();
+  const post3 = fetchCalls.filter((c) => c.path === "/v1/sessions").pop();
+  out.providerPickedModel = post3 && post3.body.model;
   // A fresh sheet is clean again: a machine switch re-defaults from that
   // machine's own ledger, here an old hub's one-item last_models.
   await openNewSession();
@@ -863,6 +880,12 @@ class TestLaunchModelMenu(unittest.TestCase):
         self.assertEqual(out["providerOptions"], ["Harness default", "OpenRouter"])
         self.assertEqual(out["postProvider"], "openrouter")
         self.assertTrue(out["defaultNoProvider"], "Harness default sends no provider key")
+        self.assertEqual(out["providerAutoBefore"], "gpt-5-codex")
+        self.assertEqual(out["providerAutoCleared"], "Harness default",
+                         "a picked provider drops the untouched recent model")
+        self.assertEqual(out["providerAutoBack"], "gpt-5-codex")
+        self.assertEqual(out["providerPickedModel"], "gpt-5",
+                         "a model the user picks after the provider is sent")
         self.assertTrue(out["providerHiddenSat"],
                         "a machine row without providers_at_launch hides the row")
         self.assertEqual(out["postMachine"], "m1")

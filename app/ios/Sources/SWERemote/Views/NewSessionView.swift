@@ -100,6 +100,9 @@ struct NewSessionView: View {
         .onChange(of: machineId) { _, _ in
             if let machine { refillModel(on: machine) }
         }
+        .onChange(of: provider) { _, _ in
+            if let machine { refillModel(on: machine) }
+        }
     }
 
     // MARK: Sections
@@ -170,11 +173,12 @@ struct NewSessionView: View {
         }
     }
 
-    /// The Model menu after a harness or machine change;
-    /// `ModelSelection.follow` says which picks survive it.
+    /// The Model menu after a harness, machine or provider change;
+    /// `ModelSelection.follow` says which picks survive it. A picked
+    /// provider leaves an untouched menu on Harness default.
     private func refillModel(on machine: Machine) {
-        model.follow(harness, on: machine)
         provider = NewSessionOptions.providerPick(provider, for: harness, on: machine)
+        model.follow(harness, on: machine, bare: provider != nil)
     }
 
     private func start(_ machine: Machine) async {

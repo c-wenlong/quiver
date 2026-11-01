@@ -1399,7 +1399,7 @@ function nsPaintProvider() {
   ns.provider = nsProviderPick(machine);
   slot.innerHTML = nsProviderHtml(machine, nsBusy());
   const menu = slot.querySelector("#ns-provider");
-  if (menu) menu.onchange = () => { ns.provider = menu.value; };
+  if (menu) menu.onchange = () => { ns.provider = menu.value; nsRefillModel(); nsPaintModel(); };
 }
 
 /* The ledger's recent models for the picked harness on this machine,
@@ -1410,9 +1410,13 @@ function nsRecentModels(machine) {
   return ModelMenu.recents((m.recent_models || {})[ns.harness], (m.last_models || {})[ns.harness]);
 }
 
+/* An untouched Model menu reads Harness default while a Provider is
+ * picked: the recent models ran on other providers, and an OpenCode
+ * `openai/…` model would route past the picked provider's key. */
 function nsRefillModel() {
   const machine = nsMachine();
-  ModelMenu.redefault(ns.model, nsModelOk(machine) ? nsRecentModels(machine) : []);
+  ModelMenu.redefault(ns.model, nsModelOk(machine) ? nsRecentModels(machine) : [],
+    !!nsProviderPick(machine));
 }
 
 function nsModelHtml(machine, busy) {

@@ -773,6 +773,24 @@ import Testing
         pick.refit(claude)
         #expect(pick.choice == .other)
     }
+
+    /// A picked provider (#526) turns an untouched menu to "Harness
+    /// default", since the recent models ran on other providers; a model
+    /// the user picked stays, and no provider brings the newest back.
+    @Test func modelMenuDropsTheAutoModelForAPickedProvider() {
+        let opencode = ["openai/gpt-5", "groq/llama"]
+        var pick = ModelPick(recent: opencode)
+        pick.refit(opencode, bare: true)
+        #expect(pick.choice == .harnessDefault)
+        #expect(pick.model(supported: true) == nil)
+        pick.refit(opencode)
+        #expect(pick.choice == .recent("openai/gpt-5"))
+
+        pick.pick(.recent("groq/llama"))
+        pick.refit(opencode, bare: true)
+        #expect(pick.choice == .recent("groq/llama"))
+        #expect(pick.model(supported: true) == "groq/llama")
+    }
 }
 
 /// The hub calls the pages make: paths, queries and bodies, answered

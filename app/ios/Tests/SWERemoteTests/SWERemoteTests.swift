@@ -1284,6 +1284,24 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertFalse(sel.touched)
     }
 
+    /// A picked provider (#526) leaves an untouched menu on Harness
+    /// default, since the recent models ran on other providers; a model
+    /// the user picked stays.
+    func testAPickedProviderDropsTheAutoModel() {
+        let m = modelMachine()
+        var sel = ModelSelection()
+        sel.follow("codex", on: m)
+        XCTAssertEqual(sel.choice, .recent("gpt-5"))
+        sel.follow("codex", on: m, bare: true)
+        XCTAssertEqual(sel.choice, .harnessDefault)
+        XCTAssertNil(sel.model(for: "codex", on: m))
+        sel.follow("codex", on: m)
+        XCTAssertEqual(sel.choice, .recent("gpt-5"))
+        sel.choose(.recent("sonnet"))
+        sel.follow("codex", on: m, bare: true)
+        XCTAssertEqual(sel.model(for: "codex", on: m), "sonnet")
+    }
+
     func testAPickedDefaultOrOtherSurvivesASwitch() {
         let m = modelMachine()
         var sel = ModelSelection()

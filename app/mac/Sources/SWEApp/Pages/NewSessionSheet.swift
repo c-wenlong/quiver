@@ -119,10 +119,12 @@ struct NewSessionSheet: View {
         // Cancel stops a running launch first.
         .onSheetDismissRequest { if !flow.busy { dismiss() } }
         .task { await load() }
-        .onChange(of: harness) { prefillModel(); refitProvider() }
+        .onChange(of: harness) { refitProvider(); prefillModel() }
         // A machine switch re-fills even when the harness stays: the
         // last-used models are the new machine's own.
-        .onChange(of: machineId) { prefillModel(); refitProvider() }
+        .onChange(of: machineId) { refitProvider(); prefillModel() }
+        // A picked provider re-defaults an untouched Model menu (#526).
+        .onChange(of: provider) { prefillModel() }
         .onDisappear { launchTask?.cancel() }
     }
 
@@ -547,9 +549,11 @@ struct NewSessionSheet: View {
 
     /// Refits the Model menu to the picked machine and harness: an
     /// untouched menu takes their newest model; a pick survives as
-    /// `ModelPick.refit` says.
+    /// `ModelPick.refit` says. While a provider is picked the untouched
+    /// menu reads Harness default: its recent models ran elsewhere.
     private func prefillModel() {
-        modelPick.refit(LaunchOptions.recentModels(harness, on: machine))
+        modelPick.refit(LaunchOptions.recentModels(harness, on: machine),
+                        bare: LaunchOptions.provider(provider, harness: harness, on: machine) != nil)
     }
 
     /// Back to "Harness default" once the picked provider is off the
