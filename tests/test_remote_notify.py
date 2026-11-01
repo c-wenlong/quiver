@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from swe.remote import notify, pairing, protocol, sshkeys
+from swe.remote import notify, pairing, protocol, sshkeys, supervise
 from swe.remote.hub import GLOBAL_KEY, HubState
 
 from tests._tempdir import temp_dir
@@ -83,58 +83,140 @@ class TestReady(unittest.TestCase):
             self.assertFalse(notify.ready(cfg), cfg)
 
 
+ALLOW = [("allow", "Allow"), ("deny", "Deny")]
+OK, BAD, NO = notify.SPEND_OK, notify.SPEND_INVALID, notify.SPEND_REFUSED
+DEVIN_MENU = [
+    ("1", "Yes  (Approve once)"),
+    ("2", "Yes, allow `git` commands"),
+    ("3", "Yes, always allow `git` commands in `repo`"),
+    ("4", "Yes, always allow `git` commands in all projects"),
+    ("5", "Yes, switch to bypass mode"),
+    ("6", "Edit command"),
+    ("7", "Describe change to command"),
+    ("8", "No"),
+]
+
+
 class TestApprovalTokens(unittest.TestCase):
     def setUp(self):
         self.tokens = notify.ApprovalTokens()
 
+    def _spend(self, tok, key, rid, decision="allow", **kw):
+        return self.tokens.consume(tok, key, rid, decision, **kw)
+
     def test_consume_bound_request_once(self):
-        tok = self.tokens.mint("k1", "r1")
-        self.assertTrue(self.tokens.consume(tok, "k1", "r1"))
+        tok = self.tokens.mint("k1", "r1", ALLOW)
+        self.assertEqual(self._spend(tok, "k1", "r1"), OK)
         # Single use: a second spend fails even with the right binding.
-        self.assertFalse(self.tokens.consume(tok, "k1", "r1"))
+        self.assertEqual(self._spend(tok, "k1", "r1"), BAD)
 
     def test_wrong_session_or_request_rejected(self):
-        tok = self.tokens.mint("k1", "r1")
-        self.assertFalse(self.tokens.consume(tok, "k2", "r1"))
-        self.assertFalse(self.tokens.consume(tok, "k1", "r2"))
-        self.assertFalse(self.tokens.consume("bogus", "k1", "r1"))
+        tok = self.tokens.mint("k1", "r1", ALLOW)
+        self.assertEqual(self._spend(tok, "k2", "r1"), BAD)
+        self.assertEqual(self._spend(tok, "k1", "r2"), BAD)
+        self.assertEqual(self._spend("bogus", "k1", "r1"), BAD)
 
     def test_expired_token_rejected(self):
         now = time.time()
-        tok = self.tokens.mint("k1", "r1", now=now)
+        tok = self.tokens.mint("k1", "r1", ALLOW, now=now)
         later = now + self.tokens.TTL_S + 1
-        self.assertFalse(self.tokens.consume(tok, "k1", "r1", now=later))
+        self.assertEqual(self._spend(tok, "k1", "r1", now=later), BAD)
 
     def test_remint_same_request_supersedes(self):
-        old = self.tokens.mint("k1", "r1")
-        new = self.tokens.mint("k1", "r1")
-        self.assertFalse(self.tokens.consume(old, "k1", "r1"))
-        self.assertTrue(self.tokens.consume(new, "k1", "r1"))
+        old = self.tokens.mint("k1", "r1", ALLOW)
+        new = self.tokens.mint("k1", "r1", ALLOW)
+        self.assertEqual(self._spend(old, "k1", "r1"), BAD)
+        self.assertEqual(self._spend(new, "k1", "r1"), OK)
 
     def test_other_requests_tokens_coexist(self):
         # Codex app-server approvals overlap on one session: minting B
         # must not kill A's buttons.
-        a = self.tokens.mint("k1", "r1")
-        b = self.tokens.mint("k1", "r2")
-        self.assertTrue(self.tokens.consume(a, "k1", "r1"))
-        self.assertTrue(self.tokens.consume(b, "k1", "r2"))
+        a = self.tokens.mint("k1", "r1", ALLOW)
+        b = self.tokens.mint("k1", "r2", ALLOW)
+        self.assertEqual(self._spend(a, "k1", "r1"), OK)
+        self.assertEqual(self._spend(b, "k1", "r2"), OK)
         # Other sessions' tokens are untouched either way.
-        other = self.tokens.mint("k2", "r9")
-        self.assertTrue(self.tokens.consume(other, "k2", "r9"))
+        other = self.tokens.mint("k2", "r9", ALLOW)
+        self.assertEqual(self._spend(other, "k2", "r9"), OK)
 
     def test_drop_retires_only_the_resolved_request(self):
-        a = self.tokens.mint("k1", "r1")
-        b = self.tokens.mint("k1", "r2")
+        a = self.tokens.mint("k1", "r1", ALLOW)
+        b = self.tokens.mint("k1", "r2", ALLOW)
         self.tokens.drop("k1", "r1")
-        self.assertFalse(self.tokens.consume(a, "k1", "r1"))
-        self.assertTrue(self.tokens.consume(b, "k1", "r2"))
+        self.assertEqual(self._spend(a, "k1", "r1"), BAD)
+        self.assertEqual(self._spend(b, "k1", "r2"), OK)
 
     def test_burn_on_mismatch(self):
         # A mismatched request_id is a failed spend, not a free probe:
         # the token is gone for its real binding too.
+        tok = self.tokens.mint("k1", "r1", ALLOW)
+        self.assertEqual(self._spend(tok, "k1", "rX"), BAD)
+        self.assertEqual(self._spend(tok, "k1", "r1"), BAD)
+
+    def test_spends_only_the_offered_choices(self):
+        # #1464: the push showed rows 1 and 8; the token cannot reach
+        # any other row of the menu, and the refusal burns it.
+        offered = [DEVIN_MENU[0], DEVIN_MENU[7]]
+        for decision in ("1", "8"):
+            tok = self.tokens.mint("k1", "r1", offered)
+            self.assertEqual(self._spend(tok, "k1", "r1", decision), OK)
+        for decision in ("2", "5", "6", "allow", "deny", "always", 1,
+                         None, ["1"]):
+            tok = self.tokens.mint("k1", "r1", offered)
+            self.assertEqual(
+                self._spend(tok, "k1", "r1", decision), NO, decision)
+            self.assertEqual(self._spend(tok, "k1", "r1", "1"), BAD)
+
+    def test_standing_grants_never_spendable_even_if_offered(self):
+        # A caller handing mint the whole menu still gets a token that
+        # can only answer this one prompt.
+        for decision in ("2", "3", "4", "5"):
+            tok = self.tokens.mint("k1", "r1", DEVIN_MENU)
+            self.assertEqual(
+                self._spend(tok, "k1", "r1", decision), NO, decision)
+        tok = self.tokens.mint(
+            "k1", "r1", [("always", "Always"), ("allow", "Allow")])
+        self.assertEqual(self._spend(tok, "k1", "r1", "always"), NO)
+
+    def test_token_without_choices_spends_nothing(self):
+        # A record in the pre-#1464 shape (no ``choices``) answers no
+        # decision at all, not "any row": fail closed.
+        tok = self.tokens.mint("k1", "r1", ALLOW)
+        del self.tokens._tokens[tok]["choices"]
+        self.assertEqual(self._spend(tok, "k1", "r1", "allow"), NO)
         tok = self.tokens.mint("k1", "r1")
-        self.assertFalse(self.tokens.consume(tok, "k1", "rX"))
-        self.assertFalse(self.tokens.consume(tok, "k1", "r1"))
+        self.assertEqual(self._spend(tok, "k1", "r1", "allow"), NO)
+
+
+class TestStandingGrant(unittest.TestCase):
+    def test_labels_across_harnesses(self):
+        standing = [
+            # devin
+            "Yes, allow `git` commands",
+            "Yes, always allow `git` commands in `repo`",
+            "Yes, switch to bypass mode",
+            # claude code
+            "Yes, and don't ask again for git commands in /repo",
+            "Yes, allow all edits during this session (shift+tab)",
+            # codex
+            "Yes, and don't ask again for this command (a)",
+            # gemini
+            "Allow for this session", "Allow always",
+            # generic modes
+            "Enable yolo mode", "Trust this folder",
+            "Don't ask again", "Auto-accept edits",
+        ]
+        one_prompt = [
+            "Yes", "Yes  (Approve once)", "Allow once", "Yes, proceed (y)",
+            "No", "No, and tell Claude what to do differently (esc)",
+            "Deny", "Edit command", "SQLite", "Postgres",
+        ]
+        for label in standing:
+            self.assertTrue(supervise.standing_grant(label), label)
+        for label in one_prompt:
+            self.assertFalse(supervise.standing_grant(label), label)
+        # A truncated-away "always" hidden in a paren still counts.
+        self.assertTrue(supervise.standing_grant("Yes (always)"))
 
 
 class TestRetireActionCredential(unittest.TestCase):
@@ -240,7 +322,8 @@ class TestHandle(unittest.TestCase):
         self.assertIn("approval", post["title"])
         self.assertEqual(post["message"], "allow rm?")
         labels = [a["label"] for a in post["actions"]]
-        self.assertEqual(labels, ["Allow", "Deny", "Always"])
+        # No "Always": a standing grant never rides the push (#1464).
+        self.assertEqual(labels, ["Allow", "Deny"])
         act = post["actions"][0]
         self.assertEqual(act["action"], "http")
         self.assertEqual(act["method"], "POST")
@@ -254,17 +337,18 @@ class TestHandle(unittest.TestCase):
         ev = {"type": "approval.requested", "session": "k1",
               "data": {"request_id": "req-1", "prompt": "allow rm?"}}
         self.n._handle(ev, self.cfg)
-        # All three buttons share one minted token, not a device cred.
+        # Both buttons share one minted token, not a device cred.
         auths = {
             a["headers"]["Authorization"] for a in self.posts[0]["actions"]
         }
         self.assertEqual(len(auths), 1)
         token = auths.pop().removeprefix("Bearer ")
         # Bound to exactly this (session, request_id); one spend.
-        self.assertTrue(
-            self.state.approval_tokens.consume(token, "k1", "req-1"))
-        self.assertFalse(
-            self.state.approval_tokens.consume(token, "k1", "req-1"))
+        tokens = self.state.approval_tokens
+        self.assertEqual(tokens.consume(token, "k1", "req-1", "allow"),
+                         notify.SPEND_OK)
+        self.assertEqual(tokens.consume(token, "k1", "req-1", "allow"),
+                         notify.SPEND_INVALID)
         # It never resolves as a device credential.
         self.assertIsNone(
             pairing.device_for_credential(self.home, token))
@@ -324,7 +408,7 @@ class TestHandle(unittest.TestCase):
     def test_approval_colliding_buttons_link_to_chat(self):
         # Two rows sharing their first 40 chars would render identical
         # buttons sending different answers — the chat decides instead.
-        same = "Allow `git -C /very/long/path/to/some/repo "
+        same = "Run `git -C /very/long/path/to/some/repo/that "
         ev = {"type": "approval.requested", "session": "k1",
               "data": {"request_id": "req-1", "prompt": "Pick?",
                        "options": [{"n": "1", "label": same + "push`"},
@@ -347,6 +431,32 @@ class TestHandle(unittest.TestCase):
         actions = self.posts[0]["actions"]
         self.assertEqual(len(actions), 3)
         self.assertTrue(all(a["action"] == "http" for a in actions))
+
+    def test_standing_rows_get_no_button_and_no_token(self):
+        # #1464: devin's menu has always-allow rows and a bypass row at
+        # 5. The push offers only the one-shot yes and the no, links
+        # the rest to the chat, and its token spends exactly those two.
+        opts = [{"n": n, "label": l} for n, l in DEVIN_MENU]
+        ev = {"type": "approval.requested", "session": "k1",
+              "data": {"request_id": "req-1", "prompt": "git pull?",
+                       "options": opts}}
+        self.n._handle(ev, self.cfg)
+        actions = self.posts[0]["actions"]
+        sent = [json.loads(a["body"])["decision"]
+                for a in actions if a["action"] == "http"]
+        self.assertEqual(sent, ["1", "8"])
+        self.assertEqual(actions[-1]["action"], "view")
+        self.assertEqual(actions[-1]["label"], "All 8 options…")
+        token = actions[0]["headers"]["Authorization"][7:]
+        tokens = self.state.approval_tokens
+        self.assertEqual(tokens.consume(token, "k1", "req-1", "5"),
+                         notify.SPEND_REFUSED)
+        # Every row standing: no buttons at all, just the chat link.
+        self.posts.clear()
+        ev["data"]["options"] = opts[1:5]
+        self.n._handle(ev, self.cfg)
+        actions = self.posts[0]["actions"]
+        self.assertEqual([a["action"] for a in actions], ["view"])
 
     def test_action_url_escapes_session_key(self):
         act = self.n._action("a b@c/d", "r", "allow", "Allow", "c")

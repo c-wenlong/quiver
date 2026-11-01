@@ -85,6 +85,9 @@ _REQ_TIMEOUT_S = 30.0
 # keep-alive connection would be parsed out of its bytes. Up to this
 # much, within this long, is read and dropped so the connection stays
 # open; anything bigger, slower or unframed closes the connection.
+# ``_scoped_approval_device``'s answer when it already sent the 403 for
+# a live ntfy token asked to spend a choice it does not carry.
+_NTFY_REFUSED = "\0ntfy-refused"
 _DRAIN_MAX = 1 << 20
 _DRAIN_S = 2.0
 _MAX_WORKERS = 64
@@ -1359,10 +1362,12 @@ class _Handler(BaseHTTPRequestHandler):
         not a free probe — so a topic reader holding it can answer
         exactly the one prompt it was minted for and nothing else.
 
-        The buttons send allow, deny, always, or a listed menu row's
-        number — the same blast radius either way, since the semantic
-        names resolve to menu rows too. Anything else burns the token
-        and is refused.
+        The token spends only the decisions its notification showed as
+        buttons, and never a standing grant — always allow, don't ask
+        again, session-wide or bypass rows (#1464): those turn off later
+        approvals, so they need a paired device. A live token presented
+        with any other decision burns, gets a 403 and a log line, and
+        this returns ``_NTFY_REFUSED`` so the caller sends nothing more.
         """
         prefix = "/v1/sessions/"
         suffix = "/approval"
@@ -1375,17 +1380,24 @@ class _Handler(BaseHTTPRequestHandler):
             return None
         body = self._read_body() or {}
         rid = str(body.get("request_id") or "")
-        if not self._state.approval_tokens.consume(token, key, rid):
-            return None
         decision = body.get("decision")
-        # A list is unhashable: check the type before ``in``. A short
-        # digit answers the menu row with that number — option buttons
-        # send those; the injector still bounds the digit to the menu.
-        if not isinstance(decision, str) or not (
-            decision in notify.ACTION_DECISIONS
-            or (decision.isdigit() and len(decision) <= 2)
-        ):
+        spent = self._state.approval_tokens.consume(
+            token, key, rid, decision)
+        if spent == notify.SPEND_INVALID:
             return None
+        if spent != notify.SPEND_OK:
+            print(
+                f"swe remote hub: refused an ntfy action token on {key!r} "
+                f"request {rid!r}: decision {str(decision)[:16]!r} was "
+                "not offered or needs a paired device",
+                file=sys.stderr, flush=True,
+            )
+            self._send_error(
+                403, "decision_not_allowed",
+                "this notification cannot send that choice; answer it "
+                "from a paired device",
+            )
+            return _NTFY_REFUSED
         # The approval route never reads the device id back; non-None
         # is the whole grant.
         return "ntfy-action"
@@ -2253,6 +2265,8 @@ class _Handler(BaseHTTPRequestHandler):
         device_id = self._caller(path)
         if device_id is None:
             device_id = self._scoped_approval_device(path)
+            if device_id == _NTFY_REFUSED:
+                return  # the 403 already went out
         if device_id is None:
             self._send_error(401, "unauthorized", "pair this device first")
             return

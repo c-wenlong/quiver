@@ -44,7 +44,7 @@ from pathlib import Path
 
 from swe.github import cli as ghcli
 from swe.paths import atomic_write_text, remote_dir_for
-from swe.remote import pairing, sshkeys
+from swe.remote import pairing, sshkeys, supervise
 from swe.reports import transcripts as _tr
 
 CONFIG_FILE = "notify.json"
@@ -68,10 +68,16 @@ _POST_TIMEOUT_S = 5.0
 # The approval prompt is a convenience, not a record — enough to decide,
 # short enough that a lock screen shows it whole.
 _PROMPT_CAP = 280
-# The semantic decisions the push's action buttons send; a bare digit
-# answers the menu row with that number (option buttons send those).
-# The approval route accepts nothing else under an action token.
-ACTION_DECISIONS = frozenset({"allow", "deny", "always"})
+# The semantic decisions an action token may spend when the prompt
+# listed no menu rows; a bare digit answers the menu row with that
+# number (option buttons send those). ``always`` is a standing grant and
+# never rides a token: whoever reads the topic must not be able to turn
+# off later approvals (#1464). It still answers from a paired device.
+ACTION_DECISIONS = frozenset({"allow", "deny"})
+# What ``ApprovalTokens.consume`` says about a presentation.
+SPEND_OK = "ok"            # live, bound, and the decision was offered
+SPEND_INVALID = "invalid"  # unknown, expired, spent or mis-bound
+SPEND_REFUSED = "refused"  # a real token, but not a choice it carries
 # ntfy apps render at most this many action buttons; a menu with more
 # trades its tail for a link to the chat, where every option answers.
 _ACTION_MAX = 3
@@ -184,10 +190,11 @@ def retire_action_credential(home: Path | None, cfg: dict) -> None:
 class ApprovalTokens:
     """Scoped bearer tokens for ntfy approval action buttons.
 
-    A notification's Allow/Deny/Always buttons share one token bound to
-    ``(session key, request_id)``: the approval route — and no other
-    route — accepts it in place of a device credential, once, inside
-    ``TTL_S``. Tokens coexist per session because approvals overlap —
+    A notification's buttons share one token bound to ``(session key,
+    request_id)`` and to the decisions those buttons send: the approval
+    route — and no other route — accepts it in place of a device
+    credential, once, inside ``TTL_S``, for one of those decisions.
+    Standing grants are never among them (:func:`spendable`). Tokens coexist per session because approvals overlap —
     a Codex app-server holds them independently — so minting or
     resolving one request never touches another's buttons.
 
@@ -204,10 +211,22 @@ class ApprovalTokens:
         self._tokens: dict[str, dict] = {}
 
     def mint(
-        self, key: str, request_id: str, now: float | None = None
+        self,
+        key: str,
+        request_id: str,
+        choices=(),
+        now: float | None = None,
     ) -> str:
+        """A token for ``(key, request_id)`` that can spend only
+        ``choices``: the ``(decision, label)`` pairs its notification
+        shows as buttons. A choice that would outlive this prompt (see
+        :func:`spendable`) is dropped here, so a token never carries
+        one, whatever the caller passes."""
         now = time.time() if now is None else now
         token = secrets.token_urlsafe(24)
+        allowed = frozenset(
+            d for d, label in choices if spendable(d, label)
+        )
         with self._lock:
             self._prune(now)
             # A re-mint of the same request replaces its token — the
@@ -224,6 +243,7 @@ class ApprovalTokens:
             self._tokens[token] = {
                 "key": key,
                 "request_id": request_id,
+                "choices": allowed,
                 "expires_at": now + self.TTL_S,
             }
         return token
@@ -233,19 +253,31 @@ class ApprovalTokens:
         token: str,
         key: str,
         request_id: str,
+        decision,
         now: float | None = None,
-    ) -> bool:
-        """Spend ``token``; True iff it was live and bound to
-        ``(key, request_id)``. One presentation, good or bad, burns it."""
+    ) -> str:
+        """Spend ``token`` on ``decision``. One presentation, good or
+        bad, burns it.
+
+        ``SPEND_OK`` iff it was live, bound to ``(key, request_id)`` and
+        minted with ``decision`` among its choices; ``SPEND_REFUSED``
+        when the binding held but the decision is not one it carries;
+        ``SPEND_INVALID`` otherwise. An entry without ``choices`` (the
+        shape tokens had before they carried them) spends nothing."""
         now = time.time() if now is None else now
         with self._lock:
             self._prune(now)
             entry = self._tokens.pop(token, None)
-        return (
-            entry is not None
-            and entry["key"] == key
-            and entry["request_id"] == request_id
-        )
+        if (
+            entry is None
+            or entry["key"] != key
+            or entry["request_id"] != request_id
+        ):
+            return SPEND_INVALID
+        allowed = entry.get("choices") or frozenset()
+        if isinstance(decision, str) and decision in allowed:
+            return SPEND_OK
+        return SPEND_REFUSED
 
     def drop(self, key: str, request_id: str) -> None:
         """Retire the tokens answering ``request_id`` on ``key`` — that
@@ -266,6 +298,23 @@ class ApprovalTokens:
         ]
         for t in expired:
             del self._tokens[t]
+
+
+def spendable(decision, label: str = "") -> bool:
+    """True when an ntfy action token may answer with ``decision``.
+
+    Only a choice confined to the prompt on screen qualifies: ``allow``
+    (the one-shot grant), ``deny``, or a menu row's number whose label
+    is not a standing grant. Always-allow, don't-ask-again, session-wide
+    and bypass/yolo rows need a paired device (#1464).
+    """
+    if not isinstance(decision, str):
+        return False
+    if decision in ACTION_DECISIONS:
+        return True
+    if decision.isdigit() and len(decision) <= 2:
+        return not supervise.standing_grant(label)
+    return False
 
 
 class Notifier:
@@ -332,7 +381,6 @@ class Notifier:
             prompt = _tr._redact_secrets(
                 str(data.get("prompt") or "Approval requested")
             )[:_PROMPT_CAP]
-            token = self._state.approval_tokens.mint(key, rid)
             chat_url = (
                 f"{self._base}/#/sessions?chat="
                 f"{urllib.parse.quote(key, safe='')}"
@@ -344,38 +392,43 @@ class Notifier:
             ]
             options = [(n, l) for n, l in options if n.isdigit() and l]
             if options:
-                # One button per listed row while they fit; a longer
-                # menu shows its first rows plus a link to the chat,
-                # where every option answers. The push is a shortcut,
-                # never the only way in.
-                shown = options if len(options) <= _ACTION_MAX \
-                    else options[:_ACTION_MAX - 1]
-                short = [(n, l[:_ACTION_LABEL_CAP]) for n, l in shown]
-                if len({l for _n, l in short}) != len(short):
+                # One button per row a token may answer, while they fit.
+                # Standing grants (always allow, don't ask again, bypass)
+                # never get a button: a topic reader must not be able to
+                # turn off later approvals (#1464). Any row left out
+                # trades the last slot for a link to the chat, where
+                # every option answers. The push is a shortcut, never
+                # the only way in.
+                safe = [(n, l) for n, l in options if spendable(n, l)]
+                if len(safe) == len(options) and len(safe) <= _ACTION_MAX:
+                    shown = safe
+                else:
+                    # Trimmed: yes/no rows before "Edit command" and
+                    # the like, so the push keeps both answers.
+                    picked = sorted(
+                        safe, key=lambda o: not supervise.decides(o[1])
+                    )[:_ACTION_MAX - 1]
+                    shown = [o for o in safe if o in picked]
+                if len({l[:_ACTION_LABEL_CAP] for _n, l in shown}) \
+                        != len(shown):
                     # Two rows truncate to the same button text — a tap
                     # could answer either, so neither may be a button.
-                    actions = [{
-                        "action": "view",
-                        "label": f"All {len(options)} options…",
-                        "url": chat_url,
-                    }]
-                else:
-                    actions = [
-                        self._action(key, rid, n, l, token)
-                        for n, l in short
-                    ]
-                    if len(options) > _ACTION_MAX:
-                        actions.append({
-                            "action": "view",
-                            "label": f"All {len(options)} options…",
-                            "url": chat_url,
-                        })
+                    shown = []
             else:
-                actions = [
-                    self._action(key, rid, "allow", "Allow", token),
-                    self._action(key, rid, "deny", "Deny", token),
-                    self._action(key, rid, "always", "Always", token),
-                ]
+                shown = [("allow", "Allow"), ("deny", "Deny")]
+            # The token spends exactly the buttons this push shows, and
+            # mint drops any standing grant whatever it is handed.
+            token = self._state.approval_tokens.mint(key, rid, shown)
+            actions = [
+                self._action(key, rid, n, l[:_ACTION_LABEL_CAP], token)
+                for n, l in shown
+            ]
+            if len(shown) < len(options):
+                actions.append({
+                    "action": "view",
+                    "label": f"All {len(options)} options…",
+                    "url": chat_url,
+                })
             self._post(cfg, {
                 "topic": cfg["topic"],
                 "title": f"{title}: approval needed",

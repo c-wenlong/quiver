@@ -1,6 +1,7 @@
 """hub.py: auth, pairing route, REST endpoints, SSE stream."""
 
 import http.client
+import io
 import json
 import os
 import queue
@@ -1427,6 +1428,11 @@ class TestHubWriteRoutes(unittest.TestCase):
             conn.close()
 
 
+# What a push shows: allow/deny, or devin's one-shot yes and its no.
+_BUTTONS = (("allow", "Allow"), ("deny", "Deny"))
+_DEVIN_BUTTONS = (("1", "Yes  (Approve once)"), ("8", "No"))
+
+
 class TestScopedApprovalToken(unittest.TestCase):
     """The ntfy action-button bearer: scoped, single-use, approval-only.
 
@@ -1446,7 +1452,7 @@ class TestScopedApprovalToken(unittest.TestCase):
         )
 
     def test_scoped_token_answers_approval(self):
-        tok = self.tokens.mint("claude:s1", "r1")
+        tok = self.tokens.mint("claude:s1", "r1", _BUTTONS)
         status, data = self._post_approval(
             {"request_id": "r1", "decision": "allow"}, tok)
         # Auth passed; headless claude just can't take the decision.
@@ -1456,53 +1462,102 @@ class TestScopedApprovalToken(unittest.TestCase):
         )
 
     def test_scoped_token_is_single_use(self):
-        tok = self.tokens.mint("claude:s1", "r1")
+        tok = self.tokens.mint("claude:s1", "r1", _BUTTONS)
         body = {"request_id": "r1", "decision": "allow"}
         first, _ = self._post_approval(body, tok)
         self.assertNotEqual(first, 401)
         second, _ = self._post_approval(body, tok)
         self.assertEqual(second, 401)
 
-    def test_scoped_token_can_pick_a_menu_row(self):
-        # Option buttons send the row's number — a digit answers the
-        # prompt the token was minted for, the same grant allow/deny
-        # already had through menu_key_for. Non-string decisions and
-        # out-of-range digit shapes still burn and refuse.
-        for decision in ("2", "0"):
-            tok = self.tokens.mint("claude:s1", "r1")
-            status, _ = self._post_approval(
+    def test_scoped_token_can_pick_an_offered_menu_row(self):
+        # Option buttons send the row's number — a digit the push
+        # offered answers the prompt the token was minted for.
+        for decision in ("1", "8"):
+            tok = self.tokens.mint("claude:s1", "r1", _DEVIN_BUTTONS)
+            status, data = self._post_approval(
                 {"request_id": "r1", "decision": decision}, tok)
-            self.assertNotEqual(status, 401, decision)
-        for decision in ("123", 3, None, ["allow"]):
-            tok = self.tokens.mint("claude:s1", "r1")
-            status, _ = self._post_approval(
+            self.assertEqual(status, 409, (decision, data))
+
+    def _assert_refused(self, decision, tok):
+        with patch("sys.stderr", io.StringIO()) as err:
+            status, data = self._post_approval(
                 {"request_id": "r1", "decision": decision}, tok)
-            self.assertEqual(status, 401, decision)
+        self.assertEqual(status, 403, (decision, data))
+        self.assertEqual(json.loads(data)["error"]["code"],
+                         "decision_not_allowed")
+        self.assertIn("refused an ntfy action token", err.getvalue())
+        # The refusal burned the token: the offered choice is gone too.
+        status, _ = self._post_approval(
+            {"request_id": "r1", "decision": "1"}, tok)
+        self.assertEqual(status, 401, decision)
+
+    def test_scoped_token_cannot_pick_an_unoffered_row(self):
+        # #1464: the push showed rows 1 and 8; devin's bypass sits at
+        # row 5. A topic reader holding the token cannot reach it, nor
+        # any other unoffered answer or malformed decision.
+        for decision in ("5", "2", "3", "0", "123", "always", "allow",
+                         3, None, ["1"]):
+            tok = self.tokens.mint("claude:s1", "r1", _DEVIN_BUTTONS)
+            self._assert_refused(decision, tok)
+
+    def test_scoped_token_cannot_pick_a_standing_row_even_if_offered(self):
+        # Even a push that (wrongly) offered every row gets a token that
+        # cannot spend always-allow or bypass rows.
+        full = list(_DEVIN_BUTTONS) + [
+            ("3", "Yes, always allow `git` commands in `repo`"),
+            ("5", "Yes, switch to bypass mode"),
+        ]
+        for decision in ("3", "5"):
+            tok = self.tokens.mint("claude:s1", "r1", full)
+            self._assert_refused(decision, tok)
+        tok = self.tokens.mint(
+            "claude:s1", "r1", list(_BUTTONS) + [("always", "Always")])
+        with patch("sys.stderr", io.StringIO()):
+            status, _ = self._post_approval(
+                {"request_id": "r1", "decision": "always"}, tok)
+        self.assertEqual(status, 403)
+
+    def test_token_without_choices_is_refused(self):
+        # A record in the pre-#1464 shape carries no choices: it spends
+        # nothing rather than any row.
+        tok = self.tokens.mint("claude:s1", "r1", _BUTTONS)
+        del self.tokens._tokens[tok]["choices"]
+        with patch("sys.stderr", io.StringIO()):
             status, _ = self._post_approval(
                 {"request_id": "r1", "decision": "allow"}, tok)
-            self.assertEqual(status, 401, decision)
+        self.assertEqual(status, 403)
+
+    def test_paired_device_still_answers_any_row(self):
+        # The bypass row stays reachable from a paired device: the
+        # route authenticates and goes on to the injector (headless
+        # claude then refuses the decision itself).
+        cred = self.srv.pair()["credential"]
+        for decision in ("5", "always", "allow"):
+            status, data = self._post_approval(
+                {"request_id": "r1", "decision": decision}, cred)
+            self.assertEqual(status, 409, (decision, data))
 
     def test_scoped_token_bound_to_request(self):
-        tok = self.tokens.mint("claude:s1", "r1")
+        tok = self.tokens.mint("claude:s1", "r1", _BUTTONS)
         status, _ = self._post_approval(
             {"request_id": "r2", "decision": "allow"}, tok)
         self.assertEqual(status, 401)
 
     def test_scoped_token_bound_to_session(self):
-        tok = self.tokens.mint("claude:other", "r1")
+        tok = self.tokens.mint("claude:other", "r1", _BUTTONS)
         status, _ = self._post_approval(
             {"request_id": "r1", "decision": "allow"}, tok)
         self.assertEqual(status, 401)
 
     def test_scoped_token_expires(self):
         past = time.time() - self.tokens.TTL_S - 1
-        tok = self.tokens.mint("claude:s1", "r1", now=past)
+        tok = self.tokens.mint("claude:s1", "r1", _BUTTONS, now=past)
         status, _ = self._post_approval(
             {"request_id": "r1", "decision": "allow"}, tok)
         self.assertEqual(status, 401)
 
     def test_scoped_token_opens_no_other_route(self):
-        tok = self.tokens.mint("claude:s1", "r1")
+        tok = self.tokens.mint("claude:s1", "r1", _BUTTONS)
         for method, path, body in (
             ("POST", "/v1/sessions/claude:s1/message", {"text": "hi"}),
             ("POST", "/v1/sessions/claude:s1/control",
@@ -1516,7 +1571,7 @@ class TestScopedApprovalToken(unittest.TestCase):
             self.assertEqual(status, 401, (method, path))
 
     def test_resolved_approval_retires_token(self):
-        tok = self.tokens.mint("claude:s1", "r1")
+        tok = self.tokens.mint("claude:s1", "r1", _BUTTONS)
         self.srv.state.emit(
             "claude:s1",
             protocol.event(
@@ -1531,8 +1586,8 @@ class TestScopedApprovalToken(unittest.TestCase):
     def test_resolved_approval_keeps_other_requests_tokens(self):
         # Overlapping approvals on one session: resolving r1 retires
         # r1's token only — r2's buttons must keep working.
-        dead = self.tokens.mint("claude:s1", "r1")
-        live = self.tokens.mint("claude:s1", "r2")
+        dead = self.tokens.mint("claude:s1", "r1", _BUTTONS)
+        live = self.tokens.mint("claude:s1", "r2", _BUTTONS)
         self.srv.state.emit(
             "claude:s1",
             protocol.event(
