@@ -525,6 +525,66 @@ import Testing
         #expect(HubClient.launchBody(harness: "claude", cwd: "/p", prompt: "go")["yolo"] == nil)
     }
 
+    /// A machine row decodes `providers_at_launch` and `provider_names`
+    /// when the hub sends them, slugs kept as sent (no snake-case
+    /// rewrite of `open_router`), and leaves both nil on an older row.
+    @Test func machineRowDecodesTheProviderFields() throws {
+        let json = Data("""
+        {"machines": [
+          {"id": "new", "launchable": ["claude", "codex"],
+           "providers_at_launch": {"claude": ["anthropic", "open_router"], "codex": []},
+           "provider_names": {"anthropic": "Anthropic", "open_router": "OpenRouter"}},
+          {"id": "old", "launchable": ["claude"]}
+        ]}
+        """.utf8)
+        let rows = try HubWire.decoder.decode(HubMachinesResponse.self, from: json).machines
+        #expect(rows[0].providersAtLaunch == ["claude": ["anthropic", "open_router"], "codex": []])
+        #expect(rows[0].providerNames == ["anthropic": "Anthropic", "open_router": "OpenRouter"])
+        #expect(rows[1].providersAtLaunch == nil)
+        #expect(rows[1].providerNames == nil)
+    }
+
+    /// The Provider menu shows only for a row reporting
+    /// `providers_at_launch` with a non-empty list for the harness; a
+    /// pick survives only while offered; the body carries `provider`
+    /// only when one is picked.
+    @Test func launchOptionsReadTheMachinesProviderFields() {
+        let machine = HubMachine(id: "m", launchable: ["claude", "codex", "gemini"],
+                                 providersAtLaunch: ["claude": ["anthropic", "openrouter"],
+                                                     "codex": []],
+                                 providerNames: ["anthropic": "Anthropic"])
+        #expect(LaunchOptions.showsProvider("claude", on: machine))
+        #expect(LaunchOptions.providers("claude", on: machine) == ["anthropic", "openrouter"])
+        #expect(!LaunchOptions.showsProvider("codex", on: machine))
+        #expect(!LaunchOptions.showsProvider("gemini", on: machine))
+        #expect(!LaunchOptions.showsProvider(nil, on: machine))
+
+        // Labels come from `provider_names`, else the slug.
+        #expect(LaunchOptions.providerName("anthropic", on: machine) == "Anthropic")
+        #expect(LaunchOptions.providerName("openrouter", on: machine) == "openrouter")
+
+        // A pick holds while offered; a harness or machine switch
+        // that drops it falls back to the harness default.
+        #expect(LaunchOptions.provider("openrouter", harness: "claude", on: machine) == "openrouter")
+        #expect(LaunchOptions.provider("openrouter", harness: "codex", on: machine) == nil)
+        #expect(LaunchOptions.provider(nil, harness: "claude", on: machine) == nil)
+
+        // A row too old to report the field shows nothing.
+        let old = HubMachine(id: "m2", launchable: ["claude"])
+        #expect(!LaunchOptions.showsProvider("claude", on: old))
+        #expect(!LaunchOptions.showsProvider("claude", on: nil))
+        #expect(LaunchOptions.provider("anthropic", harness: "claude", on: old) == nil)
+        let empty = HubMachine(id: "m3", providersAtLaunch: [:])
+        #expect(!LaunchOptions.showsProvider("claude", on: empty))
+
+        // The body's `provider`: present only when picked.
+        #expect(HubClient.launchBody(harness: "claude", cwd: "/p", prompt: "go",
+                                   provider: "anthropic")["provider"] as? String == "anthropic")
+        #expect(HubClient.launchBody(harness: "claude", cwd: "/p", prompt: "go")["provider"] == nil)
+        #expect(HubClient.launchBody(harness: "claude", cwd: "/p", prompt: "go",
+                                   provider: " ")["provider"] == nil)
+    }
+
     /// `recent_models` wins over `last_models`; a task-harness row reads
     /// the same way, blanks and repeats dropped.
     @Test func recentModelsPreferTheListAndFallBackToTheLastModel() {
