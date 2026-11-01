@@ -81,6 +81,22 @@ struct StatusDot: View {
     }
 }
 
+/// After a session row's title: activity this phone hasn't read. Set
+/// on the title's baseline and raised to the middle of its lowercase
+/// letters, so it follows the title at any text size.
+struct UnreadDot: View {
+    @ScaledMetric(relativeTo: .subheadline) private var side: CGFloat = 7
+
+    var body: some View {
+        Circle().fill(Theme.accent)
+            .frame(width: side, height: side)
+            .alignmentGuide(.firstTextBaseline) { $0[.bottom] + side * 0.2 }
+            // A bare shape is no accessibility element; this one reads.
+            .accessibilityElement()
+            .accessibilityLabel("Unread")
+    }
+}
+
 /// The Mac app's `Badge`: a small pill, hairline on `subtle`.
 struct Badge: View {
     var text: String

@@ -1939,11 +1939,24 @@ const SessionChat = (() => {
     paintRail();
   }
 
+  /* sessions.js's SessionUnread, when loaded: a failed read post must
+   * never break the chat. */
+  function unreadHook(name, ...args) {
+    const u = globalThis.SessionUnread;
+    if (!u) return;
+    try {
+      const p = u[name](...args);
+      if (p && p.catch) p.catch(() => {});
+    } catch { /* best effort */ }
+  }
+
   function appendEvent(ev, live = true) {
     const stick = live && nearBottom();
     const d = ev.data || {};
     if (ev.type === "message.appended") {
       appendMessage(d, live, ev.seq);
+      // A hidden tab isn't reading: its read waits for the tab to show.
+      if (live && document.visibilityState !== "hidden") unreadHook("activity", chat.key, d.ts);
     } else if (ev.type === "session.status") {
       const status = d.status || "";
       // The turn ended (or stopped to ask) without a message to show.
@@ -2804,6 +2817,7 @@ const SessionChat = (() => {
     const machine = (data.machines || []).find((m) => m.id === row.machine_id);
     chat.row = Object.assign({}, chat.row || {}, row, machine && machine.name ? { machine: machine.name } : {});
     chat.rowKnown = true;
+    unreadHook("seen", chat.key, row.last_active_at);
     updateOwnership();
     // The folder is known now: absolute page paths become previewable.
     repaintPreviewButtons();
@@ -2833,6 +2847,8 @@ const SessionChat = (() => {
     chat.retries = 0;
     chat.details = opts.details || null;
     chat.row = opts.row ? Object.assign({}, opts.row) : null;
+    // This browser's read cursor (#1439): now, and as replies arrive.
+    unreadHook("opened", key, chat.row ? chat.row.last_active_at : 0);
     chat.rowKnown = false;
     chat.awaitingReply = false;
     chat.seq = 0;
@@ -2889,6 +2905,7 @@ const SessionChat = (() => {
     chat.gen++;
     chat.held = null;
     closeStream();
+    if (chat.key) unreadHook("closed", chat.key);
     document.body.classList.remove("chat-open");
     chat.key = null;
     chat.row = null;
@@ -4354,6 +4371,7 @@ const SessionChat = (() => {
       // Back on the tab: a model switched elsewhere meanwhile shows now,
       // and so do sends another device queued, edited or removed.
       refreshModel();
+      unreadHook("activity", chat.key);
       if (chat.rowKnown) loadQueue(chat.gen);
       if (!chat.stream) {
         chat.retries = 0;

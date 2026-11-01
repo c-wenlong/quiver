@@ -170,7 +170,7 @@ struct TaskDetailView: View {
                 CardList(data: keys.map(TaskSessionKey.init)) { slot in
                     if let row = app.session(slot.key) {
                         NavigationLink(value: Route.chat(row.key)) {
-                            SessionRowView(row: row)
+                            SessionRowView(row: row, unread: app.isUnread(row))
                         }
                         .buttonStyle(RowButtonStyle())
                         .contextMenu {

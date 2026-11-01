@@ -182,6 +182,11 @@ final class ChatModel {
     /// Bumped by every start() and stop(), so a start() still fetching
     /// history doesn't open a stream after the chat was left.
     private var generation = 0
+    /// On screen, between start() and stop(): what it shows counts as read.
+    private(set) var isOpen = false
+    /// The newest message stamp loaded (epoch seconds), which can be
+    /// newer than the list's `last_active_at` while the chat streams.
+    private(set) var newestActivity: Double?
 
     /// Messages per `/messages` page. A long session's 500-message page
     /// was ~850 KB and took seconds to lay out on the phone.
@@ -260,6 +265,9 @@ final class ChatModel {
     /// what's on screen and replays events after `cursor`.
     func start() async {
         guard let client = hubClient else { return }
+        // On screen: its unread dot goes and the hub hears it was read.
+        isOpen = true
+        app?.chatOpened(key, newest: newestActivity)
         generation += 1
         let gen = generation
         streamTask?.cancel()
@@ -311,6 +319,12 @@ final class ChatModel {
         commands.reset()
         flushPending()
         live = false
+        // Only a chat that was on screen was read. A cached one the app
+        // drops later, or one from a hub no longer on screen, says nothing.
+        if isOpen {
+            isOpen = false
+            if hubClient != nil { app?.chatClosed(key, newest: newestActivity) }
+        }
     }
 
     /// The agent is mid-turn, or about to start on a send: worth a stop.
@@ -601,6 +615,9 @@ final class ChatModel {
         if !replayingHistory, ["assistant", "thinking", "tool_use"].contains(msg.kind ?? "assistant") {
             modelSwitch?.noteReply(at: Date(), messageTs: msg.ts)
         }
+        if let ts = msg.ts { newestActivity = max(newestActivity ?? ts, ts) }
+        // Seen live on screen: the read cursor follows, debounced.
+        if isOpen, !replayingHistory { app?.chatGotMessage(key) }
         Self.add(msg, id: "m\(seq)", to: &items, cards: &toolCards, orphans: &orphanResults)
     }
 

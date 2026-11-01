@@ -71,6 +71,7 @@ are server changes in `src/quiver/remote/`.
 - [x] Filter chips with counts: All, Active, Needs you
 - [x] Groups: machine, then project folder; finished sessions fold into an "Earlier" group
 - [x] Session row: status dot, title, harness, status and age; an eye icon for observed and a link icon for attached
+- [x] Unread dot after the title when the session moved since this phone last read it; opening the chat clears it and tells the hub (#1439)
 - [x] Pull to refresh
 - [x] Swipe to attach or open (Open sits beside attach/detach on a half swipe and is the only right-swipe action on a row that cannot attach)
 - [x] Empty state: "No sessions on this machine yet"
