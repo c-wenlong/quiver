@@ -65,7 +65,9 @@ class State:
     delivered: list[str] = field(default_factory=list)
     # Service id to the incident its last "started" alert named ("" for none).
     down: dict[str, str] = field(default_factory=dict)
-    # Services that have had a first reading, which only seeds.
+    # "<id> <feed url>" for each page that has had a first reading, which
+    # only seeds. The feed is part of it: a card moved to another feed is
+    # a new page, with nothing owed from the old one.
     seeded: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -96,20 +98,25 @@ def step(state: State, statuses: Iterable, notify: bool = True) -> list[Alert]:
     so turning pushes on later doesn't announce old news."""
     statuses = list(statuses)
     alerts: list[Alert] = []
+    still_open: set[str] = set()
     for status in statuses:
         service = status.service
         if service.group not in PROVIDER_GROUPS or status.report is None:
             continue
         report = status.report
-        first = service.id not in state.seeded
+        page = _page(service)
+        first = page not in state.seeded
         if first:
-            state.seeded.append(service.id)
+            state.seeded = [k for k in state.seeded if not k.startswith(f"{service.id} ")]
+            state.seeded.append(page)
+            state.down.pop(service.id, None)
         announce = notify and not first
         generic = f"{service.id}@status"
         if report.health >= _threshold(service.group):
             incidents = [i for i in report.incidents if not i.maintenance]
             keyed = [(f"{service.id}@{i.id}", i.name) for i in incidents] \
                 or [(generic, report.summary)]
+            still_open.update(k for k, _ in keyed)
             fresh = [(k, name) for k, name in keyed if k not in state.delivered]
             state.delivered.extend(k for k, _ in fresh)
             if not announce:
@@ -130,11 +137,25 @@ def step(state: State, statuses: Iterable, notify: bool = True) -> list[Alert]:
                                 incident or None, service.page_url))
     # A page no longer tracked can't resolve; let it go quietly.
     tracked = {s.service.id for s in statuses}
+    pages = {_page(s.service) for s in statuses}
     state.down = {k: v for k, v in state.down.items() if k in tracked}
-    state.seeded = [k for k in state.seeded if k in tracked]
-    if len(state.delivered) > CAP:
-        del state.delivered[:len(state.delivered) - CAP]
+    state.seeded = [k for k in state.seeded if k in pages]
+    # The oldest go first, but never a key still open: forgetting one
+    # would announce it again on the next unchanged poll.
+    excess = len(state.delivered) - CAP
+    if excess > 0:
+        kept = []
+        for key in state.delivered:
+            if excess > 0 and key not in still_open:
+                excess -= 1
+            else:
+                kept.append(key)
+        state.delivered = kept
     return alerts
+
+
+def _page(service) -> str:
+    return f"{service.id} {service.feed_url}"
 
 
 def _read(path: Path) -> dict | None:
@@ -175,10 +196,11 @@ class Tracker:
         if self._state is None or (disk is not None and disk != self._seen):
             self._state = State.from_dict(disk)
         self._seen = disk
-        before = self._state.to_dict()
         alerts = step(self._state, statuses, notify)
         after = self._state.to_dict()
-        if after != before or disk is None:
+        # Against what is on disk, not the last state: a save that failed
+        # is retried on the next check even when nothing changed since.
+        if after != self._seen:
             try:
                 atomic_write_text(self.path, json.dumps(after, indent=1, sort_keys=True))
                 self._seen = after

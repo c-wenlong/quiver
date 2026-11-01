@@ -109,7 +109,7 @@ class TestRule(unittest.TestCase):
         state = alerts.State()
         down = _status("claude", Health.MINOR, [_incident("a")])
         self.assertEqual(alerts.step(state, [down]), [])
-        self.assertEqual(state.seeded, ["claude"])
+        self.assertEqual(state.seeded, ["claude https://status.claude.com/api/v2/summary.json"])
         self.assertEqual(alerts.step(state, [down]), [])
         self.assertEqual(alerts.step(state, [_status("claude", Health.OPERATIONAL)]), [])
 
@@ -134,13 +134,35 @@ class TestRule(unittest.TestCase):
 
     def test_delivered_is_capped(self):
         state = _primed()
-        many = [_incident(f"i{n}") for n in range(alerts.CAP + 10)]
-        alerts.step(state, [_status("claude", Health.MINOR, many)])
+        old = [_incident(f"o{n}") for n in range(alerts.CAP)]
+        alerts.step(state, [_status("claude", Health.MINOR, old)])
+        new = [_incident(f"i{n}") for n in range(10)]
+        alerts.step(state, [_status("claude", Health.MINOR, new)])
         self.assertEqual(len(state.delivered), alerts.CAP)
-        self.assertEqual(state.delivered[-1], f"claude@i{alerts.CAP + 9}")
+        self.assertEqual(state.delivered[-1], "claude@i9")
+        self.assertNotIn("claude@o0", state.delivered)
+
+    def test_cap_keeps_open_incidents(self):
+        state = _primed()
+        many = [_incident(f"i{n}") for n in range(alerts.CAP + 10)]
+        reading = [_status("claude", Health.MINOR, many)]
+        self.assertEqual(len(alerts.step(state, reading)), alerts.CAP + 10)
+        self.assertEqual(alerts.step(state, reading), [])
+
+    def test_moved_feed_is_a_new_page(self):
+        from dataclasses import replace
+        state = _primed()
+        alerts.step(state, [_status("claude", Health.MINOR, [_incident("a")])])
+        moved = _status("claude", Health.MINOR, [_incident("b")])
+        moved.service = replace(moved.service, feed_url="https://example.com/api/v2/summary.json")
+        self.assertEqual(alerts.step(state, [moved]), [])
+        self.assertEqual(state.down, {})
+        up = _status("claude", Health.OPERATIONAL)
+        up.service = moved.service
+        self.assertEqual(alerts.step(state, [up]), [])
 
     def test_state_round_trip_and_bad_file(self):
-        state = alerts.State(["claude@a"], {"claude": "x"}, ["claude"])
+        state = alerts.State(["claude@a"], {"claude": "x"}, ["claude https://x"])
         self.assertEqual(alerts.State.from_dict(state.to_dict()), state)
         self.assertEqual(alerts.State.from_dict({"delivered": "nope", "down": [1], "seeded": 1}),
                          alerts.State())
@@ -246,6 +268,9 @@ class TestHub(unittest.TestCase):
         with patch("swe.status.alerts.atomic_write_text", side_effect=OSError("read-only")):
             self.assertEqual(len(tracker.check(down)), 1)
             self.assertEqual(tracker.check(down), [])
+        # Writable again: the unchanged poll saves, so a restart is quiet.
+        tracker.check(down)
+        self.assertEqual(alerts.Tracker(self.home).check(down), [])
 
     def test_tracker_adopts_another_hubs_save(self):
         down = [_status("claude", Health.MINOR, [_incident("a")])]
