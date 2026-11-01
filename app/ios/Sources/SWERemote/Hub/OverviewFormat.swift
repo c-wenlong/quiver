@@ -5,6 +5,25 @@ import Foundation
 /// rules are tested on their own; the layout numbers follow the Mac's
 /// `ActivityCard` and the web's `drawHeatmap`.
 enum OverviewFormat {
+    // MARK: Source
+
+    /// Where the figures come from: the hub's logs, every machine's, or
+    /// one satellite's daily totals (#525). Worded as the web header's
+    /// `overviewWhere`.
+    static func source(_ overview: OverviewResponse) -> String? {
+        let machines = overview.machines ?? []
+        let filter = overview.machineFilter ?? "all"
+        if machines.count > 1 && filter == "all" {
+            return "From the logs on \(machines.count) machines"
+        }
+        if let one = machines.first(where: { $0.id == filter }), one.hub != true {
+            return "From the daily totals \(one.name ?? one.id) reports"
+        }
+        return overview.machine.map {
+            "From the logs on \(UsageMachineInfo(id: nil, name: $0, online: nil).displayName)"
+        }
+    }
+
     // MARK: Days
 
     /// Hub days are ISO dates in the period's zone; parsing and printing

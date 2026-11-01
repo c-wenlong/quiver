@@ -13,7 +13,8 @@ struct UsageView: View {
             TimelineView(.everyMinute) { context in
                 UsageSections(model: model, now: context.date,
                               retryLimits: { Task { await model.loadUsage(app: app, refresh: false) } },
-                              retrySpend: { Task { await model.loadPeriod(app: app, model.period, force: true) } })
+                              retrySpend: { Task { await model.loadPeriod(app: app, model.period, force: true) } },
+                              selectMachine: { id in Task { await model.selectMachine(id, app: app) } })
             }
         }
         .refreshable { await model.refresh(app: app) }
@@ -31,6 +32,7 @@ struct UsageSections: View {
     var now: Date
     var retryLimits: () -> Void = {}
     var retrySpend: () -> Void = {}
+    var selectMachine: (String?) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -50,6 +52,10 @@ struct UsageSections: View {
             SectionTitle(text: "Spend").padding(.top, 20)
             PeriodChips(selection: $model.period)
                 .padding(.bottom, 4)
+            if model.shownMachines.count > 1 {
+                MachineChips(machines: model.shownMachines, selection: model.machine, select: selectMachine)
+                    .padding(.bottom, 4)
+            }
             if let overview = model.overviews[model.period] {
                 SpendSection(overview: overview, period: model.period, harnessName: model.harnessName)
             } else if let error = model.overviewErrors[model.period] {

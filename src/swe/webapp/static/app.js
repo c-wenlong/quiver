@@ -468,7 +468,8 @@ function route() {
 
 const PERIODS = [["today", "Today"], ["7d", "7 days"], ["month", "This month"], ["30d", "30 days"],
   ["90d", "90 days"], ["365d", "365 days"], ["all", "All time"]];
-const overview = { period: "month", data: null, gen: 0, focus: null };
+// machine: "" adds every machine up, else one machine's id (#525).
+const overview = { period: "month", machine: "", data: null, gen: 0, focus: null };
 
 /* First run (no shared AGENTS.md on the hub machine): the Mac app opens
  * its setup sheet once at launch, then remembers it was offered. Here a
@@ -516,6 +517,7 @@ async function renderOverview(_id, rescan = false) {
     paintOverview();
   }
   const q = new URLSearchParams({ period: overview.period, tz: timeZone() });
+  if (overview.machine) q.set("machine", overview.machine);
   if (rescan) q.set("rescan", "1");
   const { status, data } = await api(`/v1/app/overview?${q}`);
   if (gen !== overview.gen) return;
@@ -533,10 +535,46 @@ async function renderOverview(_id, rescan = false) {
 
 function overviewHeader(busy) {
   const d = overview.data;
-  const where = d && d.machine ? ` on ${d.machine}` : "";
+  const where = d ? overviewWhere(d) : "";
   const updated = d && d.scanned_at ? `<span class="caption">Updated ${Fmt.ago(d.scanned_at)}</span>` : "";
   return pageHeader("Overview", `Tokens and spend across every harness${where}.`,
     `${updated}<button class="icon-button${busy ? " spinning" : ""}" id="rescan" aria-label="Rescan" title="Rescan">${icon("rescan")}</button>`);
+}
+
+/* " on <machine>" or " across N machines" for the header. */
+function overviewWhere(d) {
+  const machines = d.machines || [];
+  if (machines.length > 1 && (d.machine_filter || "all") === "all") {
+    return ` across ${machines.length} machines`;
+  }
+  const one = machines.find((m) => m.id === d.machine_filter);
+  const name = one ? one.name : d.machine;
+  return name ? ` on ${name}` : "";
+}
+
+/* Each machine's tokens and spend for the period, the hub first, as rows
+ * that filter the page to that machine; shown once a satellite reports
+ * (#525). A satellite's figures are its daily totals, so its row and its
+ * filtered page carry no top models. */
+function machinesCard(d) {
+  const machines = d.machines || [];
+  if (machines.length < 2) return "";
+  const total = machines.reduce((sum, m) => sum + m.tokens, 0);
+  const pick = d.machine_filter || "all";
+  const row = (id, name, tokens, cost, note) => {
+    const share = total > 0 ? tokens / total : 0;
+    return `<button class="machine-row${pick === id ? " selected" : ""}" data-machine="${esc(id)}"
+      aria-pressed="${pick === id}" title="${esc(note || name)}">
+      <span class="machine-name">${esc(name)}</span>
+      <span class="machine-figures num">${Fmt.tokens(tokens)} · ${Fmt.dollars(cost)}</span>
+      <span class="machine-bar" style="--share:${(share * 100).toFixed(1)}%"></span></button>`;
+  };
+  const cost = machines.reduce((sum, m) => sum + m.cost_usd, 0);
+  const rows = [row("all", "All machines", total, cost, "Every machine added up")]
+    .concat(machines.map((m) => row(m.id, m.name, m.tokens, m.cost_usd,
+      m.hub ? `${m.name} (this hub)` : m.reported_at ? `${m.name}, reported ${Fmt.ago(m.reported_at)}` : m.name)));
+  return `<div class="card"><div class="card-title">Machines</div>
+    <div class="machine-rows">${rows.join("")}</div></div>`;
 }
 
 function bindOverviewHeader() {
@@ -552,10 +590,16 @@ function paintOverview() {
     <div class="stack">${setupCard(d)}${notes}
       <div class="overview">
         <div class="main stack">${totalCard(d)}${breakdownCard(d)}</div>
-        <div class="side stack">${quickCard(d)}${activityCard(d)}</div>
+        <div class="side stack">${machinesCard(d)}${quickCard(d)}${activityCard(d)}</div>
       </div>
     </div></div>`;
   bindOverviewHeader();
+  for (const btn of document.querySelectorAll("[data-machine]")) {
+    btn.onclick = () => {
+      overview.machine = btn.dataset.machine === "all" ? "" : btn.dataset.machine;
+      renderOverview("overview");
+    };
+  }
   for (const tab of document.querySelectorAll("[data-period]")) {
     tab.onclick = () => { overview.period = tab.dataset.period; renderOverview("overview"); };
   }

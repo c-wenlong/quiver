@@ -2015,6 +2015,10 @@ class _Handler(BaseHTTPRequestHandler):
                     period=str((args.get("period") or [""])[0]),
                     tz_name=str((args.get("tz") or [""])[0]) or None,
                     rescan=str((args.get("rescan") or [""])[0]) in {"1", "true"},
+                    machine=str((args.get("machine") or [""])[0]) or None,
+                    here={"id": self._state.machine_id,
+                          "name": self._state.machine.get("name") or self._state.machine_id},
+                    others=self._overview_machines(),
                 )
             except (OSError, sqlite3.Error) as exc:
                 self._send_error(503, "ledger_unavailable", str(exc))
@@ -3629,6 +3633,27 @@ class _Handler(BaseHTTPRequestHandler):
             if has_more and tail_events else None,
             "has_more": has_more,
         })
+
+    def _overview_machines(self) -> list[dict]:
+        """Each satellite's daily token rows for the Overview (#525):
+        ``{"id", "name", "reported_at", "days"}``, only for satellites
+        whose agent sends them."""
+        machines = catalog_mod.load_machines(self._state.home)
+        out = []
+        for record in usage_mod.load_satellites(self._state.home):
+            mid = record["machine_id"]
+            daily = record.get("daily_usage")
+            if mid == self._state.machine_id or not isinstance(daily, dict):
+                continue
+            out.append({
+                "id": mid,
+                "name": (machines.get(mid) or {}).get("name") or mid,
+                # When these daily rows were reported, which is older than
+                # the limits when the last reports came without them.
+                "reported_at": daily.get("reported_at", record.get("reported_at")),
+                "days": daily.get("days") or [],
+            })
+        return out
 
     def _usage_machines(self, own: dict) -> list[dict]:
         """``/v1/usage``'s per-machine list: the hub, then each satellite.

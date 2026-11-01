@@ -1317,6 +1317,18 @@ two clocks to agree. The top-level `harnesses` stay the hub's own rows.
 The iOS app's Usage tab reads this route, with a machine switcher once
 more than one machine reports.
 
+The same push carries `daily_usage` (#525): `{time_zone, days: [{date,
+harness, input, output, cache_read, cache_write, reasoning, tokens,
+cost_usd, unpriced_tokens}]}`, this machine's tokens and cost per local
+day and harness for the last 400 days. The satellite scans its own web
+ledger (`data/web-ledger/`, new lines only after the first pass) and
+prices from the price list on disk, with no network; a ledger it can't
+read leaves the field out and the limits still go. The hub stores it
+with the report, never returns it from `/v1/usage`, and adds it into
+`GET /v1/app/overview`, which takes `machine=<id>` to show one machine
+and lists every machine's period totals under `machines`. A satellite's
+rows carry no model, so its view has no top models.
+
 `journal.py` is the reconnect story: seq-numbered per-session ring on
 disk; client resumes with `?last=seq`. "Open the app, catch up on 30 min
 of agent work" replays the journal instead of refetching a transcript —

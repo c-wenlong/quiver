@@ -113,6 +113,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Overview across machines (web and iPhone).</strong> Satellites now add
+their daily token and cost totals per harness to the usage report
+they post every five minutes (<code>daily_usage</code>, from their own ledger,
+priced offline). The hub adds them into the Overview: totals, harness
+split, daily rows and heatmap cover every machine, and <code>machine=&lt;id&gt;</code>
+shows one. The web Overview gets a Machines card with each machine's
+tokens and spend for the period (pick one to filter the page), and the
+iPhone's Usage tab a row of machine chips under the periods. A
+satellite's days are its own local days, and its view has no top
+models, since daily rows carry none. Closes</p>
+</li>
 <li><p><strong>Mac and web: Hub sync card.</strong> Settings › Files shows <code>swe sync status</code> for <code>~/.swe</code> (branch mode, uncommitted changes by primitive,
 commits to push and pull, new commits on <code>origin/main</code>, files kept
 out) with a refresh that fetches first, and a Sync button that runs

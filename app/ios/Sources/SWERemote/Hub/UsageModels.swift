@@ -231,6 +231,21 @@ struct OverviewResponse: Decodable {
     let heatmap: Heatmap?
     let scannedAt: Double?
     let notes: [String]?
-    /// The hub machine's name: the ledger reads that machine's logs only.
+    /// The hub machine's name.
     let machine: String?
+    /// Each machine's tokens and cost for the period, the hub first; more
+    /// than one once a satellite reports its daily totals (#525).
+    var machines: [Machine]? = nil
+    /// "all", or the one machine id the figures are for.
+    var machineFilter: String? = nil
+
+    struct Machine: Decodable, Hashable, Identifiable {
+        let id: String
+        let name: String?
+        let hub: Bool?
+        let tokens: Int?
+        let costUsd: Double?
+        /// A satellite's clock when it reported; nil for the hub.
+        let reportedAt: Double?
+    }
 }

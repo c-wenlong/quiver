@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Overview across machines (web and iPhone).** Satellites now add
+  their daily token and cost totals per harness to the usage report
+  they post every five minutes (`daily_usage`, from their own ledger,
+  priced offline). The hub adds them into the Overview: totals, harness
+  split, daily rows and heatmap cover every machine, and `machine=<id>`
+  shows one. The web Overview gets a Machines card with each machine's
+  tokens and spend for the period (pick one to filter the page), and the
+  iPhone's Usage tab a row of machine chips under the periods. A
+  satellite's days are its own local days, and its view has no top
+  models, since daily rows carry none. Closes
 - **Mac and web: Hub sync card.** Settings › Files shows `swe sync
   status` for `~/.swe` (branch mode, uncommitted changes by primitive,
   commits to push and pull, new commits on `origin/main`, files kept

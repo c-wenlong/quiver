@@ -133,10 +133,44 @@ class WebApp:
             # The round may have written usage rows: group them again.
             self._usage = None
 
-    def overview(self, period: str, tz_name: str | None, rescan: bool = False) -> dict:
+    def overview(self, period: str, tz_name: str | None, rescan: bool = False,
+                 machine: str | None = None, here: dict | None = None,
+                 others: list[dict] | None = None) -> dict:
+        """The Overview, for every machine or one (#525).
+
+        ``here`` is this hub's ``{"id", "name"}``; ``others`` each
+        satellite's ``{"id", "name", "reported_at", "days"}`` daily rows.
+        ``machine`` is ``"all"`` (or empty: every machine added up), this
+        hub's id (its own ledger, as before) or a satellite's (its daily
+        rows only, with no top models, which daily rows can't carry).
+        ``machines`` lists each machine's tokens and cost for the period,
+        whatever the filter, so a page can show the split."""
+        others = others or []
+        known = {o["id"]: o for o in others}
+        here_id = (here or {}).get("id")
+        if machine == here_id and here_id:
+            pick, extra, local = here_id, [], True
+        elif machine in known:
+            pick, extra, local = machine, known[machine]["days"], False
+        else:
+            pick, local = "all", True
+            extra = [row for o in others for row in o["days"]]
         with self._lock:
             self._ensure(rescan)
-            body = overview_mod.build(self._store, self._catalog, period, tz_name)
+            body = overview_mod.build(self._store, self._catalog, period, tz_name,
+                                      extra=extra, local=local)
+            if here is not None:
+                rows = [{**here, "hub": True, "reported_at": None,
+                         **overview_mod.period_totals(self._store, self._catalog, period,
+                                                      tz_name)}]
+                for o in others:
+                    rows.append({"id": o["id"], "name": o["name"], "hub": False,
+                                 "reported_at": o.get("reported_at"),
+                                 **overview_mod.period_totals(
+                                     self._store, self._catalog, period, tz_name,
+                                     extra=o["days"], local=False)})
+                body["machines"] = rows
+                body["machine_filter"] = pick
             body["scanned_at"] = self._scanned_at
             body["notes"] = self._notes()
             body["first_run"] = self._first_run()

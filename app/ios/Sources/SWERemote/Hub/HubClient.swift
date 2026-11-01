@@ -358,8 +358,12 @@ struct HubClient: Sendable {
 
     /// Token and cost totals for `period`, with days cut at midnight in
     /// the phone's time zone.
-    func overview(period: UsagePeriod, timeZone: TimeZone = .current) async throws -> OverviewResponse {
-        try await send(request("GET", "/v1/app/overview", query: ["period": period.rawValue, "tz": timeZone.identifier]))
+    /// `machine` filters to one machine's id; nil adds every machine up.
+    func overview(period: UsagePeriod, machine: String? = nil,
+                  timeZone: TimeZone = .current) async throws -> OverviewResponse {
+        var query = ["period": period.rawValue, "tz": timeZone.identifier]
+        if let machine { query["machine"] = machine }
+        return try await send(request("GET", "/v1/app/overview", query: query))
     }
 
     /// The newest `limit` messages, or with `before` the `limit` just

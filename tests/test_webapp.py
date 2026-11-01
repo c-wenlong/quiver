@@ -551,6 +551,39 @@ process.stdout.write(JSON.stringify(nav.scrollLeft));
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestOverviewMachines(unittest.TestCase):
+    """Overview's machine filter (#525): the Machines card and header."""
+
+    def run_js(self, body):
+        src = ("const esc = (s) => String(s);\n"
+               "const Fmt = { tokens: (n) => `${n}t`, dollars: (n) => `$${n}`, ago: () => 'now' };\n"
+               + app_js_function("overviewWhere") + app_js_function("machinesCard") + body)
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_card_and_header_follow_the_filter(self):
+        out = self.run_js("""
+const machines = [{id: 'hub', name: 'Home', hub: true, tokens: 300, cost_usd: 1},
+                  {id: 'mbp', name: 'MacBook', hub: false, tokens: 100, cost_usd: 2, reported_at: 1}];
+const all = {machine: 'Home', machine_filter: 'all', machines};
+const one = {machine: 'Home', machine_filter: 'mbp', machines};
+const solo = {machine: 'Home', machines: [machines[0]]};
+process.stdout.write(JSON.stringify([overviewWhere(all), overviewWhere(one), overviewWhere(solo),
+  machinesCard(all), machinesCard(solo)]));
+""")
+        all_where, one_where, solo_where, card, solo_card = out
+        self.assertEqual(all_where, " across 2 machines")
+        self.assertEqual(one_where, " on MacBook")
+        self.assertEqual(solo_where, " on Home")
+        self.assertIn('data-machine="all"', card)
+        self.assertIn("400t · $3", card)  # all machines added up
+        self.assertIn('data-machine="mbp"', card)
+        self.assertIn("--share:25.0%", card)
+        self.assertEqual(solo_card, "")  # one machine: no card
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestHarnessMark(unittest.TestCase):
     """Fmt.mark and Fmt.logo, ported from the Mac's HarnessMark and
     HarnessIcons: every shipped logo draws, aliases and second accounts
