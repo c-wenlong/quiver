@@ -110,3 +110,7 @@
   .doctor-remedy { flex-wrap: wrap; }
   .doctor-remedy-text { flex: 1 1 160px; }
 }
+.doctor-head-actions { display: inline-flex; align-items: center; gap: 8px; }
+.doctor-fixall { display: flex; flex-direction: column; gap: 8px; }
+.doctor-fixall .error { margin: 0; }
+.doctor-fixall .doctor-card-head { padding-bottom: 0; }

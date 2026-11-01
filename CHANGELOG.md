@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Doctor: Fix all on the Mac and web pages.** The findings card gets
+  a Fix all (N) button whenever some finding has a batch fix. It runs
+  `swe doctor --fix`'s ordered batch (setup, discover, init, plugin
+  installs) behind a confirm on the web, then shows what it fixed, which
+  fixes failed and how many findings are left for a person. Installs and
+  the fixes that delete or overwrite never run in it and keep their own
+  Run. The web route is `POST /v1/app/doctor/fix-all`, one at a time
+  with the row Runs; the Mac runs `swe doctor --fix --json` behind the
+  registry gate. The Mac app now also has Run for `undeclare`,
+  `marketplace-drop`, `plugin-fix`, `plugin-reinstall`, `dangling-link`
+  and `mcp-sync`, through `swe doctor --fix=<check> --message=<text>
+  --action=<a>`. A test fails when the Python runners, the web page's
+  wording or the Mac's action list drift apart. Closes
+  [#529](https://github.com/c-wenlong/quiver/issues/529).
 - **Launch a harness on a provider from the keys file.** `POST
   /v1/sessions` takes `provider: "<slug>"` and `swe use` takes
   `--provider=<slug>`: the launching machine starts the harness with

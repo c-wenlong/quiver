@@ -175,7 +175,7 @@ final class AppModel {
             // Settings chose, as start() and its watcher set it.
             others.cacheTTL = limits.refreshFreshSeconds
             Task { await others.load() }
-            doctor = DoctorModel(swe: swe)
+            doctor = DoctorModel(swe: swe, work: plugins.work)
             accountSync = AccountSyncModel(swe: swe)
             // The "swe too old" verdicts were about the old build.
             Task { [codexUsage, cursorFeed] in
@@ -586,7 +586,10 @@ final class AppModel {
         issues = IssuesModel(store: IssueStore(url: IssueStore.file(home: home)))
         others = OtherLimitsModel(swe: client, extraAccounts: extraAccountsProvider,
                                   issues: issues)
-        doctor = DoctorModel(swe: client)
+        // One plugin change at a time, whichever Plugins tab or Doctor
+        // repair starts it.
+        let pluginWork = PluginWork()
+        doctor = DoctorModel(swe: client, work: pluginWork)
         accountSync = AccountSyncModel(swe: client)
         codexHomes = {
             var homes = [home.appending(path: ".codex").path]
@@ -809,8 +812,6 @@ final class AppModel {
         try? FileManager.default.removeItem(at: quiver.appending(path: "cache/skills-hub.json"))
         skills.use(client, for: saved)
         mcp = McpModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/mcp-servers.json")))
-        // One plugin change at a time, whichever Plugins tab starts it.
-        let pluginWork = PluginWork()
         plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")),
                                work: pluginWork)
         hooks = HooksModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/hooks.json")))

@@ -113,6 +113,20 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Doctor: Fix all on the Mac and web pages.</strong> The findings card gets
+a Fix all (N) button whenever some finding has a batch fix. It runs
+<code>swe doctor --fix</code>'s ordered batch (setup, discover, init, plugin
+installs) behind a confirm on the web, then shows what it fixed, which
+fixes failed and how many findings are left for a person. Installs and
+the fixes that delete or overwrite never run in it and keep their own
+Run. The web route is <code>POST /v1/app/doctor/fix-all</code>, one at a time
+with the row Runs; the Mac runs <code>swe doctor --fix --json</code> behind the
+registry gate. The Mac app now also has Run for <code>undeclare</code>,
+<code>marketplace-drop</code>, <code>plugin-fix</code>, <code>plugin-reinstall</code>, <code>dangling-link</code>
+and <code>mcp-sync</code>, through <code>swe doctor --fix=&lt;check&gt; --message=&lt;text&gt; --action=&lt;a&gt;</code>. A test fails when the Python runners, the web page's
+wording or the Mac's action list drift apart. Closes
+<a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
+</li>
 <li><p><strong>Launch a harness on a provider from the keys file.</strong> <code>POST /v1/sessions</code> takes <code>provider: &quot;&lt;slug&gt;&quot;</code> and <code>swe use</code> takes
 <code>--provider=&lt;slug&gt;</code>: the launching machine starts the harness with
 only that provider's variables from its own keys file, as

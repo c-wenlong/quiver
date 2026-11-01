@@ -8,6 +8,12 @@
  * real file in the way (the reply's blocked), a card offers Replace and
  * back up: POST /v1/app/doctor/replace, swe init --force, after a confirm.
  *
+ * Fix all (POST /v1/app/doctor/fix-all, after an inline confirm) runs
+ * swe doctor --fix's ordered batch on the hub: setup, discover, init and
+ * plugin installs. Installs and fixes that delete or overwrite keep
+ * their own row's Run. Its summary card says what it fixed and what is
+ * left.
+ *
  * A finding can carry ``source`` (the file it comes from) and
  * ``remedies``: action rows run like the finding's own Run, agent rows
  * open a picker that launches a session through POST /v1/sessions with
@@ -26,6 +32,8 @@ const doctorPage = {
   // The open Fix-with-agent picker {id, idx, harness, harnessName, phase,
   // error}, a launch being followed, and each row's last launch outcome.
   agent: null, agentBusy: false, agentNote: {},
+  // Fix all's confirm, its last result and its failure.
+  confirmingFixAll: false, fixAll: null, fixAllError: null,
 };
 const DOCTOR_FOLD = 8;
 
@@ -90,11 +98,11 @@ function paintDoctor() {
   } else if (p.state !== "loaded" || !p.data) {
     body = doctorSkeleton();
   } else if (!p.data.findings.length) {
-    body = `${doctorLostError()}${doctorBlocked()}<div class="card doctor-state doctor-clear">
+    body = `${doctorLostError()}${doctorFixAllCard()}${doctorBlocked()}<div class="card doctor-state doctor-clear">
       <span class="doctor-seal">${doctorIcon("seal")}</span><p class="empty">Everything checks out.</p>
       <button class="doctor-button" data-doctor="reload">Check again</button></div>`;
   } else {
-    body = `${doctorLostError()}${doctorBlocked()}${doctorFindings(p.data.findings)}`;
+    body = `${doctorLostError()}${doctorFixAllCard()}${doctorBlocked()}${doctorFindings(p.data.findings)}`;
   }
   document.getElementById("panel").innerHTML = `<div class="page">${doctorHeader()}<div class="stack">${body}</div></div>`;
   bindDoctor();
@@ -130,6 +138,39 @@ function doctorBlocked() {
     ${p.replaceError ? `<p class="error" role="alert">${esc(p.replaceError)}</p>` : ""}</div>`;
 }
 
+/* Fix all's confirm, spinner and summary: what ran, what it fixed, what
+ * is left for a person. */
+function doctorFixAllCard() {
+  const p = doctorPage;
+  const machine = (p.data && p.data.machine) || "the hub";
+  if (p.running === "fix-all") {
+    return `<div class="card doctor-fixall"><span class="doctor-running" role="status"><span class="doctor-spinner" aria-hidden="true"></span>Fixing…</span></div>`;
+  }
+  if (p.confirmingFixAll) {
+    const n = (p.data && p.data.fixable) || 0;
+    return `<div class="card doctor-fixall"><div class="doctor-confirm" role="group" aria-label="Fix all?">
+      <p class="caption">This runs swe doctor --fix on ${esc(machine)}: the ${n === 1 ? "local fix" : `${n} local fixes`} in order (setup, discover, init, plugin installs), checking again after each. Real files in the way are left alone. Installs, and fixes that delete or overwrite, wait for their own Run.</p>
+      <div class="doctor-confirm-buttons">
+        <button class="doctor-button" data-doctor="fixall-cancel">Cancel</button>
+        <button class="doctor-button primary" data-doctor="fixall-go">Fix all</button>
+      </div></div></div>`;
+  }
+  if (p.fixAllError) {
+    return `<div class="card doctor-fixall"><p class="error" role="alert">${esc(p.fixAllError)}</p></div>`;
+  }
+  const r = p.fixAll;
+  if (!r) return "";
+  const failed = r.ran.filter((s) => s.error);
+  // Everything still in the report counts, manual findings included.
+  const left = (r.still_failing || []).length;
+  const line = r.ran.length
+    ? `Fixed ${r.fixed.length} finding${r.fixed.length === 1 ? "" : "s"}${failed.length ? `, ${failed.length} fix${failed.length === 1 ? "" : "es"} failed` : ""}${left ? `; ${left} left for you below` : ""}.`
+    : "Nothing to fix here: what is left needs you.";
+  const errors = failed.map((s) => `<p class="error" role="alert"><code>${esc(s.fix || s.action)}</code>: ${esc(s.error)}</p>`).join("");
+  return `<div class="card doctor-fixall"><div class="doctor-card-head"><span class="caption" role="status">${esc(line)}</span>
+    <button class="doctor-button" data-doctor="fixall-dismiss">Dismiss</button></div>${errors}</div>`;
+}
+
 function doctorFindings(findings) {
   const p = doctorPage;
   const hidden = findings.length > DOCTOR_FOLD ? findings.length - DOCTOR_FOLD : 0;
@@ -139,7 +180,8 @@ function doctorFindings(findings) {
       p.showsAll ? "Show less" : hidden === 1 ? "Show 1 more" : `Show ${hidden} more`}</button>` : "";
   return `<div class="card doctor-card">
     <div class="doctor-card-head"><span class="card-title">${findings.length === 1 ? "1 finding" : `${findings.length} findings`}</span>
-      <button class="icon-button" data-doctor="reload" aria-label="Refresh" title="Run the checks again">${icon("rescan")}</button></div>
+      <span class="doctor-head-actions">${(p.data && p.data.fixable) ? `<button class="doctor-button" data-doctor="fixall-ask" aria-expanded="${p.confirmingFixAll}"${p.running ? " disabled" : ""} title="Run every safe local fix, in order">Fix all (${p.data.fixable})</button>` : ""}
+      <button class="icon-button" data-doctor="reload" aria-label="Refresh" title="Run the checks again">${icon("rescan")}</button></span></div>
     <div class="doctor-rows">${shown.map(doctorRow).join("")}</div>${fold}
   </div>`;
 }
@@ -312,6 +354,13 @@ function bindDoctor() {
         const next = document.querySelector(`[data-doctor="${p.confirmingReplace ? "replace-go" : "replace-ask"}"]`);
         if (next) next.focus();
       } else if (act === "replace-go") doctorReplace();
+      else if (act === "fixall-ask" || act === "fixall-cancel") {
+        p.confirmingFixAll = act === "fixall-ask" ? !p.confirmingFixAll : false;
+        paintDoctor();
+        const next = document.querySelector(`[data-doctor="${p.confirmingFixAll ? "fixall-go" : "fixall-ask"}"]`);
+        if (next) next.focus();
+      } else if (act === "fixall-go") doctorFixAll();
+      else if (act === "fixall-dismiss") { p.fixAll = null; p.fixAllError = null; paintDoctor(); }
       else if (act === "fold") { p.showsAll = !p.showsAll; paintDoctor(); }
       else if (act === "run" && finding) {
         const idx = btn.dataset.idx;
@@ -540,6 +589,38 @@ async function doctorReplace() {
   paintDoctor();
   const ask = document.querySelector('[data-doctor="replace-ask"]');
   if (ask) ask.focus();
+}
+
+/* Fix all: swe doctor --fix on the hub, one at a time with the Runs;
+ * the reply carries the report read again after it. */
+async function doctorFixAll() {
+  const p = doctorPage;
+  if (p.running) return;
+  p.running = "fix-all";
+  p.confirmingFixAll = false;
+  p.fixAll = null;
+  p.fixAllError = null;
+  p.lostError = null;
+  if (onDoctorPage()) paintDoctor();
+  const { status, data } = await apiPost("/v1/app/doctor/fix-all", {});
+  p.running = null;
+  if (status === 401) {
+    if (onDoctorPage()) renderGate();
+    return;
+  }
+  if (status === 200 && data && data.report) {
+    p.gen++;
+    p.data = data.report;
+    p.state = "loaded";
+    p.fixAll = data.result;
+    p.blocked = data.blocked || [];
+  } else {
+    p.fixAllError = failText(status, data);
+  }
+  if (!onDoctorPage()) return;
+  paintDoctor();
+  const dismiss = document.querySelector('[data-doctor="fixall-dismiss"]');
+  if (dismiss) dismiss.focus();
 }
 
 function onDoctorPage() {
