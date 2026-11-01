@@ -229,11 +229,11 @@ and per-source env blocks so a missing token explains an empty page.
 - [ ] APNs push for needs you, approval, finished, error and limit events, with Approve and Deny actions on the lock screen
 - [ ] Hub: an APNs sender alongside ntfy, and device token registration at pairing
 - [ ] Live Activity for a running session: title, status, and an approval button when one is pending
-- [ ] Home and lock screen widgets: inbox count, active sessions
+- [x] Home screen widget: sessions waiting on you, sessions working, today's spend; rows open the chat (#1442). Lock screen widgets not yet
 - [ ] Face ID gate on launch
 - [x] Share sheet target: send text, a link, images or files to a session as a prompt (#1441)
 - [ ] Siri and Shortcuts: "Approve the pending request", "What needs me"
-- [ ] Deep links: `quiver://pair` and `quiver://issue/<o>/<r>/<n>` (exist), `quiver://session/<key>` to go
+- [x] Deep links: `quiver://pair`, `quiver://issue/<o>/<r>/<n>` and `quiver://session/<key>?hub=<hub>`
 - [ ] Dictation in the composer
 - [x] Search sessions from Sessions: transcripts through the hub's FTS index when present, titles and folders as text always (`GET /v1/search`)
 - [ ] Search satellite transcripts (the index covers the hub machine only)

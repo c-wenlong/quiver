@@ -14,6 +14,7 @@ at `/` is the client for browsers and other devices.
 | `Sources/QuiverRemote/Hub/` | Wire types, `HubClient` (one method per route), the SSE reader, `AppModel` (pairing, sessions, inbox), `ChatModel` (one open chat), `Attachments` (the composer's picked files), `TasksModel`, `IssuesModel` and `PullsModel` (the Tasks and GitHub tabs' data), `NewSession` (what the launch sheets offer, and the launch poll), `UsageModel` and `UsageFormat` (the Usage tab's data and number formatting), `PromptCompletion` (the prompt box's `@` and `/` menus), and the diff, markdown and page-preview helpers |
 | `Sources/QuiverRemote/Hub/SSH*.swift`, `ConsoleModel.swift` | The console: this phone's SSH key (`SSHIdentity`), the hub's `/v1/ssh` answer and the saved targets (`SSHTarget`), the SwiftNIO SSH shell with pinned host keys (`SSHShell`), and the console's state (`ConsoleModel`) |
 | `Sources/QuiverRemote/Share/`, `Sources/QuiverShare/` | The share extension: what a share carries and how it sends (`ShareItems`, `ShareModel`, compiled into the app too so the tests reach them), and the extension's own view controller and sheet |
+| `Sources/QuiverRemote/Widget/`, `Sources/QuiverWidget/` | The home screen widget: the snapshot it draws, its store in the App Group, the summary and fetch rules and the `quiver://session` link (shared with the app, which rewrites the snapshot after each refresh), and the WidgetKit extension itself |
 | `Sources/QuiverRemote/Theme/` | The Mac app's theme ported to iOS: the same hex values and roles, cards, list rows, badges, buttons |
 | `Sources/QuiverRemote/Views/` | Welcome and pairing, Sessions (with rename, fork and the new-session sheet), Chat, Inbox, Tasks, GitHub (issues and pull requests, their detail pages and launch sheets), Usage (limits and spend), Pair requests and devices, Console, the QR scanner |
 | `Tests/QuiverRemoteTests/` | Unit tests for parsing, pairing links, diffs, grouping, chat event handling, the GitHub and Tasks rules, usage formatting and the console |
@@ -74,6 +75,28 @@ its own App ID (`com.quiver.remote.share`); without a pairing or a
 reachable hub it says so and sends nothing. The extension compiles the
 app's hub files it needs (listed under `QuiverShare` in `project.yml`)
 rather than a shared framework.
+
+## Widget
+
+The `QuiverWidget` extension puts a small or medium widget on the home
+screen for the hub on screen in the app: how many sessions wait on you
+(the Inbox's "Waiting on you" rows, plus sessions marked approval or
+follow-up), how many are still working, and today's spend. The medium
+size lists up to three of those sessions; tapping one opens its chat
+through `quiver://session/<key>?hub=<hub>`, and tapping anywhere else
+opens the app.
+
+- **Refresh:** the widget asks the hub (`/v1/sessions`, `/v1/inbox`,
+  `/v1/app/overview?period=today`) about every 15 minutes. The app
+  writes `widget-snapshot.json` to the App Group container after each
+  refresh and calls `WidgetCenter.reloadAllTimelines()` only when what
+  the widget shows changed; a snapshot under two minutes old with
+  today's spend is drawn without a fetch.
+- **States:** not paired (or signed out), hub unreachable (the last
+  snapshot with "as of <time>", or "Can't reach" when there is none),
+  and "Nothing needs you".
+- **No Live Activities:** they need APNs to update while the app is
+  closed.
 
 ## Console
 
@@ -139,11 +162,12 @@ what covers Tailscale CGNAT addresses — plus an `NSExceptionDomains`
 entry for `*.ts.net` MagicDNS names; arbitrary domains still get full
 ATS),
 the camera prompt for the QR scanner, iOS 17+, `DEVELOPMENT_TEAM`, and
-the entitlements for the App Group and the shared Keychain group. The
+the entitlements for the App Group and the shared Keychain group (on
+the app, `QuiverShare` and `QuiverWidget`). The
 Keychain group is written as `$(AppIdentifierPrefix)com.quiver.remote.shared`
 (in the entitlements and in Info.plist's `QuiverKeychainGroup`), so the
 signing team fills it in. Automatic signing registers both groups on
-the team's App ID the first time a device build runs with
+each target's App ID (`com.quiver.remote`, `.share`, `.widget`) the first time a device build runs with
 `-allowProvisioningUpdates`.
 The icon is the Mac app's dark icon (`app/mac/Icons/AppIcon-dark.png`) at 1024.
 
