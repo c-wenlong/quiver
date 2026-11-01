@@ -54,12 +54,9 @@ device row and console key go too) when it can be reached. Each hub's credential
 shared access group `<team>.com.swe.remote.shared`; the addresses,
 names and the hub on screen are in the App Group
 `group.com.swe.remote`'s defaults. Extensions (the share sheet, the
-widget) read the paired hubs from there. A phone paired before the
-groups keeps its hubs: the first launch copies each into the groups
-and drops the old copy only once the new one is stored. A phone
-paired before this keeps its hub: the app moves the old single pairing
-into the list on first launch, and a phone paired under the old webview
-shell keeps its pairing the same way.
+widget) read the paired hubs from there. Pairings do not carry over
+from a Quiver Remote install: the shared groups changed, so pair each
+hub once after updating (Scan a QR or the token, as above).
 
 ## Share sheet
 
