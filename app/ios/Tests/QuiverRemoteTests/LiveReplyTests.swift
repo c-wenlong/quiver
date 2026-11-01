@@ -80,6 +80,22 @@ final class LiveReplyTests: XCTestCase {
         XCTAssertTrue(chat.streaming.isEmpty)
     }
 
+    func testTheSweepTakesOnlyBubblesOpenWhenTheStatusArrived() async {
+        let chat = chat()
+        var gate: CheckedContinuation<Void, Never>?
+        chat.pause = { _ in await withCheckedContinuation { gate = $0 } }
+        chat.receive(delta("old", "cut off", 1))
+        // The reveal holds the idle status behind a tool card while the
+        // next turn's reply starts streaming.
+        chat.receive(env(#"{"type":"message.appended","seq":1,"data":{"kind":"tool_use","tool":{"name":"Bash","call_id":"c"}}}"#))
+        chat.receive(env(#"{"type":"session.status","seq":2,"data":{"status":"idle"}}"#))
+        chat.receive(delta("new", "next turn", 1))
+        await settle(chat) { gate != nil && chat.streaming.map(\.id) == ["live-new"] }
+        chat.repaintStreams()
+        XCTAssertEqual(chat.streaming.map(\.id), ["live-new"])
+        gate?.resume()
+    }
+
     func testStopClearsTheBubbles() {
         let chat = chat()
         chat.receive(delta("x", "half", 1))

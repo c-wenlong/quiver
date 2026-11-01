@@ -603,6 +603,9 @@ const SessionChat = (() => {
       return;
     }
     const stick = nearBottom();
+    // A first reply streaming in: "No messages yet." no longer holds.
+    const empty = $("chat-loading");
+    if (empty) empty.remove();
     if (!box || box.parentNode !== log) {
       box = document.createElement("div");
       box.className = "chat-streams";
@@ -2137,7 +2140,7 @@ const SessionChat = (() => {
       if (ev.session === chat.key && status && status !== "active") {
         chat.awaitingReply = false;
         // A reply just finished: the header's model may be new.
-        if (live) { refreshModel(); sweepStreams(); }
+        if (live) refreshModel();
       }
       if (chat.row && ev.session === chat.key) {
         chat.row.status = status;
@@ -2679,6 +2682,12 @@ const SessionChat = (() => {
     if (ev.type === "message.appended" && typeof ev.seq === "number" && ev.seq > chat.seq) {
       const id = chat.replies.claim((ev.data || {}).kind);
       if (id) ev.replaces = id;
+    }
+    // The idle sweep takes the bubbles open as the status arrives: by the
+    // time the reveal shows it, the next turn's may have started.
+    if (ev.type === "session.status" && ev.session === chat.key) {
+      const status = (ev.data || {}).status || "";
+      if (status && status !== "active") sweepStreams();
     }
     // The cursor advances as each event is shown (showLive), so events
     // still waiting when the stream drops are replayed on reconnect.

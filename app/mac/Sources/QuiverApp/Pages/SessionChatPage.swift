@@ -155,7 +155,7 @@ private struct ChatTranscript: View {
                     .disabled(model.loadingEarlier)
                     .frame(maxWidth: .infinity)
                 }
-                if model.items.isEmpty {
+                if model.items.isEmpty, model.streaming.isEmpty {
                     Text("No messages yet.")
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 }

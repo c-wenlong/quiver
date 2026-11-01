@@ -171,6 +171,33 @@ class TestLiveReply(unittest.TestCase):
         self.assertEqual(out["swept"], [])
         self.assertEqual(out["cleared"], [[], 0])
 
+    def test_the_sweep_takes_only_bubbles_open_when_the_status_arrived(self):
+        out = self.run_js("""
+            T.STREAM_MS.idleGrace = 0;
+            delta('old', 'cut off', 1);
+            // The reveal holds the idle status behind a tool card while the
+            // next turn's reply starts streaming.
+            T.chat.lastRevealAt = performance.now();
+            appended(1, { kind: 'tool_use', tool: { name: 'Bash', call_id: 'c' } });
+            frame({ type: 'session.status', seq: 2, data: { status: 'idle' } });
+            delta('new', 'next turn', 1);
+            await wait(10);
+            T.paintStreams();
+            const live = shape().filter((e) => e[0] === 'streams');
+            drain();
+            return live;""")
+        self.assertEqual(out, [["streams", [["new", "next turn"]]]])
+
+    def test_a_first_reply_replaces_the_empty_note(self):
+        out = self.run_js("""
+            const note = document.createElement('p');
+            note.className = 'empty';
+            log.appendChild(note);
+            ids['chat-loading'] = note;
+            delta('x', 'hi', 1); T.paintStreams();
+            return shape();""")
+        self.assertEqual(out, [["streams", [["x", "hi"]]]])
+
 
 if __name__ == "__main__":
     unittest.main()

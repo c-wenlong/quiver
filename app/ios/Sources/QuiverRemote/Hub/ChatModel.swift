@@ -591,10 +591,7 @@ final class ChatModel {
             app?.patch(key, status: status)
             updateWorkingSince()
             // The turn ended (or stopped to ask) without a message to show.
-            if !["", "active"].contains(status) {
-                awaitingReply = false
-                sweepStreams()
-            }
+            if !["", "active"].contains(status) { awaitingReply = false }
         case "session.ownership":
             if let event = env.decode(OwnershipData.self) { app?.patch(key, ownershipEvent: event) }
             attachQueued = false
@@ -641,6 +638,11 @@ final class ChatModel {
         if env.type == "message.appended", let seq = env.seq, !seen.contains(seq), claims[seq] == nil,
            let id = replies.claim(kind: env.decode(MessageData.self)?.kind) {
             claims[seq] = id
+        }
+        // The idle sweep takes the bubbles open as the status arrives: by
+        // the time the queue shows it, the next turn's may have started.
+        if env.type == "session.status", !["", "active"].contains(env.decode(StatusData.self)?.status ?? "") {
+            sweepStreams()
         }
         enqueue(env)
     }
