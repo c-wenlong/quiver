@@ -70,16 +70,20 @@ def _print_status(doc: dict) -> None:
 
 def _print_sync(doc: dict) -> None:
     dry = doc["dry_run"]
+    # A conflict stops before anything is written: its commit and merges
+    # are only the plan, worded as a dry run's.
+    planned = dry or doc["result"] == "conflict"
+    mark = "·" if planned else c("green", "✓")
     print(f"\n{c('bold', 'Hub sync')}  {c('dim', _mode_line(doc))}"
           + (c("dim", "  (dry run, nothing written)") if dry else ""))
     commit = doc.get("commit")
     if commit:
-        verb = "would commit" if dry else "committed"
-        print(f"  {c('green', '✓') if not dry else '·'} {verb} {len(commit['files'])} file(s): {commit['message']}")
+        verb = "would commit" if planned else "committed"
+        print(f"  {mark} {verb} {len(commit['files'])} file(s): {commit['message']}")
         _print_files(commit["files"])
     for merge in doc.get("merges") or []:
-        verb = "would merge" if dry else "merged"
-        print(f"  {c('green', '✓') if not dry else '·'} {verb} {merge['commits']} commit(s) from {merge['ref']}")
+        verb = "would merge" if planned else "merged"
+        print(f"  {mark} {verb} {merge['commits']} commit(s) from {merge['ref']}")
     _print_held_back(doc.get("held_back") or [])
     result = doc["result"]
     if result == "conflict":

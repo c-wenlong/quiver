@@ -136,7 +136,7 @@ A conflict therefore stops the sync before the branch, the index or the
 working tree moves, and a merge that still fails late is aborted and rolled
 back to the saved HEAD and index tree. It never force-pushes. Every `git add`
 excludes `paths.GITIGNORE_BODY`'s paths by pathspec, so a hub with an older
-`.gitignore` still never commits `secrets/`, `cache/` or `data/`; those files
+`.gitignore` still never commits `secrets/`, `cache/` or the listed `data/` stores; those files
 are reported as held back.
 
 ## The core idea: one file, many names

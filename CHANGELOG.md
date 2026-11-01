@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branch every machine shares it. Each merge is tried first with `git
   merge-tree`, so a conflict lists the files and leaves the repo exactly
   as it was. It never force-pushes and never commits `secrets/`,
-  `cache/`, `data/` or anything else swe's `.gitignore` lists, even
+  `cache/`, the `data/` stores (ledgers, search, remote) or anything else
+  swe's `.gitignore` lists, even
   under an older hub `.gitignore`. `status` shows the mode, ahead and
   behind counts and uncommitted changes by primitive; both take
   `--json`, sync takes `--dry-run`. Part of

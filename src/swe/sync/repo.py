@@ -25,6 +25,9 @@ older than this swe still keeps them out. They are reported as held back.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
+import io
 import os
 import shutil
 import socket
@@ -204,6 +207,11 @@ def fetch(state: RepoState) -> None:
         raise SyncError(f"~/.swe has no remote named {REMOTE}; add one with "
                         f"git -C ~/.swe remote add {REMOTE} <url>")
     _git(state.root, "fetch", "--quiet", "--prune", REMOTE, timeout=NETWORK_TIMEOUT_S)
+    # Ask the remote which branch is its default, so device mode merges
+    # it even in a hub that was `git init`ed (no origin/HEAD) or whose
+    # default was renamed since the clone.
+    _git(state.root, "remote", "set-head", REMOTE, "--auto", check=False,
+         timeout=NETWORK_TIMEOUT_S)
 
 
 def _parse_name_status(raw: str) -> list[tuple[str, str]]:
@@ -392,6 +400,10 @@ def _trial(state: RepoState, changes, message: str) -> tuple[list[dict], list[st
         if tip is None or _is_ancestor(state.root, tip, ref):
             tip = _out(state.root, "rev-parse", ref)
             continue
+        if _git(state.root, "merge-base", tip, ref, check=False).returncode != 0:
+            raise SyncError(f"~/.swe and {ref} share no history, so swe sync will not "
+                            f"merge them; merge it once by hand (git -C ~/.swe merge "
+                            f"--allow-unrelated-histories {ref}), then sync")
         trial = _git(state.root, "merge-tree", "--write-tree", "--name-only",
                      "--no-messages", tip, ref, check=False)
         lines = trial.stdout.splitlines()
@@ -406,8 +418,14 @@ def _trial(state: RepoState, changes, message: str) -> tuple[list[dict], list[st
     return merges, []
 
 
-def _rollback(state: RepoState, head: str | None, index_tree: str) -> None:
+def _rollback(state: RepoState, head: str | None, mid: str | None, index_tree: str) -> None:
+    """Put the repo back as it was before the sync: abort a merge in
+    progress, take the working tree back from any merge that already
+    landed (``--keep`` moves only files the merges changed and refuses
+    to touch an edit of the user's), then restore HEAD and the index."""
     _git(state.root, "merge", "--abort", check=False)
+    if mid and _out(state.root, "rev-parse", "HEAD", check=False) != mid:
+        _git(state.root, "reset", "--quiet", "--keep", mid, check=False)
     if head:
         _git(state.root, "reset", "--quiet", "--soft", head, check=False)
     else:
@@ -422,7 +440,35 @@ def sync(home: Path, dry_run: bool = False, relink=None) -> dict:
     SyncError when the repo can't be synced at all.
 
     ``relink(home, changed_paths)`` runs after new content came in; the
-    default re-links harnesses the way ``swe init`` does after a clone."""
+    default re-links harnesses the way ``swe init`` does after a clone.
+
+    One sync per repo at a time (the app, the web card and a terminal can
+    all start one): a second is refused rather than run, since its
+    rollback could otherwise undo the first one's commit."""
+    state = inspect(home)
+    with _sync_lock(state.git_dir):
+        return _sync_locked(home, dry_run, relink)
+
+
+@contextlib.contextmanager
+def _sync_lock(git_dir: Path):
+    path = git_dir / "swe-sync.lock"
+    try:
+        handle = open(path, "a+")
+    except OSError as exc:
+        raise SyncError(f"can't open {path}: {exc.strerror or exc}") from None
+    try:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise SyncError("another swe sync is running on ~/.swe; wait for it, "
+                            "then try again") from None
+        yield
+    finally:
+        handle.close()
+
+
+def _sync_locked(home: Path, dry_run: bool, relink) -> dict:
     state = inspect(home)
     operation = _operation_in_progress(state.git_dir)
     if operation:
@@ -444,6 +490,7 @@ def sync(home: Path, dry_run: bool = False, relink=None) -> dict:
         "merges": merges,
         "conflicts": conflicts,
         "held_back": held_back(state),
+        "would_push": False,
         "pushed": False,
         "push_error": None,
         "relinked": None,
@@ -463,7 +510,7 @@ def sync(home: Path, dry_run: bool = False, relink=None) -> dict:
         return doc
 
     index_tree = _out(state.root, "write-tree")
-    before = state.head
+    before = mid = state.head
     try:
         if changes:
             _stage(state)
@@ -478,25 +525,32 @@ def sync(home: Path, dry_run: bool = False, relink=None) -> dict:
             _git(state.root, "merge", "--quiet", "--no-edit", "-m",
                  f"Merge {ref} into {state.branch} (swe sync from {state.machine})", ref)
     except SyncError:
-        _rollback(state, before, index_tree)
+        _rollback(state, before, mid, index_tree)
         raise
-    # Never --force: a push the remote refuses (someone pushed meanwhile)
-    # is reported, and the next sync merges it in.
-    push_args = ["push", "--quiet"]
-    if state.upstream is None:
-        push_args.append("--set-upstream")
-    push = _git(state.root, *push_args, REMOTE, f"HEAD:refs/heads/{state.branch}",
-                check=False, timeout=NETWORK_TIMEOUT_S)
-    if push.returncode == 0:
-        doc["pushed"] = True
-    else:
-        detail = (push.stderr or "").strip().splitlines()
-        doc["push_error"] = detail[-1] if detail else "git push failed"
+    # Link what came in before pushing: the merge has landed, and a push
+    # that fails or hangs must not leave it unlinked (a retry has no
+    # merge left to notice it by).
     if merges:
         raw = _out(state.root, "diff", "--name-only", "-z", mid or EMPTY_TREE, "HEAD")
         changed = [p for p in raw.split("\0") if p]
         if changed:
             doc["relinked"] = (relink or default_relink)(home, changed)
+    # Never --force: a push the remote refuses (someone pushed meanwhile)
+    # is reported, and the next sync merges it in.
+    push_args = ["push", "--quiet"]
+    if state.upstream is None:
+        push_args.append("--set-upstream")
+    try:
+        push = _git(state.root, *push_args, REMOTE, f"HEAD:refs/heads/{state.branch}",
+                    check=False, timeout=NETWORK_TIMEOUT_S)
+    except SyncError as exc:
+        doc["push_error"] = str(exc)
+    else:
+        if push.returncode == 0:
+            doc["pushed"] = True
+        else:
+            detail = (push.stderr or "").strip().splitlines()
+            doc["push_error"] = detail[-1] if detail else "git push failed"
     doc["result"] = "synced" if doc["pushed"] else "push-failed"
     return doc
 
@@ -528,15 +582,21 @@ def default_relink(home: Path, changed: list[str]) -> dict:
         notes.append(f"registering marketplaces failed: {exc}")
     mcp = None
     if "mcp.json" in changed:
-        import contextlib
-        import io
+        from swe.console import strip_ansi
         from swe.mcp.cli import _sync as mcp_sync
         report = {"source": None, "dry_run": False, "selected": [], "targets": []}
+        said = io.StringIO()
         try:
-            with contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stdout(said):
                 code = mcp_sync(["swe", "--all", "--no-interactive"], report)
             mcp = {"code": code, "selected": report.get("selected", []),
                    "targets": report.get("targets", [])}
+            if code:
+                # The remedy (a secret missing here, say) is in what it printed.
+                lines = [strip_ansi(line).strip() for line in said.getvalue().splitlines()]
+                reason = " ".join(line for line in lines if line)[-300:]
+                notes.append(f"MCP servers not copied (swe mcp sync swe --all exited {code})"
+                             + (f": {reason}" if reason else ""))
         except Exception as exc:  # noqa: BLE001
             notes.append(f"MCP sync failed: {exc}")
     return {"changed": len(changed), "linked": linked,

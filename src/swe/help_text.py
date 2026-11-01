@@ -589,8 +589,9 @@ to use their own login state and environment."""
 
   Every merge is tried first without touching the repo. On a conflict sync
   lists the files and stops with ~/.swe exactly as it was. It never
-  force-pushes, and never commits secrets/, cache/, data/ or anything else
-  swe's .gitignore lists, even when the hub's own .gitignore is older.
+  force-pushes, and never commits secrets/, cache/, the data/ stores swe's
+  .gitignore lists (ledgers, search, remote, github) or anything else
+  it lists, even when the hub's own .gitignore is older.
 
   Both take {c('cyan', '--json')} for the app's document."""
     ),

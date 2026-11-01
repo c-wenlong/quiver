@@ -162,6 +162,56 @@ class DeviceBranchTest(SyncTestBase):
         self.assertEqual(self.remote_file("device/laptop", "three.txt"), "3")
 
 
+class DefaultBranchTest(SyncTestBase):
+    def test_a_renamed_default_branch_is_still_merged(self):
+        # The clone has no origin/HEAD (as after git init + remote add),
+        # and the remote's default was renamed to trunk since.
+        a = self.machine("a", branch="device/desk")
+        git(a / ".swe", "remote", "set-head", "origin", "-d")
+        git(self.remote, "branch", "-m", "main", "trunk")
+        git(self.remote, "symbolic-ref", "HEAD", "refs/heads/trunk")
+        writer = self.root / "w"
+        writer.mkdir()
+        git(writer, "clone", "-q", str(self.remote), ".swe")
+        (writer / ".swe" / "shared.txt").write_text("s\n")
+        self.sync(writer)
+        doc = self.sync(a)
+        self.assertEqual(doc["result"], "synced")
+        self.assertEqual(doc["base"], "origin/trunk")
+        self.assertEqual([m["ref"] for m in doc["merges"]], ["origin/trunk"])
+        self.assertTrue((a / ".swe" / "shared.txt").exists())
+
+    def test_unrelated_histories_are_refused_in_plain_words(self):
+        home = self.root / "inited"
+        hub = home / ".swe"
+        hub.mkdir(parents=True)
+        git(hub, "init", "-q", "-b", "main")
+        git(hub, "remote", "add", "origin", str(self.remote))
+        (hub / "local.txt").write_text("x\n")
+        with self.assertRaisesRegex(repo.SyncError, "share no history"):
+            self.sync(home)
+        self.assertEqual(git(hub, "status", "--porcelain"), "?? local.txt")
+
+
+class PushTest(SyncTestBase):
+    def test_a_push_that_times_out_is_push_failed_and_still_relinks(self):
+        a, b = self.machine("a"), self.machine("b")
+        (a / ".swe" / "x.txt").write_text("x\n")
+        self.sync(a)
+        real = repo._git
+
+        def hanging(root, *args, **kw):
+            if args[:1] == ("push",):
+                raise repo.SyncError("git push took longer than 180s")
+            return real(root, *args, **kw)
+
+        with mock.patch.object(repo, "_git", hanging):
+            doc = self.sync(b)
+        self.assertEqual(doc["result"], "push-failed")
+        self.assertIn("longer than", doc["push_error"])
+        self.assertEqual(self.relinks, [(b, ["x.txt"])])
+
+
 class ConflictTest(SyncTestBase):
     def test_conflict_lists_files_and_leaves_the_repo_as_it_was(self):
         a, b = self.machine("a"), self.machine("b")
@@ -198,6 +248,51 @@ class ConflictTest(SyncTestBase):
             with self.assertRaisesRegex(repo.SyncError, "boom"):
                 self.sync(b)
         self.assertEqual(self.snapshot(b), before)
+
+    def test_second_merge_failing_takes_the_first_ones_files_back(self):
+        a = self.machine("a", branch="device/laptop")
+        (a / ".swe" / "one.txt").write_text("1\n")
+        self.sync(a)
+        other = self.root / "other"
+        other.mkdir()
+        git(other, "clone", "-q", "-b", "device/laptop", str(self.remote), ".swe")
+        (other / ".swe" / "from-other.txt").write_text("2\n")
+        self.sync(other)
+        writer = self.machine("w")
+        (writer / ".swe" / "from-main.txt").write_text("m\n")
+        self.sync(writer)
+        (a / ".swe" / "mine.txt").write_text("mine\n")
+        before = self.snapshot(a)
+        real = repo._git
+
+        def failing(root, *args, **kw):
+            if args[:1] == ("merge",) and args[-1] == "origin/main":
+                raise repo.SyncError("git merge failed: boom")
+            return real(root, *args, **kw)
+
+        with mock.patch.object(repo, "_git", failing):
+            with self.assertRaisesRegex(repo.SyncError, "boom"):
+                self.sync(a)
+        self.assertEqual(self.snapshot(a), before)
+        self.assertFalse((a / ".swe" / "from-other.txt").exists())
+        self.assertEqual((a / ".swe" / "mine.txt").read_text(), "mine\n")
+
+    def test_a_second_sync_is_refused_while_one_runs(self):
+        import fcntl
+        a = self.machine("a")
+        with open(a / ".swe" / ".git" / "swe-sync.lock", "a+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            with self.assertRaisesRegex(repo.SyncError, "another swe sync is running"):
+                self.sync(a)
+        self.assertEqual(self.sync(a)["result"], "up-to-date")
+
+    def test_conflict_document_keeps_its_shape(self):
+        a, b = self.machine("a"), self.machine("b")
+        (a / ".swe" / "AGENTS.md").write_text("a\n")
+        self.sync(a)
+        (b / ".swe" / "AGENTS.md").write_text("b\n")
+        doc = self.sync(b)
+        self.assertIs(doc["would_push"], False)
 
     def test_refuses_mid_merge(self):
         a = self.machine("a")
@@ -334,6 +429,21 @@ class RelinkTest(SyncTestBase):
         self.assertEqual(relinked["mcp"]["selected"], ["x"])
         self.assertEqual(relinked["notes"], [])
 
+    def test_a_failed_mcp_copy_is_a_note_with_its_reason(self):
+        def failing(args, report):
+            print("\x1b[31mMissing secret GITHUB_TOKEN; set it with swe mcp secret set\x1b[0m")
+            return 1
+
+        with mock.patch("swe.init.commands.run_init", side_effect=RuntimeError("skip")), \
+                mock.patch("swe.init.hub.register_marketplaces", return_value=[]), \
+                mock.patch("swe.mcp.cli._sync", failing):
+            out = repo.default_relink(self.root, ["mcp.json"])
+        self.assertEqual(out["mcp"]["code"], 1)
+        note = out["notes"][-1]
+        self.assertIn("MCP servers not copied", note)
+        self.assertIn("Missing secret GITHUB_TOKEN", note)
+        self.assertNotIn("\x1b", note)
+
     def test_relink_problems_are_notes(self):
         with mock.patch("swe.init.commands.run_init", side_effect=RuntimeError("bad")), \
                 mock.patch("swe.init.hub.register_marketplaces", side_effect=OSError("x")):
@@ -369,6 +479,8 @@ class CommandTest(SyncTestBase):
         self.assertEqual(code, 1)
         self.assertIn("AGENTS.md", out)
         self.assertIn("as it was", out)
+        self.assertIn("would merge 1 commit(s)", out)
+        self.assertNotIn("✓", out)
         code, out, _ = self.run_cmd(["--json"], b)
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(out)["data"]["conflicts"], ["AGENTS.md"])
