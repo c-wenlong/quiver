@@ -121,6 +121,16 @@ class TestReadKeys(unittest.TestCase):
         os.chmod(path, 0o600)
         self.assertEqual(lp.read_keys(path), {"GROQ_API_KEY": SECRET})
 
+    def test_bare_assignments_and_shell_order(self):
+        path = temp_dir(self) / ".api_keys"
+        path.write_text(
+            f"GROQ_API_KEY={SECRET}\n"
+            "OPENAI_API_KEY='first'\nexport OPENAI_API_KEY=\"second\"\n"
+            "export XAI_API_KEY=x\nexport XAI_API_KEY=\"$OTHER\"\n"
+            "# MISTRAL_API_KEY=commented\n")
+        self.assertEqual(lp.read_keys(path), {"GROQ_API_KEY": SECRET,
+                                              "OPENAI_API_KEY": "second"})
+
     def test_no_file_is_no_keys(self):
         self.assertEqual(lp.read_keys(temp_dir(self) / "none"), {})
 

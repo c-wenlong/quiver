@@ -250,7 +250,28 @@ def read_keys(path: Path) -> dict[str, str]:
         keys, _data = keyfile.load(path)
     except keyfile.KeyFileError as exc:
         raise ValueError(exc.message) from None
-    return {entry.name: entry.value for entry in keys.keys}
+    # Line by line, as a shell reads it: the last assignment of a name
+    # wins, and ``swe providers`` also counts a bare ``NAME=value``. A
+    # last assignment we can't read (``A="$OTHER"``) leaves no value.
+    out: dict[str, str] = {}
+    for line in keys.lines:
+        text = line.strip(" \t")
+        bare = _BARE_RE.match(text)
+        if not text.startswith("export") and not bare:
+            continue
+        pair = keyfile.export(text if not bare else f"export {text}")
+        if pair:
+            out.pop(pair[0], None)
+            out[pair[0]] = pair[1]
+        else:
+            match = _ASSIGN_RE.match(text)
+            if match:
+                out.pop(match.group(1), None)
+    return out
+
+
+_BARE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_ASSIGN_RE = re.compile(r"(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=")
 
 
 def _resolve(entry: dict, keys: dict[str, str]) -> tuple[dict[str, str],
