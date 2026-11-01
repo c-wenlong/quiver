@@ -351,7 +351,7 @@ func fixture(_ name: String) throws -> Data {
 
     @Test func removeArgv() async throws {
         let (swe, runner) = swe()
-        _ = try await swe.mcpRemove(name: "s", from: ["quiver", "claude"])
+        _ = try await swe.mcpRemove(name: "s", from: ["swe", "claude"])
         #expect(runner.calls == [["mcp", "remove", "s", "--from=swe,claude", "--json"]])
     }
 
