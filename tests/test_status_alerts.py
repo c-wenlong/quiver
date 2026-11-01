@@ -1,4 +1,4 @@
-"""Service status pushes: the ported rule (``quiver.status.alerts``), its
+"""Service status pushes: the ported rule (``swe.status.alerts``), its
 state across hub restarts, the hub's check and the ntfy post.
 
 The rule's cases mirror the Mac's ``ServiceStatusAlertsTests.swift``.
@@ -11,12 +11,12 @@ import io
 import unittest
 from unittest.mock import patch
 
-from quiver.remote import notify
-from quiver.remote.hub import GLOBAL_KEY, HubState
-from quiver.status import alerts
-from quiver.status.catalog import Health, service
-from quiver.status.parsers import Incident, Report
-from quiver.status.poller import ServiceStatus
+from swe.remote import notify
+from swe.remote.hub import GLOBAL_KEY, HubState
+from swe.status import alerts
+from swe.status.catalog import SERVICES, Health, service
+from swe.status.parsers import Incident, Report
+from swe.status.poller import ServiceStatus
 from tests._tempdir import temp_dir
 
 
@@ -32,8 +32,9 @@ def _status(id: str, health: Health | None, incidents: list[Incident] | None = N
 
 
 def _primed() -> alerts.State:
+    """Every built-in seeded, as after the first poll on a quiet day."""
     state = alerts.State()
-    alerts.step(state, [_status("claude", Health.OPERATIONAL)])
+    alerts.step(state, [_status(s.id, Health.OPERATIONAL) for s in SERVICES])
     return state
 
 
@@ -57,6 +58,20 @@ class TestRule(unittest.TestCase):
         state = _primed()
         alerts.step(state, [_status("claude", Health.MINOR, [_incident("a")])])
         more = alerts.step(state, [_status("claude", Health.MINOR, [_incident("a"), _incident("b")])])
+        self.assertEqual([a.incident for a in more], ["Incident b"])
+
+    def test_two_incidents_at_once(self):
+        state = _primed()
+        both = alerts.step(state, [_status("claude", Health.MAJOR, [_incident("a"), _incident("b")])])
+        self.assertEqual([a.incident for a in both], ["Incident a", "Incident b"])
+
+    def test_late_page_seeds_on_its_first_reading(self):
+        state = alerts.State()
+        alerts.step(state, [_status("claude", Health.OPERATIONAL), _status("openai", None)])
+        self.assertEqual(alerts.step(state, [_status("claude", Health.OPERATIONAL),
+                                             _status("openai", Health.MINOR, [_incident("a")])]), [])
+        more = alerts.step(state, [_status("claude", Health.OPERATIONAL),
+                                   _status("openai", Health.MINOR, [_incident("a"), _incident("b")])])
         self.assertEqual([a.incident for a in more], ["Incident b"])
 
     def test_flapping_incident_is_quiet(self):
@@ -94,7 +109,7 @@ class TestRule(unittest.TestCase):
         state = alerts.State()
         down = _status("claude", Health.MINOR, [_incident("a")])
         self.assertEqual(alerts.step(state, [down]), [])
-        self.assertTrue(state.primed)
+        self.assertEqual(state.seeded, ["claude"])
         self.assertEqual(alerts.step(state, [down]), [])
         self.assertEqual(alerts.step(state, [_status("claude", Health.OPERATIONAL)]), [])
 
@@ -125,9 +140,9 @@ class TestRule(unittest.TestCase):
         self.assertEqual(state.delivered[-1], f"claude@i{alerts.CAP + 9}")
 
     def test_state_round_trip_and_bad_file(self):
-        state = alerts.State(["claude@a"], {"claude": "x"}, True)
+        state = alerts.State(["claude@a"], {"claude": "x"}, ["claude"])
         self.assertEqual(alerts.State.from_dict(state.to_dict()), state)
-        self.assertEqual(alerts.State.from_dict({"delivered": "nope", "down": [1], "primed": 1}),
+        self.assertEqual(alerts.State.from_dict({"delivered": "nope", "down": [1], "seeded": 1}),
                          alerts.State())
         self.assertEqual(alerts.State.from_dict(None), alerts.State())
 
@@ -174,8 +189,9 @@ class TestHub(unittest.TestCase):
         poller = _Poller()
         poller.readings = [up, down, down]
         state, events = self._hub()
+        tracker = alerts.Tracker(self.home)
         for _ in range(3):
-            state._service_status_tick(poller)
+            state._service_status_tick(poller, tracker)
         self.assertEqual([k for k, _ in events], [GLOBAL_KEY])
         data = events[0][1]["data"]
         self.assertEqual((data["kind"], data["change"], data["service"]), ("service", "started", "claude"))
@@ -189,10 +205,11 @@ class TestHub(unittest.TestCase):
         self.assertIn("gemini", poller.asked[0])
 
         restarted, again = self._hub()
+        tracker = alerts.Tracker(self.home)
         poller.readings = [down, up]
-        restarted._service_status_tick(poller)
+        restarted._service_status_tick(poller, tracker)
         self.assertEqual(again, [])
-        restarted._service_status_tick(poller)
+        restarted._service_status_tick(poller, tracker)
         posts = self._posts(restarted, again)
         self.assertEqual([p["title"] for p in posts], ["Claude is back to normal"])
         self.assertEqual(posts[0]["tags"], ["white_check_mark"])
@@ -209,7 +226,7 @@ class TestHub(unittest.TestCase):
                 pass
 
         state = HubState(self.home)
-        with patch("quiver.remote.hub.threading.Thread", _Thread):
+        with patch("swe.remote.hub.threading.Thread", _Thread):
             state.start()
         return names
 
@@ -217,14 +234,33 @@ class TestHub(unittest.TestCase):
         self.assertIn("remote-service-status", self._started_targets(self.cfg))
         off = {k: v for k, v in self.cfg.items() if k != "service_status"}
         self.assertNotIn("remote-service-status", self._started_targets(off))
+        # Nowhere to push: no loop, so nothing is recorded as announced.
+        self.assertNotIn("remote-service-status", self._started_targets({**self.cfg, "enabled": False}))
+
+    def test_tracker_survives_an_unwritable_cache(self):
+        # An older seeded file the hub can no longer replace: memory
+        # carries on, so the incident pushes once, not every check.
+        down = [_status("claude", Health.MINOR, [_incident("a")])]
+        tracker = alerts.Tracker(self.home)
+        tracker.check([_status("claude", Health.OPERATIONAL)])
+        with patch("swe.status.alerts.atomic_write_text", side_effect=OSError("read-only")):
+            self.assertEqual(len(tracker.check(down)), 1)
+            self.assertEqual(tracker.check(down), [])
+
+    def test_tracker_adopts_another_hubs_save(self):
+        down = [_status("claude", Health.MINOR, [_incident("a")])]
+        mine, theirs = alerts.Tracker(self.home), alerts.Tracker(self.home)
+        mine.check([_status("claude", Health.OPERATIONAL)])
+        self.assertEqual(len(theirs.check(down)), 1)
+        self.assertEqual(mine.check(down), [])
 
 
 class TestCmdNotify(unittest.TestCase):
     def setUp(self):
-        from quiver.remote import commands
+        from swe.remote import commands
         self.commands = commands
         self.home = temp_dir(self)
-        patcher = patch("quiver.remote.notify.remote_dir_for",
+        patcher = patch("swe.remote.notify.remote_dir_for",
                         side_effect=lambda home=None: self.home / "remote")
         patcher.start()
         self.addCleanup(patcher.stop)

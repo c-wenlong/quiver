@@ -48,9 +48,9 @@ import Testing
     }
 
     @Test func anotherAccountResumesInItsOwnHome() {
-        let line = SessionResume.shellLine(resume, harness: "claude", accountHome: "/Users/k/.quiver/accounts/claude/w/home",
+        let line = SessionResume.shellLine(resume, harness: "claude", accountHome: "/Users/k/.swe/accounts/claude/w/home",
                                            isDefaultHome: false)
-        #expect(line == "cd '/Users/k/my code' && CLAUDE_CONFIG_DIR='/Users/k/.quiver/accounts/claude/w/home' 'claude' '--resume' 'aaa 111'")
+        #expect(line == "cd '/Users/k/my code' && CLAUDE_CONFIG_DIR='/Users/k/.swe/accounts/claude/w/home' 'claude' '--resume' 'aaa 111'")
         let codex = SessionResume.shellLine(.init(argv: ["codex", "resume", "x"], cwd: nil), harness: "codex",
                                             accountHome: "/h", isDefaultHome: false)
         #expect(codex == "CODEX_HOME='/h' 'codex' 'resume' 'x'")
@@ -269,10 +269,10 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
     }
 
     @Test func sessionsFromExtraAccountsComeFromTheLedger() async throws {
-        var work = usage("w1", "claude", models: ["opus"], cost: 3, home: "/Users/k/.quiver/accounts/claude/w/home")
+        var work = usage("w1", "claude", models: ["opus"], cost: 3, home: "/Users/k/.swe/accounts/claude/w/home")
         work.cwd = "/c/quiver"
         work.lastTimestamp = now.addingTimeInterval(-3600)
-        var old = usage("w0", "codex", models: ["gpt"], cost: 1, home: "/Users/k/.quiver/accounts/codex/x/home")
+        var old = usage("w0", "codex", models: ["gpt"], cost: 1, home: "/Users/k/.swe/accounts/codex/x/home")
         old.lastTimestamp = now.addingTimeInterval(-200 * 86_400)
         // A default-home session swe didn't list stays out: swe is the source there.
         let stray = usage("d1", "claude", models: [], cost: 1)
@@ -291,11 +291,11 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         #expect(row.session.project == "quiver")
         #expect(row.session.resume == SessionInfo.Resume(argv: ["claude", "--resume", "w1"], cwd: "/c/quiver"))
         #expect(row.session.lastActiveAt == work.lastTimestamp)
-        #expect(row.usage?.accountHome == "/Users/k/.quiver/accounts/claude/w/home")
+        #expect(row.usage?.accountHome == "/Users/k/.swe/accounts/claude/w/home")
     }
 
     @Test func extraAccountRowsCarryTheirAccountLabel() async throws {
-        var work = usage("w1", "claude", models: ["opus"], cost: 3, home: "/Users/k/.quiver/accounts/claude/w/home")
+        var work = usage("w1", "claude", models: ["opus"], cost: 3, home: "/Users/k/.swe/accounts/claude/w/home")
         work.cwd = "/c/quiver"
         let ledger = FakeSessionLedger()
         await ledger.set([work, usage("a", "claude", models: [], cost: 0)])
@@ -309,7 +309,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
 
         let row = try #require(model.rows.first { $0.session.id == "w1" })
         #expect(row.account == "Claude: Work")
-        #expect(row.session.accountHome == "/Users/k/.quiver/accounts/claude/w/home")
+        #expect(row.session.accountHome == "/Users/k/.swe/accounts/claude/w/home")
         // The default-home row keeps the bare harness name.
         #expect(model.rows.first { $0.session.id == "a" }?.account == nil)
         // The search matches the label, so "work" finds the account's rows.
@@ -322,8 +322,8 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         // takes that account's usage, its own title, and the ledger adds
         // no second row for it.
         var listed = session("w1", "claude", cwd: "/c/quiver", at: 1_791_699_000, title: "Account work")
-        listed.accountHome = "/Users/k/.quiver/accounts/claude/w/home"
-        var work = usage("w1", "claude", models: ["opus"], cost: 3, home: "/Users/k/.quiver/accounts/claude/w/home")
+        listed.accountHome = "/Users/k/.swe/accounts/claude/w/home"
+        var work = usage("w1", "claude", models: ["opus"], cost: 3, home: "/Users/k/.swe/accounts/claude/w/home")
         work.cwd = "/c/quiver"
         let ledger = FakeSessionLedger()
         await ledger.set([work])
@@ -345,7 +345,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         // Before swe lists a profile session the ledger-only row carries
         // `account|session`; once listed it must keep that id or a rail
         // holding the open row sees a new session and shows it twice.
-        let home = "/Users/k/.quiver/accounts/claude/w/home"
+        let home = "/Users/k/.swe/accounts/claude/w/home"
         var work = usage("w1", "claude", models: ["opus"], cost: 3, home: home)
         work.cwd = "/c/quiver"
         let ledgerOnlyStore = FakeSessionLedger()
@@ -403,7 +403,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         // Two profiles on one Cursor account took turns polling: older
         // events kept the first home, newer ones the second.
         let first = "/Users/k/Library/Application Support/Cursor"
-        let second = "/Users/k/.quiver/accounts/cursor/w/home"
+        let second = "/Users/k/.swe/accounts/cursor/w/home"
         var old = usage("bc-1", "cursor", models: ["opus"], cost: 2, home: first)
         old.firstTimestamp = now.addingTimeInterval(-7200)
         old.lastTimestamp = now.addingTimeInterval(-3600)
@@ -448,7 +448,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
     }
 
     @Test func codexSessionsResumeByTheirThreadId() async throws {
-        let home = "/Users/k/.quiver/accounts/codex/x/home"
+        let home = "/Users/k/.swe/accounts/codex/x/home"
         var rollout = usage("rollout-2026-09-09T14-52-42-0199ABCD-1111-2222-3333-444455556666", "codex",
                             models: [], cost: 1, home: home)
         rollout.lastTimestamp = now
@@ -462,7 +462,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
     }
 
     @Test func aSessionCopiedAcrossAccountsKeepsEachAccountApart() async throws {
-        let extra = "/Users/k/.quiver/accounts/claude/w/home"
+        let extra = "/Users/k/.swe/accounts/claude/w/home"
         var mine = usage("s1", "claude", models: [], cost: 1)
         mine.lastTimestamp = now
         var theirs = usage("s1", "claude", models: [], cost: 2, home: extra)

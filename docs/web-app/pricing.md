@@ -5,7 +5,7 @@ every model the hub's ledger saw in the period, grouped by provider, with the
 price its name resolves to, where that price came from, and its tokens. A
 row opens the app's price form, which saves your own price or removes it.
 
-Files: `src/quiver/webapp/pages/pricing.py`, `src/quiver/webapp/pages/_brands.py`
+Files: `src/swe/webapp/pages/pricing.py`, `src/swe/webapp/pages/_brands.py`
 (the brand table, shared with Models), `static/pages/pricing.js` and `pricing.css`.
 
 ## What it shows
@@ -17,7 +17,7 @@ Files: `src/quiver/webapp/pages/pricing.py`, `src/quiver/webapp/pages/_brands.py
   Cache read and Cache write per 1M tokens, the Source mark and the tokens.
   Each card shows four rows and folds the rest behind "Show N more".
 - Source: the biller's logo for a harness-billed row (every event logged its
-  own charge; Grok Bot's charges are Cursor's), LiteLLM's mark, Quiver's icon
+  own charge; Grok Bot's charges are Cursor's), LiteLLM's mark, SWE's icon
   for the supplement, a person for your own price, a gift for a free model,
   and a warning for no price. Hovering it gives the app's sentence on whose
   price the spend uses. A harness-billed row's rates are dimmed.
@@ -76,7 +76,7 @@ Clicking a row (or Enter on it) opens a dialog, the app's `PricingEditSheet`:
 the model, "Price applies to" (monospaced, pre-filled with `key`), Input,
 Output, Cache read and Cache write pre-filled with the row's rates, the
 note "USD per 1M tokens. Blank cache fields count as 0. Saves to
-~/.quiver/config/pricing.json on <machine>.", and Cancel / Save. Save stays
+~/.swe/config/pricing.json on <machine>.", and Cancel / Save. Save stays
 off until the name is set, Input and Output are numbers of 0 or more, and
 the cache fields are blank or such numbers. A row priced by you also gets
 "Remove your price". The dialog lives outside the page panel, so a repaint

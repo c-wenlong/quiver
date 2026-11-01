@@ -9,26 +9,26 @@ import Testing
     let listJSON = #"""
     {"hooks": [
       {"script": "prose-guard.py", "harness": "claude",
-       "source": "/h/.quiver/hooks/claude/prose-guard.py",
+       "source": "/h/.swe/hooks/claude/prose-guard.py",
        "destination": "/h/.claude/hooks/prose-guard.py",
        "state": "linked", "detail": "",
        "declared": [{"event": "PreToolUse", "matcher": "Bash", "timeout": 10,
                      "command": "~/.claude/hooks/prose-guard.py",
                      "settings": "/h/.claude/settings.json"}]},
       {"script": "night-watch.py", "harness": "claude",
-       "source": "/h/.quiver/hooks/claude/night-watch.py",
+       "source": "/h/.swe/hooks/claude/night-watch.py",
        "destination": "/h/.claude/hooks/night-watch.py",
        "state": "create", "detail": "", "declared": []},
       {"script": "block-rm.py", "harness": "codex",
-       "source": "/h/.quiver/hooks/codex/block-rm.py",
+       "source": "/h/.swe/hooks/codex/block-rm.py",
        "destination": "/h/.codex/hooks/block-rm.py",
        "state": "create", "detail": "",
        "declared": [{"event": "SessionStart", "matcher": "", "timeout": null,
                      "command": "~/.codex/hooks/block-rm.py",
                      "settings": "/h/.codex/hooks.json"}]},
       {"script": "probe.py", "harness": "fixturetool",
-       "source": "/h/.quiver/hooks/fixturetool/probe.py",
-       "destination": "/h/.quiver/hooks/fixturetool/probe.py",
+       "source": "/h/.swe/hooks/fixturetool/probe.py",
+       "destination": "/h/.swe/hooks/fixturetool/probe.py",
        "state": "skipped",
        "detail": "no hooks root, set capabilities.hooks.root in harness.json",
        "declared": []}
@@ -40,13 +40,13 @@ import Testing
     let tieredJSON = #"""
     {"hooks": [
       {"script": "prose-guard.py", "harness": "shared",
-       "source": "/h/.quiver/hooks/shared/prose-guard.py",
+       "source": "/h/.swe/hooks/shared/prose-guard.py",
        "destination": "/h/.claude/hooks/prose-guard.py",
        "state": "linked", "detail": "", "declared": [],
        "tier": "shared", "enabled": true,
        "events_supported": ["PreToolUse", "PostToolUse"]},
       {"script": "beacon.py", "harness": "claude",
-       "source": "/h/.quiver/hooks/claude/beacon.py",
+       "source": "/h/.swe/hooks/claude/beacon.py",
        "destination": "/h/.claude/hooks/beacon.py",
        "state": "linked", "detail": "", "declared": [],
        "tier": "harness", "enabled": false},
@@ -228,7 +228,7 @@ import Testing
     @Test func newHookRunsSweHooksNewThenReloads() async throws {
         let runner = self.runner(ok(listJSON))
         runner.rules.insert((["hooks", "new"], ok(#"""
-            {"path": "/h/.quiver/hooks/claude/guard.py", "harness": "claude",
+            {"path": "/h/.swe/hooks/claude/guard.py", "harness": "claude",
              "command": "~/.claude/hooks/guard.py",
              "settings": ["/h/.claude/settings.json"],
              "stanza": "{ }"}
@@ -314,7 +314,7 @@ import Testing
         let inventory = HookInventory(
             hooks: [
                 Hook(script: "prose-guard.py", harness: "shared",
-                     source: "/h/.quiver/hooks/shared/prose-guard.py",
+                     source: "/h/.swe/hooks/shared/prose-guard.py",
                      destination: "/h/.claude/hooks/prose-guard.py",
                      state: LinkState(rawValue: "from-a-newer-swe"),
                      detail: "waits on settings",

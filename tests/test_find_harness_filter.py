@@ -2,7 +2,7 @@
 
 Every `swe find` view enumerates harnesses somehow, and every one of them
 should agree on which are worth showing by default — that agreement is
-``quiver.find.roots.harness_filter``, built on top of the same
+``swe.find.roots.harness_filter``, built on top of the same
 ``harness.json`` state ``swe list`` already reads (see
 tests/test_registry_state.py for the accessor this pins).
 
@@ -24,21 +24,21 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.find.plugins import discover_plugins
-from quiver.find.roots import agents_roots, harness_footer_text, skills_roots
-from quiver.harness import registry
+from swe.find.plugins import discover_plugins
+from swe.find.roots import agents_roots, harness_footer_text, skills_roots
+from swe.harness import registry
 
 
 class _RegistrySandbox(unittest.TestCase):
     """Point harness.json at a throwaway file, the same isolation
     tests/test_registry_state.py uses, so nothing here reads (or writes)
-    the real machine's ~/.quiver/config/harness.json."""
+    the real machine's ~/.swe/config/harness.json."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name)
-        self.config_dir = self.home / ".quiver" / "config"
+        self.config_dir = self.home / ".swe" / "config"
         self.harness_file = self.config_dir / "harness.json"
 
         patches = [
@@ -73,8 +73,8 @@ class AgentsHarnessFilterTest(_RegistrySandbox):
 
     def setUp(self):
         super().setUp()
-        (self.home / ".quiver").mkdir(parents=True)
-        (self.home / ".quiver" / "AGENTS.md").write_text("rules\n")
+        (self.home / ".swe").mkdir(parents=True)
+        (self.home / ".swe" / "AGENTS.md").write_text("rules\n")
         self._agents_md(".claude/CLAUDE.md")
         self._agents_md(".codex/AGENTS.md")
 
@@ -125,7 +125,7 @@ class AgentsHarnessFilterTest(_RegistrySandbox):
     def test_an_empty_registry_hides_nothing(self):
         # No harness.json on disk at all: load_registry_if_present() must
         # return {} rather than seeding (and writing) the defaults — a
-        # read-only `swe find` must not create ~/.quiver/config as a
+        # read-only `swe find` must not create ~/.swe/config as a
         # side effect of being asked what is archived.
         labels = {e.detail.split(",")[0] for e in agents_roots(home=self.home)}
         self.assertIn("claude", labels)
@@ -228,7 +228,7 @@ class InlineHelpDocumentsFlagsTest(unittest.TestCase):
         import contextlib
         import io
 
-        from quiver.find.commands import print_find_help
+        from swe.find.commands import print_find_help
 
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):

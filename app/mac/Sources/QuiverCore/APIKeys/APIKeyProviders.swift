@@ -1,7 +1,7 @@
 import Foundation
 
 /// A provider the "Add key" sheet offers, mirrored from
-/// `src/quiver/providers/defaults.py` (`APIKeyProvidersSyncTests` fails
+/// `src/swe/providers/defaults.py` (`APIKeyProvidersSyncTests` fails
 /// when the two drift apart). The slug is defaults.py's key, the env
 /// vars its `env_vars` in the same order, and the key URL its `url`.
 public struct APIKeyProvider: Equatable, Sendable, Identifiable {

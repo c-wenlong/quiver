@@ -4,7 +4,7 @@ import os
 /// A per-source cache of what each file produced: path -> stamp and the
 /// sessions parsed out of it. Sources stat their files on every query but
 /// re-parse only new or changed ones, so a week view never re-reads the
-/// whole history. Persisted under ~/.quiver/cache/calendar/<source>.json.
+/// whole history. Persisted under ~/.swe/cache/calendar/<source>.json.
 public actor ActivityFileIndex {
     /// One session's response times as a file gave them (epoch seconds).
     public struct IndexedSession: Codable, Sendable, Equatable {

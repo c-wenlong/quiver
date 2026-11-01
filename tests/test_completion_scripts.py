@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import unittest
 
-from quiver.completion_scripts import BASH_SCRIPT, FISH_SCRIPT, ZSH_SCRIPT
+from swe.completion_scripts import BASH_SCRIPT, FISH_SCRIPT, ZSH_SCRIPT
 
 
 def _run(shell_argv, script):

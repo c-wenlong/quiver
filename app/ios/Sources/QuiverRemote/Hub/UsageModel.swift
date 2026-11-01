@@ -57,9 +57,13 @@ final class UsageModel {
 
     func loadPeriod(app: AppModel, _ period: UsagePeriod, force: Bool = false) async {
         guard force || overviews[period] == nil, let client = app.client else { return }
+        // The hub asked, not whichever is on screen when it answers.
+        let hubId = app.hub?.id
         do {
-            overviews[period] = try await client.overview(period: period)
+            let overview = try await client.overview(period: period)
+            overviews[period] = overview
             overviewErrors[period] = nil
+            if period == .today, let hubId { app.publishSpend(overview.totals?.costUsd, hubId: hubId) }
         } catch is CancellationError {
         } catch {
             overviewErrors[period] = message(error, app: app, client: client)

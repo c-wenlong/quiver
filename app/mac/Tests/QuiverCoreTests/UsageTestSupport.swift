@@ -177,7 +177,7 @@ let usageScratch: URL = {
 }()
 
 /// A per-test file URL for `OtherLimitsModel`'s snapshot, so no test ever
-/// touches the real `~/.quiver` cache.
+/// touches the real `~/.swe` cache.
 func tempSnapshotFile() -> URL {
     usageScratch
         .appendingPathComponent("limits-\(UUID().uuidString)")
@@ -185,7 +185,7 @@ func tempSnapshotFile() -> URL {
 }
 
 /// Same for `HarnessAccountNameStore`: a per-test file URL, so the real
-/// `~/.quiver/accounts/harness-names.json` is never read or written.
+/// `~/.swe/accounts/harness-names.json` is never read or written.
 func tempNamesStore() -> HarnessAccountNameStore {
     HarnessAccountNameStore(file: usageScratch
         .appendingPathComponent("names-\(UUID().uuidString)")

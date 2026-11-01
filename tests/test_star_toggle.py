@@ -11,15 +11,15 @@ import unittest
 from contextlib import redirect_stdout
 from unittest import mock
 
-from quiver.console import strip_ansi
+from swe.console import strip_ansi
 
 
 class StarTogglesTest(unittest.TestCase):
     def setUp(self):
         self.stars = []
-        p1 = mock.patch("quiver.harness.stars.load_stars",
+        p1 = mock.patch("swe.harness.stars.load_stars",
                         side_effect=lambda: list(self.stars))
-        p2 = mock.patch("quiver.harness.stars.save_stars",
+        p2 = mock.patch("swe.harness.stars.save_stars",
                         side_effect=lambda s: self.stars.__init__(list(s)))
         p1.start()
         p2.start()
@@ -27,7 +27,7 @@ class StarTogglesTest(unittest.TestCase):
         self.addCleanup(p2.stop)
 
     def _star(self, name):
-        from quiver.harness.commands import cmd_star
+        from swe.harness.commands import cmd_star
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -35,12 +35,12 @@ class StarTogglesTest(unittest.TestCase):
         return strip_ansi(buf.getvalue())
 
     def test_the_command_is_no_longer_registered(self):
-        from quiver.cli import COMMANDS
+        from swe.cli import COMMANDS
 
         self.assertNotIn("unstar", COMMANDS)
 
     def test_it_is_not_offered_in_completion(self):
-        import quiver.completion as comp
+        import swe.completion as comp
 
         source = comp.__file__
         with open(source) as fh:
@@ -49,15 +49,15 @@ class StarTogglesTest(unittest.TestCase):
     def test_help_no_longer_advertises_it(self):
         from pathlib import Path
 
-        text = Path("src/quiver/help_text.py").read_text()
+        text = Path("src/swe/help_text.py").read_text()
         self.assertNotIn("swe unstar", text)
 
     def test_star_then_star_again_returns_to_the_start(self):
-        from quiver.harness.stars import is_starred, toggle_star
+        from swe.harness.stars import is_starred, toggle_star
 
-        with mock.patch("quiver.harness.stars.load_stars",
+        with mock.patch("swe.harness.stars.load_stars",
                         side_effect=lambda: list(self.stars)), \
-             mock.patch("quiver.harness.stars.save_stars",
+             mock.patch("swe.harness.stars.save_stars",
                         side_effect=lambda s: self.stars.__init__(list(s))):
             self.assertTrue(toggle_star("claude"))
             self.assertTrue(is_starred("claude", self.stars))
@@ -67,12 +67,12 @@ class StarTogglesTest(unittest.TestCase):
     def test_an_orphan_star_can_still_be_removed(self):
         """A star can outlive its registry entry; removing one used to
         need `swe unstar`, which fell back to the raw name."""
-        from quiver.harness.commands import cmd_star
+        from swe.harness.commands import cmd_star
 
         self.stars.append("ghost-tool")
-        with mock.patch("quiver.harness.commands.load_registry", return_value={}), \
-             mock.patch("quiver.harness.commands.is_starred", return_value=True), \
-             mock.patch("quiver.harness.commands.toggle_star", return_value=False) as tg:
+        with mock.patch("swe.harness.commands.load_registry", return_value={}), \
+             mock.patch("swe.harness.commands.is_starred", return_value=True), \
+             mock.patch("swe.harness.commands.toggle_star", return_value=False) as tg:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 cmd_star(["ghost-tool"])
@@ -80,10 +80,10 @@ class StarTogglesTest(unittest.TestCase):
         self.assertIn("Unstarred", strip_ansi(buf.getvalue()))
 
     def test_an_unknown_name_is_still_an_error(self):
-        from quiver.harness.commands import cmd_star
+        from swe.harness.commands import cmd_star
 
-        with mock.patch("quiver.harness.commands.load_registry", return_value={}), \
-             mock.patch("quiver.harness.commands.is_starred", return_value=False):
+        with mock.patch("swe.harness.commands.load_registry", return_value={}), \
+             mock.patch("swe.harness.commands.is_starred", return_value=False):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 cmd_star(["no-such-tool"])

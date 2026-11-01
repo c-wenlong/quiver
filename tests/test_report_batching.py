@@ -1,9 +1,9 @@
 import unittest
 from unittest.mock import patch
 
-from quiver.reports.batching import SummaryInput, build_summary_batches, compact_transcript
-from quiver.reports.transcripts import NormalizedMessage, NormalizedTranscript
-from quiver.sessions.models import Session
+from swe.reports.batching import SummaryInput, build_summary_batches, compact_transcript
+from swe.reports.transcripts import NormalizedMessage, NormalizedTranscript
+from swe.sessions.models import Session
 
 
 def item(session_id, project, timestamp, chars=20):

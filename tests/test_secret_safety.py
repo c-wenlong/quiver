@@ -1,7 +1,7 @@
 """`mcp edit` temp file secrecy + providers --file containment.
 
 The old edit flow wrote resolved secrets to a predictable
-``~/.quiver/config/.mcp-edit-tmp.json``: symlink-following, umask-mode,
+``~/.swe/config/.mcp-edit-tmp.json``: symlink-following, umask-mode,
 left behind on a crashed editor, inside the versioned git tree. And
 ``providers add --file=../../x`` stored a path that ``find_key_file``
 joined verbatim — a masked-read oracle for any file on the box.
@@ -19,9 +19,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.mcp import cli as mcp_cli
-from quiver.providers.keys import find_key_file
-from quiver.providers import commands as providers_commands
+from swe.mcp import cli as mcp_cli
+from swe.providers.keys import find_key_file
+from swe.providers import commands as providers_commands
 
 
 class McpEditTmpFileTest(unittest.TestCase):
@@ -68,9 +68,9 @@ class McpEditTmpFileTest(unittest.TestCase):
         rc, seen, _ = self._run_edit("true")
         self.assertEqual(rc, 0)
         path = seen["path"]
-        # Outside ~/.quiver entirely, unpredictable name, mode 0600.
-        self.assertNotIn(".quiver", str(path))
-        self.assertIn("quiver-mcp-edit-", path.name)
+        # Outside ~/.swe entirely, unpredictable name, mode 0600.
+        self.assertNotIn(".swe", str(path))
+        self.assertIn("swe-mcp-edit-", path.name)
         self.assertEqual(seen["mode"], 0o600)
         # Resolved secret content reached the editor...
         self.assertIn("npx", seen["content"])
@@ -222,7 +222,7 @@ class ProviderFileContainmentTest(unittest.TestCase):
         None); 3.13 resolves the loop to itself, and read_key's ELOOP
         then reports missing. Pin the contract both ways: no content.
         """
-        from quiver.providers.keys import read_key
+        from swe.providers.keys import read_key
 
         with tempfile.TemporaryDirectory() as tmp:
             keys_dir = Path(tmp) / "keys"

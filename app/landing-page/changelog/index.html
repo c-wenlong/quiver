@@ -3,9 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Changelog — quiver</title>
-<meta name="description" content="Notable changes to quiver.">
-<link rel="icon" href="../icon.png">
+<title>Changelog — swe</title>
+<meta name="description" content="Notable changes to swe.">
+<link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="../favicon-32.png" type="image/png" sizes="32x32">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -89,7 +92,7 @@ footer a:hover { color: var(--text); }
 <header class="top">
   <div class="wrap">
     <nav>
-      <a class="brand" href="../"><img src="../icon.png" alt="">quiver</a>
+      <a class="brand" href="../"><img src="../logo-rounded.svg" alt="">swe</a>
       <div class="links">
         <a href="../overview/">Docs</a>
         <a href="../cli/">CLI reference</a>
@@ -115,12 +118,53 @@ by default) starts a five-minute check of every tracked status page
 in <code>swe remote serve</code>, through the web app's shared poller. A model
 provider or agent platform starting an incident posts once to ntfy,
 and once more when it is back to normal; the hub emits these as
-<code>notify</code> events of kind <code>service</code>. Maintenance never posts, the first
-check only records what is already open, and the delivered set in
-<code>~/.quiver/cache/web-service-status-notified.json</code> keeps a restart
+<code>notify</code> events of kind <code>service</code>; it needs ntfy configured. Maintenance
+never posts, each page's first reading only records what is already
+open, and the delivered set in
+<code>~/.swe/cache/web-service-status-notified.json</code> keeps a restart
 from repeating a push. The rule is <code>status/alerts.py</code>, a port of the
 Mac's <code>ServiceStatusAlerts</code>. Closes
 <a href="https://github.com/c-wenlong/quiver/issues/528">#528</a>.</p>
+</li>
+<li><p><strong>Doctor folds in <code>swe mcp doctor</code>.</strong> <code>swe doctor</code> now warns about
+each MCP server a harness config holds that fails a local check (a
+stdio binary missing, an empty env value, a bad URL scheme) as
+<code>mcp.server</code>; reachability stays <code>swe mcp doctor</code>'s, so doctor makes
+no network calls. When the hub's <code>mcp.json</code> holds the same name in a
+shape that passes, the finding gets <code>mcp-sync</code>: a click per finding
+that checks again, backs the config file up to <code>~/.quiver/backups</code>
+and runs <code>swe mcp sync quiver &lt;tool&gt; --only=&lt;name&gt; --force</code>, which
+replaces only that entry (through a symlink, the file it points at is
+what gets backed up), then checks again: a sync that skipped the entry
+is an error. The hub copy must name only stored secrets and have a
+command or url. A config the readers cannot parse is one
+<code>mcp.unchecked</code> warning. Batches never run it, since it overwrites.
+Part of <a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
+</li>
+<li><p><strong>iPhone: home screen widget.</strong> Small and medium widgets show the
+hub's sessions waiting on you (approvals and replies), sessions still
+working, and today's spend
+(<a href="https://github.com/c-wenlong/quiver/issues/1442">#1442</a>). The
+widget fetches sessions, the inbox and today's overview about every
+15 minutes, and redraws when the app's refresh changes the snapshot
+it keeps in the App Group. When the hub can't be reached it draws
+that snapshot with &quot;as of <time>&quot;. A medium widget's session row
+opens its chat through the new <code>quiver://session/&lt;key&gt;?hub=&lt;hub&gt;</code>
+deep link; anywhere else opens the app.</p>
+</li>
+<li><p><strong>Doctor folds in plugin drift and broken hub links.</strong> <code>swe doctor</code>
+now lists <code>swe find plugins</code>' drift as <code>plugins.&lt;kind&gt;</code> findings. An
+unregistered marketplace folder or an uninstalled plugin gets the
+<code>plugin-fix</code> action, which <code>--fix</code> and Fix all run (it only adds, via
+<code>plugin_drift.apply_fix</code>); a stale Codex copy gets <code>plugin-reinstall</code>,
+a click per finding since it removes the copy first; a disabled plugin
+or a linked manifest keeps its command. A broken top-level symlink in
+<code>~/.quiver</code> or its skills folder gets <code>dangling-link</code>, a click that
+copies the link to <code>~/.quiver/backups</code> and removes it, and refuses
+anything that is no longer a broken link directly in those folders.
+A marketplace <code>--fix</code> registers shows its uninstalled plugins to the
+next pass, which installs them. Part of
+<a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
 </li>
 <li><p><strong>Live reply text on iPhone, web and Mac.</strong> The chat draws a reply
 word by word while a Codex app-server, opencode serve or headless
@@ -1067,6 +1111,23 @@ hub still holds (<code>GET</code>/<code>POST /v1/sessions/{key}/queue</code>). P
 </ul>
 <h3 id="changed"><a class="anchor" href="#changed"></a>Changed</h3>
 <ul>
+<li><p><strong>New icon and logo everywhere; the pixel-art mascot is gone.</strong> The
+Mac and iPhone app icons, the web app's icons, the landing site and
+the README now use the new mark: three arrowheads above <code>swe</code> on a
+dark tile. The web app serves <code>favicon.ico</code>, <code>favicon.svg</code>,
+<code>favicon-32.png</code> and <code>apple-touch-icon.png</code>, plus a
+<code>manifest.webmanifest</code> that lists <code>icon-192.png</code>, <code>icon-512.png</code> and
+a maskable <code>icon-maskable-512.png</code> for home-screen shortcuts. The
+landing site gets the same favicons. The mascot banner, the README's
+mascot picture and the landing page's mascot figure are removed. The
+source art (square, rounded and a transparent mark for dark
+backgrounds) lives in <code>assets/</code>. The new mark has one look, so the Mac
+app's Settings › App icon choice (Light or Dark) is gone, along with
+its placeholder row on the web Settings page: the app builds one
+<code>AppIcon.icns</code> and the Dock always shows it. The DMG window's
+background now scatters the mark's three arrowheads instead of the
+old icon's five glyphs.</p>
+</li>
 <li><p><strong>Mac app: Artificial Analysis moves to its V2 API.</strong> AA retires the
 legacy <code>/api/v2/data/*</code> routes on November 4, 2026, so the Models page
 refresh and the Settings › Services &quot;Test&quot; probe now call
@@ -1216,7 +1277,7 @@ to <code>app/mac/</code> and the iPhone app from <code>remote/ios/</code> to <co
 roadmap is now <code>app/ios/ROADMAP.md</code>). Build with
 <code>app/mac/script/build-app.sh</code> and install with
 <code>app/mac/script/install-app.sh</code>. The web app stays in
-<code>src/quiver/webapp/</code>, inside the Python package. An app installed
+<code>src/swe/webapp/</code>, inside the Python package. An app installed
 before this change can't rebuild itself from Settings › Updates once
 the checkout has the new layout; run <code>app/mac/script/install-app.sh</code>
 once.</p>
@@ -1620,7 +1681,7 @@ rollout's tail decoded as non-paginated (<code>response_item</code> rows indexed
 over the real <code>item_completed</code> turns) and the span's first prompt
 overwrote the stored session title, sometimes with an injected turn
 like a <code>&lt;local-command-caveat&gt;</code> block. <code>SearchIndexer.beginFile</code> now
-primes appends the way <code>src/quiver/sessions/search_writer.py</code> does:
+primes appends the way <code>src/swe/sessions/search_writer.py</code> does:
 the head's first <code>session_meta</code> restores the <code>history_mode</code>, and only
 an explicit title record may rename the session. Appends are also
 gated to claude/codex/pi, Python's <code>APPENDABLE</code> set — any other
@@ -3174,7 +3235,7 @@ the first 1.x release patched for
 <a href="https://github.com/advisories/GHSA-84m7-p3x7-pcfv">GHSA-84m7-p3x7-pcfv</a>
 (CVE-2026-59951): a stateful Streamable HTTP server never reclaimed
 sessions, so a client could grow its memory without bound. Quiver's
-session server (<code>python -m quiver.mcp_server</code>) runs over stdio, which
+session server (<code>python -m swe.mcp_server</code>) runs over stdio, which
 the advisory lists as unaffected, so there was no live exposure; the
 floor only keeps a fresh install off the vulnerable range.</li>
 </ul>
@@ -3998,7 +4059,7 @@ utilization ties. Existing outage caching keeps the last successful reading
 visible when Antigravity is closed.</p>
 </li>
 <li><p><strong>Security: SSRF / LFI fix in <code>swe mcp &lt;tool&gt; status</code> health check.</strong>
-<code>src/quiver/mcp/cli.py::check_server_health</code> now validates that any
+<code>src/swe/mcp/cli.py::check_server_health</code> now validates that any
 URL it fetches via <code>urllib.request.urlopen</code> strictly starts with
 <code>http://</code> or <code>https://</code> (case-insensitive) before issuing the
 HEAD request. Without this guard, an attacker who can write a
@@ -4009,7 +4070,7 @@ both <code>http</code> server types (direct URL field) and <code>wrapped</code> 
 types (URL inside <code>args</code>). (PR #2.)</p>
 </li>
 <li><p><strong>Security: Bandit B324 / FIPS-compliant <code>hashlib.md5</code> in Kimi
-parser.</strong> <code>src/quiver/sessions/parsers.py::parse_kimi::load_hash_map</code>
+parser.</strong> <code>src/swe/sessions/parsers.py::parse_kimi::load_hash_map</code>
 now passes <code>usedforsecurity=False</code> to the single
 <code>hashlib.md5(p.encode())</code> call — the hash is used purely to build
 a stable map-key from a path string, never for authentication or
@@ -4019,7 +4080,7 @@ security-related use) and is required for FIPS-mode Python builds.
 <code>requires-python = &quot;&gt;=3.10&quot;</code> covers it natively. (PR #17.)</p>
 </li>
 <li><p><strong>Performance: memoize <code>os.path.realpath</code> in the session
-aggregator's <code>cwd</code> filter loop.</strong> <code>src/quiver/sessions/aggregator.py::get_all_sessions</code>
+aggregator's <code>cwd</code> filter loop.</strong> <code>src/swe/sessions/aggregator.py::get_all_sessions</code>
 used to issue an <code>os.path.realpath</code> syscall on every session's
 path when filtering by <code>cwd</code> — O(N) disk stats for what is
 functionally O(U) unique paths (most sessions share a project
@@ -4035,10 +4096,10 @@ entry to compute the file kind, multiplying latency in deeply
 nested agent session trees. <code>os.scandir()</code> returns DirEntry
 objects whose <code>is_dir()</code> / <code>is_file()</code> / <code>stat()</code> reuse cached
 metadata from the directory iteration itself, collapsing the N+
-syscalls into one. Touched files: <code>src/quiver/sessions/parsers.py</code>
-(parse_cursor, parse_antigravity), <code>src/quiver/sessions/engines/jsonl_engine.py</code>
-(5 sites), <code>src/quiver/sessions/engines/json_engine.py</code> (2 sites —
-nested parent+session-dir loops), <code>src/quiver/sessions/models_analytics.py</code>
+syscalls into one. Touched files: <code>src/swe/sessions/parsers.py</code>
+(parse_cursor, parse_antigravity), <code>src/swe/sessions/engines/jsonl_engine.py</code>
+(5 sites), <code>src/swe/sessions/engines/json_engine.py</code> (2 sites —
+nested parent+session-dir loops), <code>src/swe/sessions/models_analytics.py</code>
 (3 sites — claude + freebuff paths). Every site is wrapped in
 <code>with os.scandir(...) as &lt;var&gt;_it:</code> so the directory FD is
 released on scope exit (caught and fixed during triage — bare
@@ -4641,7 +4702,7 @@ per-subtest <code>reset_at</code> mutation into <code>_SAMPLE_RESPONSE</code>, w
 
 </main>
 <footer>
-  <span>quiver is MIT licensed.</span>
+  <span>swe is MIT licensed.</span>
   <div class="right">
     <a href="../overview/">Docs</a>
     <a href="../changelog/">Changelog</a>

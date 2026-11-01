@@ -26,7 +26,7 @@ public struct SessionInfo: Codable, Sendable, Equatable, Identifiable {
     /// Where a cloud session opens in the browser; nil for local ones.
     public var webURL: String?
     /// The Quiver account home the session's transcripts sit under
-    /// (`~/.quiver/accounts/<vendor>/<id>/home`); nil for the harness's
+    /// (`~/.swe/accounts/<vendor>/<id>/home`); nil for the harness's
     /// default home.
     public var accountHome: String?
 
@@ -376,7 +376,7 @@ public final class SessionsModel {
         }
     }
 
-    /// The index's directory; nil uses `~/.quiver/data/search`.
+    /// The index's directory; nil uses `~/.swe/data/search`.
     private let searchIndexDirectory: URL?
     /// The lazily created reader; opened on the first enabled search.
     private var cachedSearchEngine: SearchEngine?
@@ -408,7 +408,7 @@ public final class SessionsModel {
     ///   - listTimeout: how long swe may take before the listing is stopped
     ///     and counts as failed, so a hung swe can't block the next try.
     ///   - searchIndex: the search index's directory; nil reads the default
-    ///     `~/.quiver/data/search`.
+    ///     `~/.swe/data/search`.
     ///   - searchIndexingEnabled: overrides the stored
     ///     `searchIndexingEnabled` default (tests); nil reads it.
     public init(source: SessionListing, ledger: SessionUsageQuerying, defaultHomes: Set<String> = [],
@@ -987,11 +987,11 @@ public final class SessionsModel {
     // MARK: - Transcript search hits
 
     /// The reader over `searchIndexDirectory` (or the default
-    /// `~/.quiver/data/search`), made on first use.
+    /// `~/.swe/data/search`), made on first use.
     private func searchEngine() -> SearchEngine {
         if let cachedSearchEngine { return cachedSearchEngine }
         let directory = searchIndexDirectory ?? SearchLocation.directory(under:
-            FileManager.default.homeDirectoryForCurrentUser.appending(path: ".quiver"))
+            FileManager.default.homeDirectoryForCurrentUser.appending(path: ".swe"))
         let made = SearchEngine(directory: directory)
         cachedSearchEngine = made
         return made

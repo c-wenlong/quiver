@@ -6,7 +6,7 @@ app decodes the whole stream, so a stray header line or ANSI escape breaks
 every page that depends on it.
 
 These run the real CLI in a subprocess against a throwaway HOME, because
-quiver resolves ~/.quiver once at import time. An in-process test would
+quiver resolves ~/.swe once at import time. An in-process test would
 read the developer's own registry.
 """
 
@@ -37,13 +37,13 @@ def run_swe(home: Path, *args: str) -> subprocess.CompletedProcess:
         "NO_COLOR": "1",
     })
     return subprocess.run(
-        [sys.executable, "-m", "quiver.cli", *args],
+        [sys.executable, "-m", "swe.cli", *args],
         capture_output=True, text=True, env=env, timeout=60,
     )
 
 
 def write_registry(home: Path, registry: dict) -> None:
-    config = home / ".quiver" / "config"
+    config = home / ".swe" / "config"
     config.mkdir(parents=True, exist_ok=True)
     (config / "harness.json").write_text(json.dumps(registry))
 
@@ -111,7 +111,7 @@ class ListJsonTest(unittest.TestCase):
                 self.assertNotEqual(result.stderr.strip(), "")
 
     def test_json_with_edit_or_legend_is_refused_before_any_write(self):
-        config = self.home / ".quiver" / "config" / "config.json"
+        config = self.home / ".swe" / "config" / "config.json"
         config.write_text(json.dumps({"list": {"session_window": 7}}))
         before = config.read_text()
         for args in (["edit", "--reset", "--json"], ["legend", "--json"]):
@@ -126,7 +126,7 @@ class ListJsonTest(unittest.TestCase):
         import time
 
         # The table can be set to a 7-day window; the JSON field promises 100.
-        (self.home / ".quiver" / "config" / "config.json").write_text(
+        (self.home / ".swe" / "config" / "config.json").write_text(
             json.dumps({"list": {"session_window": 7}}))
         session = (self.home / ".claude" / "projects" / "-work" /
                    "0b7c2a52-9f1e-4f43-8f43-3a8e6b1c2d01.jsonl")
@@ -228,7 +228,7 @@ class ListPrimaryColorJsonTest(unittest.TestCase):
         result = run_swe(home, "edit", "claude", "--primary-color=d97757")
         self.assertEqual(result.returncode, 0, result.stderr)
         saved = json.loads(
-            (home / ".quiver" / "config" / "harness.json").read_text())
+            (home / ".swe" / "config" / "harness.json").read_text())
         self.assertEqual(saved["claude"]["primary_color"], "#D97757")
         rows = {row["name"]: row for row in
                 decode(run_swe(home, "list", "--json"))["data"]["harnesses"]}
@@ -238,7 +238,7 @@ class ListPrimaryColorJsonTest(unittest.TestCase):
         result = run_swe(home, "edit", "claude", "--primary-color=")
         self.assertEqual(result.returncode, 0, result.stderr)
         saved = json.loads(
-            (home / ".quiver" / "config" / "harness.json").read_text())
+            (home / ".swe" / "config" / "harness.json").read_text())
         self.assertNotIn("primary_color", saved["claude"])
         rows = {row["name"]: row for row in
                 decode(run_swe(home, "list", "--json"))["data"]["harnesses"]}
@@ -251,7 +251,7 @@ class ListPrimaryColorJsonTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("Use a colour like #D97757.", result.stderr + result.stdout)
         saved = json.loads(
-            (home / ".quiver" / "config" / "harness.json").read_text())
+            (home / ".swe" / "config" / "harness.json").read_text())
         self.assertNotIn("primary_color", saved["claude"])
 
     def test_info_shows_the_effective_colour(self):
@@ -306,7 +306,7 @@ class EditJsonTest(unittest.TestCase):
         return next(row for row in rows if row["name"] == name)
 
     def saved(self, name):
-        path = self.home / ".quiver" / "config" / "harness.json"
+        path = self.home / ".swe" / "config" / "harness.json"
         return json.loads(path.read_text())[name]
 
     def assertRefused(self, result, needle=None):
@@ -506,7 +506,7 @@ class EditJsonTest(unittest.TestCase):
         self.assertRefused(self.edit("claude", "codex", "--notes=x"))
 
     def test_an_unreadable_registry_is_refused_on_stderr(self):
-        path = self.home / ".quiver" / "config" / "harness.json"
+        path = self.home / ".swe" / "config" / "harness.json"
         path.write_text("{not json")
         self.assertRefused(self.edit("claude", "--notes=x"))
         self.assertEqual(path.read_text(), "{not json")
@@ -520,7 +520,7 @@ class EditJsonTest(unittest.TestCase):
 
 def write_rate_cache(home: Path, readings: dict, taken_at: float) -> None:
     """A fresh rate-limit cache, so `--usage` never reaches the network."""
-    cache = home / ".quiver" / "cache"
+    cache = home / ".swe" / "cache"
     cache.mkdir(parents=True, exist_ok=True)
     (cache / "rate_limits_cache.json").write_text(json.dumps({
         "cached_at": taken_at,
@@ -627,7 +627,7 @@ class ExcludeSkipsTheFetcherTest(unittest.TestCase):
         from contextlib import redirect_stdout
         from unittest import mock
 
-        from quiver.harness import commands
+        from swe.harness import commands
 
         asked = []
         self.deadlines = []
@@ -646,11 +646,11 @@ class ExcludeSkipsTheFetcherTest(unittest.TestCase):
             mock.patch.object(commands, "_session_counts", return_value={}),
             mock.patch.object(commands, "_broken_tools", return_value=set()),
             mock.patch.object(commands, "is_installed", return_value=False),
-            mock.patch("quiver.harness.archive.load_archive", dict),
-            mock.patch("quiver.harness.rate_limits.get_all_rate_limits", side_effect=fake_get_all),
+            mock.patch("swe.harness.archive.load_archive", dict),
+            mock.patch("swe.harness.rate_limits.get_all_rate_limits", side_effect=fake_get_all),
             # -r would otherwise clear the developer's real session caches.
-            mock.patch("quiver.sessions.aggregator.invalidate_cache"),
-            mock.patch("quiver.sessions.usage.invalidate_counts_cache"),
+            mock.patch("swe.sessions.aggregator.invalidate_cache"),
+            mock.patch("swe.sessions.usage.invalidate_counts_cache"),
         ]
         for p in patches:
             p.start()
@@ -664,7 +664,7 @@ class ExcludeSkipsTheFetcherTest(unittest.TestCase):
         # The app reads limits through --json from a fresh process each time,
         # where a provider's first fetch can take over the 2s piped cap; under
         # that cap it would always fall back to an old cached reading.
-        from quiver.harness.rate_limits import _RATE_LIMIT_FETCH_DEADLINE_TTY
+        from swe.harness.rate_limits import _RATE_LIMIT_FETCH_DEADLINE_TTY
         self.run_list("--usage", "--json")
         self.assertEqual(self.deadlines, [_RATE_LIMIT_FETCH_DEADLINE_TTY])
 

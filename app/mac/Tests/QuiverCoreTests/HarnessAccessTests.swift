@@ -49,7 +49,7 @@ import Testing
 
     func model() throws -> AccountsModel {
         let root = scratch.url.appending(path: "access-\(UUID().uuidString)")
-        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let store = ProfileStore(root: root.appending(path: ".swe/accounts"), userHome: root)
         // Real stub CLIs on the injected PATH: signIn refuses a missing one.
         let bin = root.appending(path: "bin")
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
@@ -121,7 +121,7 @@ import Testing
 
     @Test func loadingChecksEachVendorsCLIDirectly() async throws {
         let root = scratch.url.appending(path: "cli-\(UUID().uuidString)")
-        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let store = ProfileStore(root: root.appending(path: ".swe/accounts"), userHome: root)
         let bin = root.appending(path: "bin")
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         try Data("#!/bin/sh\n".utf8).write(to: bin.appending(path: "claude"))
@@ -180,7 +180,7 @@ import Testing
 
     private func model(path: String = "") throws -> AccountsModel {
         let root = scratch.url.appending(path: "guard-\(UUID().uuidString)")
-        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let store = ProfileStore(root: root.appending(path: ".swe/accounts"), userHome: root)
         return AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
                              terminal: { .terminal }, loginPath: { path }, running: running)
     }
@@ -195,7 +195,7 @@ import Testing
     @Test func aMissingVendorCLIThrowsWithoutLaunching() async throws {
         let m = try model()
         let root = scratch.url.appending(path: "guard-\(UUID().uuidString)")
-        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let store = ProfileStore(root: root.appending(path: ".swe/accounts"), userHome: root)
         let work = try store.add(vendor: .codex, name: "Work")
         let m2 = AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
                                terminal: { .terminal }, loginPath: { "" }, running: running)
@@ -207,7 +207,7 @@ import Testing
 
     @Test func appSignInAccountsNeedNoCLI() throws {
         let root = scratch.url.appending(path: "guard-\(UUID().uuidString)")
-        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let store = ProfileStore(root: root.appending(path: ".swe/accounts"), userHome: root)
         let cursor = try store.add(vendor: .cursor, name: "Cursor 2")
         let codex = try store.add(vendor: .codex, name: "Codex 2")
         let m = AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,

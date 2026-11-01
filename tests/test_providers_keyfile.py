@@ -1,4 +1,4 @@
-"""quiver.providers.keyfile: the Mac app's APIKeysFile and APIKeysStore."""
+"""swe.providers.keyfile: the Mac app's APIKeysFile and APIKeysStore."""
 
 import os
 import tempfile
@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.providers import keyfile
-from quiver.providers.keyfile import KeyFileError, KeysFile
+from swe.providers import keyfile
+from swe.providers.keyfile import KeyFileError, KeysFile
 
 
 class TestParse(unittest.TestCase):
@@ -104,7 +104,7 @@ class TestEdit(unittest.TestCase):
 class TestStore(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
-        self.path = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        self.path = self.home / ".swe" / "secrets" / "providers" / ".api_keys"
 
     def test_a_new_file_is_private_and_its_folder_sealed(self):
         keys, stamp = keyfile.load(self.path)
@@ -113,8 +113,8 @@ class TestStore(unittest.TestCase):
         keyfile.save(self.path, keys, stamp, home=self.home)
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(self.path.parent.stat().st_mode & 0o777, 0o700)
-        self.assertTrue((self.home / ".quiver" / "secrets" / ".gitignore").read_text().endswith("*\n"))
-        self.assertFalse((self.home / ".quiver" / "backups" / "api-keys" / "api_keys.bak").exists())
+        self.assertTrue((self.home / ".swe" / "secrets" / ".gitignore").read_text().endswith("*\n"))
+        self.assertFalse((self.home / ".swe" / "backups" / "api-keys" / "api_keys.bak").exists())
 
     def test_a_save_through_a_symlink_keeps_the_link(self):
         real = self.home / "real_keys"
@@ -158,7 +158,7 @@ class TestStore(unittest.TestCase):
         self.assertEqual([p.name for p in self.path.parent.iterdir()], [".api_keys"])
 
     def test_the_backup_folder_is_tightened(self):
-        backups = self.home / ".quiver" / "backups" / "api-keys"
+        backups = self.home / ".swe" / "backups" / "api-keys"
         backups.mkdir(parents=True)
         os.chmod(backups, 0o755)
         self.path.parent.mkdir(parents=True)

@@ -10,8 +10,8 @@ import unittest
 from contextlib import redirect_stdout
 from unittest import mock
 
-from quiver.harness import columns as C
-from quiver.multiselect import Choice, multiselect
+from swe.harness import columns as C
+from swe.multiselect import Choice, multiselect
 
 
 class NormaliseTest(unittest.TestCase):
@@ -83,7 +83,7 @@ class ConfigRoundTripTest(unittest.TestCase):
 class MultiselectTest(unittest.TestCase):
     def test_returns_none_without_a_terminal(self):
         # Piping `swe list edit` must not hang or half-render.
-        with mock.patch("quiver.multiselect._supported", return_value=False):
+        with mock.patch("swe.multiselect._supported", return_value=False):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 got = multiselect([Choice("a", "A")], ["a"])
@@ -91,7 +91,7 @@ class MultiselectTest(unittest.TestCase):
 
     def test_locked_choices_start_selected_even_if_not_passed(self):
         choices = [Choice("mark", "*", locked=True), Choice("desc", "D")]
-        with mock.patch("quiver.multiselect._supported", return_value=False):
+        with mock.patch("swe.multiselect._supported", return_value=False):
             with redirect_stdout(io.StringIO()):
                 multiselect(choices, [])
         # Nothing to assert on the return, but the locked seeding happens
@@ -112,9 +112,9 @@ class MultiselectTest(unittest.TestCase):
 
 class EditCommandTest(unittest.TestCase):
     def _run(self, args, picked=None):
-        from quiver.harness import commands as H
+        from swe.harness import commands as H
 
-        with mock.patch("quiver.multiselect.multiselect", return_value=picked):
+        with mock.patch("swe.multiselect.multiselect", return_value=picked):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = H.cmd_list_edit(args)
@@ -126,7 +126,7 @@ class EditCommandTest(unittest.TestCase):
         self.assertIn("swe list edit", out)
 
     def test_cancel_changes_nothing(self):
-        from quiver.harness import commands as H
+        from swe.harness import commands as H
 
         # Patch the call site, not the source module: cmd_list_edit
         # resolves save_columns through its own module binding, and
@@ -159,7 +159,7 @@ class EditCommandTest(unittest.TestCase):
         self.assertNotIn("fetches over the network", out)
 
     def test_reset_restores_the_default(self):
-        from quiver.harness import commands as H
+        from swe.harness import commands as H
 
         with mock.patch.object(H, "save_columns") as saved:
             buf = io.StringIO()
@@ -168,7 +168,7 @@ class EditCommandTest(unittest.TestCase):
         saved.assert_called_once_with(C.DEFAULT_COLUMNS)
 
     def test_list_edit_routes_from_cmd_list(self):
-        from quiver.harness import commands as H
+        from swe.harness import commands as H
 
         with mock.patch.object(H, "cmd_list_edit", return_value=0) as edit:
             H.cmd_list(["edit"])
@@ -189,7 +189,7 @@ class RedrawTest(unittest.TestCase):
 
     def _draw(self, n_choices=5, redraws=3):
 
-        from quiver.multiselect import _render
+        from swe.multiselect import _render
 
         choices = [Choice("mark", "*", "locked", locked=True)]
         choices += [Choice(f"k{i}", f"L{i}", "about") for i in range(n_choices - 1)]
@@ -228,7 +228,7 @@ class RedrawTest(unittest.TestCase):
         self.assertEqual(re.findall(r"(?<!\r)\n", out), [])
 
     def test_footer_is_written_once_per_draw(self):
-        from quiver.multiselect import FOOTER
+        from swe.multiselect import FOOTER
 
         out, counts, _ = self._draw(redraws=3)
         plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", out)
@@ -247,7 +247,7 @@ class InteractionTest(unittest.TestCase):
         script = (
             "import sys\n"
             "sys.path.insert(0, %r)\n"
-            "from quiver.multiselect import multiselect, Choice\n"
+            "from swe.multiselect import multiselect, Choice\n"
             "cs = [Choice('mark','*','l',locked=True), Choice('a','A','aa'),\n"
             "      Choice('b','B','bb'), Choice('c','C','cc')]\n"
             "r = multiselect(cs, ['a'], title='T')\n"
@@ -299,7 +299,7 @@ class SessionCountsCacheTest(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from quiver.sessions import usage
+        from swe.sessions import usage
 
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -398,7 +398,7 @@ class SessionCountsCacheTest(unittest.TestCase):
 
 class SortOrderTest(unittest.TestCase):
     def _order(self, counts, stars):
-        from quiver.harness.commands import _sort_tools
+        from swe.harness.commands import _sort_tools
 
         tools = {n: {} for n in counts}
         return [n for n, _ in _sort_tools(tools, counts, stars)]
@@ -486,7 +486,7 @@ class WindowedCountsTest(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from quiver.sessions import usage
+        from swe.sessions import usage
 
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -500,7 +500,7 @@ class WindowedCountsTest(unittest.TestCase):
     def _sessions(self, ages_days):
         import time
 
-        from quiver.sessions.models import Session
+        from swe.sessions.models import Session
 
         now = time.time() * 1000
         return [Session(timestamp=now - d * 86400 * 1000, agent="A", path="/p",
@@ -541,7 +541,7 @@ class WindowedCountsTest(unittest.TestCase):
 
 class CycleRowTest(unittest.TestCase):
     def test_a_cycling_row_shows_its_value_not_its_label(self):
-        from quiver.multiselect import _render
+        from swe.multiselect import _render
 
         ch = Choice("sess", "100d", "about", value=30,
                     cycle=C.next_window, render_value=C.window_label)
@@ -555,7 +555,7 @@ class CycleRowTest(unittest.TestCase):
     def test_left_and_right_keys_map_to_the_rotation(self):
         import os
 
-        from quiver.multiselect import _read_key
+        from swe.multiselect import _read_key
 
         for seq, want in ((b"\x1b[C", "next"), (b"\x1b[D", "prev"),
                           (b">", "next"), (b"<", "prev")):
@@ -577,13 +577,13 @@ class SessionColumnStatesTest(unittest.TestCase):
                 for n in ("claude", "amp", "cursor", "kiro")}
 
     def _render(self, counts, broken):
-        from quiver.harness import commands
+        from swe.harness import commands
 
         with mock.patch.object(commands, "load_registry", return_value=dict(self.REGISTRY)), \
              mock.patch.object(commands, "_session_counts", return_value=counts), \
              mock.patch.object(commands, "_broken_tools", return_value=broken), \
              mock.patch.object(commands, "load_columns", return_value=["name", "sess"]), \
-             mock.patch("quiver.harness.archive.load_archive", return_value={}):
+             mock.patch("swe.harness.archive.load_archive", return_value={}):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 commands.cmd_list([])
@@ -628,7 +628,7 @@ class BrokenCountsAreNotCachedAsZeroTest(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from quiver.sessions import failures, usage
+        from swe.sessions import failures, usage
 
         self.usage = usage
         self.tmp = tempfile.TemporaryDirectory()
@@ -642,7 +642,7 @@ class BrokenCountsAreNotCachedAsZeroTest(unittest.TestCase):
         usage._CACHED_BROKEN.clear()
 
     def _count_with_failure(self):
-        from quiver.sessions import failures
+        from swe.sessions import failures
 
         def get(*a, **k):
             failures.record("cursor", NameError("uuid_dir"))
@@ -660,7 +660,7 @@ class BrokenCountsAreNotCachedAsZeroTest(unittest.TestCase):
 
     def test_a_cached_read_still_knows_which_were_broken(self):
         self._count_with_failure()
-        from quiver.sessions import failures
+        from swe.sessions import failures
 
         failures.clear()                      # a fresh process
         self.usage._CACHED_BROKEN.clear()
@@ -687,7 +687,7 @@ class BrokenCountsAreNotCachedAsZeroTest(unittest.TestCase):
 
 class LegendCoversEveryMarkerTest(unittest.TestCase):
     def _legend(self):
-        from quiver.harness.commands import cmd_list_legend
+        from swe.harness.commands import cmd_list_legend
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -711,7 +711,7 @@ class LegendCoversEveryMarkerTest(unittest.TestCase):
         self.assertIn("conflict", out)
 
     def test_the_session_heading_follows_the_configured_window(self):
-        with mock.patch("quiver.harness.columns.load_window", return_value=7):
+        with mock.patch("swe.harness.columns.load_window", return_value=7):
             out = self._legend()
         self.assertIn("7d", out)
 
@@ -732,8 +732,8 @@ class ShrinkFitTest(unittest.TestCase):
     """
 
     def _header(self, fit, values, width=16):
-        from quiver.console import strip_ansi
-        from quiver.table import Table
+        from swe.console import strip_ansi
+        from swe.table import Table
 
         t = Table()
         t.add_column("name", "NAME", width=width, kind="text", fit=fit)
@@ -773,14 +773,14 @@ class ListWidthTest(unittest.TestCase):
     }
 
     def _render(self, columns, archived=None, counts=None):
-        from quiver.harness import commands
+        from swe.harness import commands
 
         with mock.patch.object(commands, "load_registry", return_value=dict(self.REGISTRY)), \
              mock.patch.object(commands, "load_columns", return_value=list(columns)), \
              mock.patch.object(commands, "_session_counts",
                                return_value=counts if counts is not None else {}), \
              mock.patch.object(commands, "_broken_tools", return_value=set()), \
-             mock.patch("quiver.harness.archive.load_archive",
+             mock.patch("swe.harness.archive.load_archive",
                         return_value=archived or {}):
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -824,15 +824,15 @@ class ListWidthTest(unittest.TestCase):
         long = "x" * 90
         reg = {"claude": {"command": "claude", "version": "1", "aliases": [],
                           "description": long, "tags": []}}
-        from quiver.harness import commands
+        from swe.harness import commands
 
         with mock.patch.object(commands, "load_registry", return_value=reg), \
              mock.patch.object(commands, "load_columns",
                                return_value=["mark", "name", "desc"]), \
              mock.patch.object(commands, "_session_counts", return_value={}), \
              mock.patch.object(commands, "_broken_tools", return_value=set()), \
-             mock.patch("quiver.harness.archive.load_archive", return_value={}), \
-             mock.patch("quiver.harness.commands.terminal_width", return_value=200):
+             mock.patch("swe.harness.archive.load_archive", return_value={}), \
+             mock.patch("swe.harness.commands.terminal_width", return_value=200):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 commands.cmd_list([])
@@ -840,15 +840,15 @@ class ListWidthTest(unittest.TestCase):
         self.assertIn("x" * 60, out, "description truncated with room to spare")
 
     def test_a_narrow_terminal_still_leaves_a_usable_description(self):
-        from quiver.harness import commands
+        from swe.harness import commands
 
         with mock.patch.object(commands, "load_registry", return_value=dict(self.REGISTRY)), \
              mock.patch.object(commands, "load_columns",
                                return_value=["mark", "name", "desc"]), \
              mock.patch.object(commands, "_session_counts", return_value={}), \
              mock.patch.object(commands, "_broken_tools", return_value=set()), \
-             mock.patch("quiver.harness.archive.load_archive", return_value={}), \
-             mock.patch("quiver.harness.commands.terminal_width", return_value=40):
+             mock.patch("swe.harness.archive.load_archive", return_value={}), \
+             mock.patch("swe.harness.commands.terminal_width", return_value=40):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = commands.cmd_list([])
@@ -860,32 +860,32 @@ class MultiselectMouseTest(unittest.TestCase):
 
     The older reader took a fixed two bytes after the Esc, so the tail of a
     wheel report came back as loose letters, one of which ("<") rotates a
-    cycling row. The reader now goes through quiver.keys.
+    cycling row. The reader now goes through swe.keys.
     """
 
     def _drive(self, key_names):
-        from quiver.multiselect import multiselect
+        from swe.multiselect import multiselect
 
         choices = [Choice("a", "A"), Choice("b", "B")]
         out = io.StringIO()
         stdin = mock.Mock()
         stdin.fileno.return_value = 0
         seen = []
-        with mock.patch("quiver.multiselect._supported", return_value=True), \
+        with mock.patch("swe.multiselect._supported", return_value=True), \
              mock.patch("sys.stdout", out), \
              mock.patch("sys.stdin", stdin), \
              mock.patch("termios.tcgetattr", return_value=["saved"]), \
              mock.patch("termios.tcsetattr",
                         side_effect=lambda *a: seen.append(out.getvalue())), \
              mock.patch("tty.setraw"), \
-             mock.patch("quiver.multiselect._read_key", side_effect=key_names):
+             mock.patch("swe.multiselect._read_key", side_effect=key_names):
             result = multiselect(choices, ["a"])
         return result, out.getvalue(), seen
 
     def test_a_wheel_report_is_a_move_rather_than_a_rotation(self):
         import os
 
-        from quiver.multiselect import _read_key
+        from swe.multiselect import _read_key
 
         for report, want in ((b"\x1b[<64;10;5M", "up"),
                              (b"\x1b[<65;10;5M", "down")):
@@ -899,7 +899,7 @@ class MultiselectMouseTest(unittest.TestCase):
         self.assertEqual(result, ["a", "b"])
 
     def test_tracking_is_on_for_the_widget_and_off_before_termios(self):
-        from quiver import keys
+        from swe import keys
 
         result, out, seen = self._drive(["enter"])
         self.assertEqual(result, ["a"])

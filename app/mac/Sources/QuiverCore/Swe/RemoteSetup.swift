@@ -3,7 +3,7 @@ import Observation
 
 /// `swe remote setup --json`: every step from nothing to a paired phone,
 /// in order, each with its state and the one thing to do about it. The
-/// shape is documented in docs/json-contracts.md; src/quiver/remote/setup.py
+/// shape is documented in docs/json-contracts.md; src/swe/remote/setup.py
 /// builds it.
 public struct RemoteSetupReport: Decodable, Sendable, Equatable {
     public let ready: Bool

@@ -12,13 +12,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import agent as agent_mod
-from quiver.remote import usage as usage_mod
-from quiver.remote import attachments, catalog as catalog_mod
-from quiver.remote import inject, journal, pairing, protocol, supervise
-from quiver.remote import hub
-from quiver.remote.hub import HubState, make_server
-from quiver.sessions.models import Session
+from swe.remote import agent as agent_mod
+from swe.remote import usage as usage_mod
+from swe.remote import attachments, catalog as catalog_mod
+from swe.remote import inject, journal, pairing, protocol, supervise
+from swe.remote import hub
+from swe.remote.hub import HubState, make_server
+from swe.sessions.models import Session
 
 
 def _session(sid="s1", tool="claude", path="/tmp/proj"):
@@ -210,10 +210,10 @@ class TestRemoteCatalog(unittest.TestCase):
         self.assertFalse(row["online"])
 
     def test_detected_harnesses(self):
-        with patch("quiver.remote.catalog.shutil.which",
+        with patch("swe.remote.catalog.shutil.which",
                    side_effect=lambda b: "/bin/x" if b == "claude" else None):
             with patch(
-                "quiver.sessions.resume.launch_tool",
+                "swe.sessions.resume.launch_tool",
                 side_effect=lambda t: {"claude": "claude"}.get(t, t),
             ):
                 found = catalog_mod.detected_harnesses()
@@ -246,8 +246,8 @@ class TestRemoteCatalog(unittest.TestCase):
         self.assertEqual(row["recent_models"], {})
 
     def test_last_used_models_reads_the_ledger(self):
-        from quiver.ledger.models import LedgerRecord, UsageEvent
-        from quiver.ledger.store import LedgerStore, ledger_path_for
+        from swe.ledger.models import LedgerRecord, UsageEvent
+        from swe.ledger.store import LedgerStore, ledger_path_for
 
         def rec(key, harness, model, ts):
             return LedgerRecord(
@@ -286,7 +286,7 @@ class TestRemoteCatalog(unittest.TestCase):
         if prefs is not None:
             prefs_path.write_bytes(plistlib.dumps(prefs))
         on_path = set(reg) if on_path is None else on_path
-        with patch("quiver.harness.registry.load_registry_readonly",
+        with patch("swe.harness.registry.load_registry_readonly",
                    return_value=reg), \
              patch.object(catalog_mod, "APP_PREFS", prefs_path), \
              patch.object(catalog_mod.shutil, "which",
@@ -1059,7 +1059,7 @@ class TestAgentCommandStream(unittest.TestCase):
     def setUp(self):
         # Disconnect detection waits for a failed heartbeat write —
         # shrink the interval so tests see it fast.
-        self._hb = patch("quiver.remote.hub._SSE_HEARTBEAT_S", 0.1)
+        self._hb = patch("swe.remote.hub._SSE_HEARTBEAT_S", 0.1)
         self._hb.start()
         self.addCleanup(self._hb.stop)
         self.srv = _AgentHub()
@@ -1186,7 +1186,7 @@ class TestEndToEnd(unittest.TestCase):
     """
 
     def test_full_loop(self):
-        with patch("quiver.remote.hub._SSE_HEARTBEAT_S", 0.1):
+        with patch("swe.remote.hub._SSE_HEARTBEAT_S", 0.1):
             srv = _AgentHub()
             try:
                 # A fresh satellite credential, unbound: the agent's own
@@ -1835,7 +1835,7 @@ class TestAgentCommand(unittest.TestCase):
     """commands._cmd_agent: pairing flags, missing conf, serve call."""
 
     def _run(self, flags):
-        from quiver.remote import commands
+        from swe.remote import commands
         with patch("sys.stdout", __import__("io").StringIO()) as out, \
              patch("sys.stderr", __import__("io").StringIO()) as err:
             rc = commands._cmd_agent(flags)
@@ -2013,7 +2013,7 @@ class TestCatalogEdge(unittest.TestCase):
         self.assertEqual(keys, ["claude:a@m.1", "claude:b@m_1"])
 
     def test_a_menu_saved_under_the_old_name_still_loads(self):
-        from quiver.remote import slash
+        from swe.remote import slash
         path = slash._sat_file(self.home, "m.1").with_name("m_1.json")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"harnesses": {}}))
@@ -2103,7 +2103,7 @@ class TestUploadRouteEdges(unittest.TestCase):
 
 class TestAgentCmdDispatch(unittest.TestCase):
     def test_agent_subcommand_rejects_extra_args(self):
-        from quiver.remote import commands
+        from swe.remote import commands
         with patch("sys.stderr", __import__("io").StringIO()) as err:
             rc = commands.cmd_remote(["agent", "extra"])
         self.assertEqual(rc, 1)
@@ -2243,7 +2243,7 @@ class TestUploadVariants(unittest.TestCase):
         self.assertEqual(resp.status, 404)
 
     def test_agent_dispatch(self):
-        from quiver.remote import commands
+        from swe.remote import commands
         with patch.object(commands, "_cmd_agent", return_value=0) as ca:
             self.assertEqual(commands.cmd_remote(["agent"]), 0)
         ca.assert_called_once()

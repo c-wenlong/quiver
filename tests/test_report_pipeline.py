@@ -4,19 +4,19 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from quiver.reports.followups import FollowUpLedger
-from quiver.reports.models import SessionSummary
-from quiver.reports.pipeline import (
+from swe.reports.followups import FollowUpLedger
+from swe.reports.models import SessionSummary
+from swe.reports.pipeline import (
     ApprovedReportPlan,
     ReportApprovalError,
     ReportPipeline,
     ReportWriterError,
     approval_granted,
 )
-from quiver.reports.runners import RunnerResult, RunnerSpec
-from quiver.reports.store import ReportStore
-from quiver.reports.transcripts import NormalizedMessage, NormalizedTranscript
-from quiver.sessions.models import Session
+from swe.reports.runners import RunnerResult, RunnerSpec
+from swe.reports.store import ReportStore
+from swe.reports.transcripts import NormalizedMessage, NormalizedTranscript
+from swe.sessions.models import Session
 
 
 NOW = "2026-07-30T08:00:00+00:00"
@@ -128,7 +128,7 @@ class ReportPipelineTest(unittest.TestCase):
             **kwargs,
         )
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_preview_and_cancellation_make_no_model_calls(self, _root):
         runner = FakeRunner()
         pipeline = self.pipeline(runner)
@@ -148,7 +148,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertTrue(approval_granted(normal, True))
         self.assertTrue(approval_granted(normal, "yes"))
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_preview_marks_call_budget_excess(self, _root):
         other = Session(3, "Codex", "/repo-b", "Third", "s3", "codex")
         self.transcripts["s3"] = transcript(other)
@@ -157,7 +157,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertEqual(preview.estimated_summary_calls, 2)
         self.assertTrue(preview.over_budget)
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_pipeline_honors_batch_configuration(self, _root):
         pipeline = self.pipeline(FakeRunner(), max_batch_sessions=1, max_batch_chars=10_000)
         preview = self.preview(pipeline)
@@ -170,7 +170,7 @@ class ReportPipelineTest(unittest.TestCase):
         chars_preview = self.preview(by_chars)
         self.assertEqual(chars_preview.project_batch_calls, 2)
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_preview_warns_on_compaction_and_keeps_original_digest(self, _root):
         source = NormalizedTranscript(
             "codex",
@@ -209,7 +209,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertEqual(changed.cached, 0)
         self.assertNotEqual(changed.batches[0].inputs[0].digest, original_digest)
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_cache_reuse_and_one_changed_digest(self, _root):
         first_runner = FakeRunner()
         first = self.pipeline(first_runner)
@@ -231,7 +231,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertEqual(changed_preview.cached, 1)
         self.assertEqual(changed_preview.estimated_summary_calls, 1)
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_project_isolation_and_dedicated_session(self, _root):
         third = Session(3, "Codex", "/repo-b", "Third", "s3", "codex")
         large = Session(4, "Codex", "/repo-a", "Large", "large", "codex")
@@ -252,7 +252,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertEqual(preview.estimated_summary_calls, 3)
         self.assertTrue(any(batch.dedicated for batch in preview.batches))
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_partial_worker_failure_still_persists_partial_report(self, _root):
         third = Session(3, "Codex", "/repo-b", "Third", "s3", "codex")
         self.transcripts["s3"] = transcript(third)
@@ -265,7 +265,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertEqual(len(result.summaries), 2)
         self.assertIsNone(self.store.get_cursor("daily"))
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_all_worker_failures_abort_before_writer(self, _root):
         runner = FakeRunner(fail_project="/repo-a")
         pipeline = self.pipeline(runner)
@@ -276,7 +276,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertNotIn("final_report", runner.calls)
         self.assertIsNone(self.store.get_cursor("daily"))
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_complete_worker_run_advances_cursor(self, _root):
         pipeline = self.pipeline(FakeRunner())
         pipeline.run(ApprovedReportPlan(self.preview(pipeline), True))
@@ -284,7 +284,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertIsNotNone(cursor)
         self.assertEqual(cursor.through, "2026-07-29")
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_unreadable_session_does_not_advance_cursor(self, _root):
         self.transcripts["s2"] = NormalizedTranscript(
             "codex",
@@ -304,7 +304,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertTrue(any("transcript unavailable" in item for item in result.warnings))
         self.assertIsNone(self.store.get_cursor("daily"))
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_writer_estimate_includes_projected_outputs_and_is_part_of_total(self, _root):
         pipeline = self.pipeline(FakeRunner())
         empty = pipeline.preview(
@@ -320,7 +320,7 @@ class ReportPipelineTest(unittest.TestCase):
             preview.estimated_summary_input_tokens + preview.estimated_writer_input_tokens,
         )
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_1000_cached_summaries_are_estimated_compacted_and_bounded(self, _root):
         sessions = [
             Session(index, "Codex", f"/repo-{index % 10}", f"Task {index}", f"s{index}", "codex")
@@ -364,7 +364,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertLessEqual(len(writer_prompt), preview.writer_prompt_char_limit)
         self.assertLess(len(writer_prompt), 300_000)
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_generated_list_fields_cannot_bypass_writer_prompt_bound(self, _root):
         runner = FakeRunner()
 
@@ -404,7 +404,7 @@ class ReportPipelineTest(unittest.TestCase):
         writer_prompt = next(prompt for kind, prompt in runner.prompts if kind == "final_report")
         self.assertLessEqual(len(writer_prompt), preview.writer_prompt_char_limit)
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_writer_failure_does_not_persist_report_or_cursor(self, _root):
         pipeline = self.pipeline(FakeRunner(fail_writer=True))
         with self.assertRaises(ReportWriterError):
@@ -413,7 +413,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertEqual(list((self.root / "daily").glob("*")), [])
         self.assertIsNotNone(self.store.get_session_summary("s1", self.transcripts["s1"].digest, "codex"))
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_custom_range_does_not_advance_cursor(self, _root):
         pipeline = self.pipeline(FakeRunner())
         preview = self.preview(pipeline, advance_cursor=False)
@@ -421,7 +421,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertTrue(result.markdown_path.exists())
         self.assertIsNone(self.store.get_cursor("daily"))
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_follow_up_suggestions_never_close_items(self, _root):
         existing = self.ledger.add("Finish report CLI", "/repo-a")
         runner = FakeRunner(
@@ -451,7 +451,7 @@ class ReportPipelineTest(unittest.TestCase):
         created = next(item for item in self.ledger.list(status="open") if item.id != existing.id)
         self.assertEqual(created.source_session_ids, ["s2"])
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_update_context_changes_context_only(self, _root):
         existing = self.ledger.add("Finish report CLI", "/repo-a", context="old")
         runner = FakeRunner(
@@ -473,7 +473,7 @@ class ReportPipelineTest(unittest.TestCase):
         self.assertIsNone(updated.completed_at)
         self.assertIsNone(updated.dismissed_at)
 
-    @patch("quiver.reports.batching.resolve_project_root", side_effect=lambda path: path)
+    @patch("swe.reports.batching.resolve_project_root", side_effect=lambda path: path)
     def test_report_save_failure_leaves_ledger_and_cursor_unchanged(self, _root):
         existing = self.ledger.add("Existing follow-up", "/repo-a", context="unchanged")
         before = self.ledger.path.read_bytes()

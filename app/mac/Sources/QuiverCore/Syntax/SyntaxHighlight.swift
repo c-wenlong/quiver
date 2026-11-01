@@ -3,7 +3,7 @@ import Foundation
 /// The code a transcript shows — shell commands, tool arguments, file
 /// bodies and fenced blocks — tokenised by a small hand-rolled scanner
 /// (no highlighter dependency, matching the web app's no-build rule).
-/// A port of the `hl()` machinery in `src/quiver/webapp/static/pages/chat.js`;
+/// A port of the `hl()` machinery in `src/swe/webapp/static/pages/chat.js`;
 /// keep the two in step. Token
 /// colours live in `Theme.swift` (the web app's `--tk-*` variables carry
 /// the same values).

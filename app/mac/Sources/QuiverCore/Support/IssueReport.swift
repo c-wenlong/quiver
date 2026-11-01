@@ -4,7 +4,7 @@ import Foundation
 /// reporter's versions filled in, and the diagnostics text they can paste.
 /// The query names are the field ids in .github/ISSUE_TEMPLATE, and `area`
 /// is one of the forms' dropdown options word for word; `swe bug` builds the
-/// same links (src/quiver/bug.py).
+/// same links (src/swe/bug.py).
 public enum IssueReport {
     public static let repository = URL(string: "https://github.com/c-wenlong/quiver")!
     public static let documentation = repository

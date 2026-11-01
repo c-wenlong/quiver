@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.harness.catalog import HARNESS_CATALOG
-from quiver.ledger.models import LedgerRecord, UsageEvent
-from quiver.ledger.store import LedgerStore, ledger_path_for
-from quiver.remote import catalog as catalog_mod
-from quiver.remote import launch_model, recent_models
+from swe.harness.catalog import HARNESS_CATALOG
+from swe.ledger.models import LedgerRecord, UsageEvent
+from swe.ledger.store import LedgerStore, ledger_path_for
+from swe.remote import catalog as catalog_mod
+from swe.remote import launch_model, recent_models
 
 from tests._tempdir import temp_dir
 
@@ -69,7 +69,7 @@ class TestLaunchModel(unittest.TestCase):
                "gemini": {"command": "gemini"},
                "devin": {"command": "devin",
                          "capabilities": {"model": {"supported": False}}}}
-        with patch("quiver.harness.registry.load_registry_readonly",
+        with patch("swe.harness.registry.load_registry_readonly",
                    return_value=reg), \
              patch.object(catalog_mod, "_provider_visibility",
                           return_value=([], set())), \

@@ -183,7 +183,7 @@ public final class OtherLimitsModel {
         self.issues = issues
         self.snapshotFile = snapshotFile ?? FileManager.default
             .homeDirectoryForCurrentUser
-            .appending(path: ".quiver/cache/app-other-limits.json")
+            .appending(path: ".swe/cache/app-other-limits.json")
         self.names = names
         self.extraAccounts = extraAccounts
         hydrate()

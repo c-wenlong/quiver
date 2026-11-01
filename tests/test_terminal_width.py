@@ -12,8 +12,8 @@ example would hand the reader a command that does not run.
 import unittest
 from unittest import mock
 
-from quiver.console import fit_widths, strip_ansi, terminal_width
-from quiver.table import Table
+from swe.console import fit_widths, strip_ansi, terminal_width
+from swe.table import Table
 
 
 class FitWidthsTest(unittest.TestCase):
@@ -76,7 +76,7 @@ class TableClampTest(unittest.TestCase):
         self.assertGreaterEqual(len(strip_ansi(t.render()[0])), 40)
 
     def test_it_measures_the_terminal_when_no_cap_is_given(self):
-        with mock.patch("quiver.table.terminal_width", return_value=50):
+        with mock.patch("swe.table.terminal_width", return_value=50):
             t = Table()
             t.add_column("flex", "FLEX", width=200, kind="text")
             t.add_row({"flex": "y" * 300})

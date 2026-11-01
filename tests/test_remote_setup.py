@@ -11,7 +11,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.remote import commands, setup
+from swe.remote import commands, setup
 
 from tests._tempdir import temp_dir
 
@@ -232,7 +232,7 @@ class ApplyTest(unittest.TestCase):
 
     def setUp(self):
         # A move apply records without a ``record`` of its own would go
-        # to the real ~/.quiver/remote/setup-state.json.
+        # to the real ~/.swe/remote/setup-state.json.
         p = patch.object(setup, "record_move", lambda *_a, **_kw: None)
         p.start()
         self.addCleanup(p.stop)
@@ -399,7 +399,7 @@ class GatherTest(unittest.TestCase):
         return subprocess.CompletedProcess(argv, 0, stdout=out, stderr="")
 
     def test_it_reads_the_machine(self):
-        from quiver.remote import pairing
+        from swe.remote import pairing
 
         devices = {"a": {"created_at": 500.0, "revoked_at": None},
                    "b": {"created_at": 600.0, "revoked_at": 700.0}}
@@ -416,7 +416,7 @@ class GatherTest(unittest.TestCase):
         self.assertTrue(setup.evaluate(f)["ready"])
 
     def test_satellites_exclude_the_hubs_own_row(self):
-        from quiver.remote import catalog
+        from swe.remote import catalog
         own = catalog.load_machine_id(self.home)
         catalog.upsert_machine(self.home, {"id": own, "name": "hub"})
         with patch.object(setup, "tailscale_exe", return_value=None), \
@@ -452,7 +452,7 @@ class GatherTest(unittest.TestCase):
         self.assertEqual(f.public_url, "")
 
     def test_https_retries_against_the_os_ca_bundle(self):
-        from quiver.remote import agent
+        from swe.remote import agent
 
         seen = []
 
@@ -522,7 +522,7 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual(setup._run_json(code(0, "[]"), ["ts"]), (None, ""))
 
     def test_get_says_why_it_failed(self):
-        from quiver.remote import agent
+        from swe.remote import agent
 
         def refuse(req, timeout):
             raise urllib.error.URLError("connection refused")

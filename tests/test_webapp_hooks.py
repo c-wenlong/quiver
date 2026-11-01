@@ -1,4 +1,4 @@
-"""The Hooks page: the ~/.quiver/hooks inventory with its link states and
+"""The Hooks page: the ~/.swe/hooks inventory with its link states and
 declarations, the check findings, swe init run for it, and swe hooks new."""
 
 import json
@@ -11,16 +11,16 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import quote
 
-from quiver.webapp.pages import PageError
-from quiver.webapp.pages import hooks as page
+from swe.webapp.pages import PageError
+from swe.webapp.pages import hooks as page
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp_doctor import _TempHome
 
 
 def _hook(home: Path, harness: str, name: str, body: str = "print('hi')\n") -> Path:
-    """One script under ~/.quiver/hooks/<harness>/, as test_hooks.py writes it."""
-    path = home / ".quiver" / "hooks" / harness / name
+    """One script under ~/.swe/hooks/<harness>/, as test_hooks.py writes it."""
+    path = home / ".swe" / "hooks" / harness / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body)
     return path
@@ -38,7 +38,7 @@ def _link(home: Path, harness: str, name: str) -> Path:
     """The destination link a finished swe init leaves for one script."""
     dest = home / ".claude" / "hooks" / name
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.symlink_to(home / ".quiver" / "hooks" / harness / name)
+    dest.symlink_to(home / ".swe" / "hooks" / harness / name)
     return dest
 
 
@@ -71,7 +71,7 @@ class TestList(_HooksHome, unittest.TestCase):
             {k: row[k] for k in ("name", "harness", "tier", "link_status", "enabled", "declared", "detail")},
             {"name": "guard.py", "harness": "claude", "tier": "harness",
              "link_status": "create", "enabled": True, "declared": [], "detail": ""})
-        self.assertEqual(row["source_path"], str(self.home / ".quiver/hooks/claude/guard.py"))
+        self.assertEqual(row["source_path"], str(self.home / ".swe/hooks/claude/guard.py"))
         self.assertEqual(row["dest_path"], str(self.home / ".claude/hooks/guard.py"))
         self.assertIn("PreToolUse", row["events_supported"])
 
@@ -115,7 +115,7 @@ class TestList(_HooksHome, unittest.TestCase):
 
     def test_a_check_that_fails_degrades_not_dies(self):
         _hook(self.home, "claude", "guard.py")
-        with patch("quiver.hooks.inventory.hook_findings", side_effect=ValueError("boom")):
+        with patch("swe.hooks.inventory.hook_findings", side_effect=ValueError("boom")):
             d = page.get(self.ctx, {})
         self.assertEqual(d["findings"], [])
         self.assertIn("boom", d["check_error"])
@@ -123,7 +123,7 @@ class TestList(_HooksHome, unittest.TestCase):
 
     def test_an_unreadable_linkignore_warns_not_dies(self):
         _hook(self.home, "claude", "guard.py")
-        (self.home / ".quiver" / ".linkignore").mkdir()
+        (self.home / ".swe" / ".linkignore").mkdir()
         d = page.get(self.ctx, {})
         self.assertIn("linkignore", d["warning"])
         self.assertEqual([h["name"] for h in d["hooks"]], ["guard.py"])
@@ -159,7 +159,7 @@ class TestDetail(_HooksHome, unittest.TestCase):
     def test_harness_scopes_an_ambiguous_name(self):
         d = page.get(self.ctx, {"hook": "guard.py", "harness": "codex"})
         self.assertEqual((d["harness"], d["source_path"]),
-                         ("codex", str(self.home / ".quiver/hooks/codex/guard.py")))
+                         ("codex", str(self.home / ".swe/hooks/codex/guard.py")))
         d = page.get(self.ctx, {"hook": "guard.py", "harness": "cc"})
         self.assertEqual(d["harness"], "claude")
 
@@ -170,10 +170,10 @@ class TestDetail(_HooksHome, unittest.TestCase):
         _hook(self.home, "shared", "guard.py", "# events: [PreToolUse]\nprint('shared')\n")
         shared = page.get(self.ctx, {"hook": "guard.py", "harness": "claude", "tier": "shared"})
         self.assertEqual((shared["tier"], shared["source_path"]),
-                         ("shared", str(self.home / ".quiver/hooks/shared/guard.py")))
+                         ("shared", str(self.home / ".swe/hooks/shared/guard.py")))
         own = page.get(self.ctx, {"hook": "guard.py", "harness": "claude", "tier": "harness"})
         self.assertEqual((own["tier"], own["source_path"]),
-                         ("harness", str(self.home / ".quiver/hooks/claude/guard.py")))
+                         ("harness", str(self.home / ".swe/hooks/claude/guard.py")))
 
     def test_full_declarations_with_command_and_timeout(self):
         settings = _settings(self.home, ".claude/settings.json",
@@ -207,7 +207,7 @@ class TestDetail(_HooksHome, unittest.TestCase):
         # source is a race: the row the list built, then the file went.
         _hook(self.home, "claude", "ghost.py")
         stale = page._inventory(self.home)
-        (self.home / ".quiver" / "hooks" / "claude" / "ghost.py").unlink()
+        (self.home / ".swe" / "hooks" / "claude" / "ghost.py").unlink()
         with patch.object(page, "_inventory", return_value=stale):
             d = page.get(self.ctx, {"hook": "ghost.py"})
         self.assertFalse(d["exists"])
@@ -234,7 +234,7 @@ class TestLink(_HooksHome, unittest.TestCase):
         self.assertEqual(self.hooks(reply)["guard.py"]["link_status"], "linked")
         dest = self.home / ".claude" / "hooks" / "guard.py"
         self.assertTrue(dest.is_symlink())
-        self.assertEqual(dest.resolve(), (self.home / ".quiver/hooks/claude/guard.py").resolve())
+        self.assertEqual(dest.resolve(), (self.home / ".swe/hooks/claude/guard.py").resolve())
         kinds = {f["kind"] for f in reply["findings"]}
         self.assertIn("undeclared", kinds)   # linked but nothing invokes it
 
@@ -260,13 +260,13 @@ class TestLink(_HooksHome, unittest.TestCase):
         self.assertEqual((reply["ran"], reply["error"]), ("replace", None))
         self.assertEqual(self.hooks(reply)["guard.py"]["link_status"], "linked")
         self.assertTrue((dest / "guard.py").is_symlink())
-        backups = list((self.home / ".quiver" / "backups").iterdir())
+        backups = list((self.home / ".swe" / "backups").iterdir())
         self.assertEqual([b.read_text() for b in backups], ["different bytes\n"])
         self.assertIn("guard.py", backups[0].name)
 
     def test_link_runs_plain_init_and_replace_forces(self):
         calls = []
-        with patch("quiver.webapp.pages.doctor._run_init",
+        with patch("swe.webapp.pages.doctor._run_init",
                    side_effect=lambda home, force=False: calls.append(force)):
             page.post(self.ctx, "link", {})
             page.post(self.ctx, "replace", {})
@@ -285,7 +285,7 @@ class TestLink(_HooksHome, unittest.TestCase):
             started.set()
             release.wait(5)
 
-        with patch("quiver.webapp.pages.doctor._run_init", side_effect=slow):
+        with patch("swe.webapp.pages.doctor._run_init", side_effect=slow):
             first = threading.Thread(target=page.post, args=(self.ctx, "link", {}))
             first.start()
             started.wait(5)
@@ -305,7 +305,7 @@ class TestNew(_HooksHome, unittest.TestCase):
         reply = page.post(self.ctx, "new", {"harness": "claude", "name": "sentinel"})
         self.assertEqual(reply["action"], "new")
         created = reply["created"]
-        target = self.home / ".quiver" / "hooks" / "claude" / "sentinel.py"
+        target = self.home / ".swe" / "hooks" / "claude" / "sentinel.py"
         self.assertEqual(created["path"], str(target))
         self.assertEqual(created["harness"], "claude")
         self.assertTrue(target.is_file())
@@ -325,7 +325,7 @@ class TestNew(_HooksHome, unittest.TestCase):
         reply = page.post(self.ctx, "new", {"harness": "shared", "name": "notify"})
         created = reply["created"]
         self.assertEqual((created["tier"], created["harness"]), ("shared", "shared"))
-        self.assertEqual(created["path"], str(self.home / ".quiver" / "hooks" / "shared" / "notify.py"))
+        self.assertEqual(created["path"], str(self.home / ".swe" / "hooks" / "shared" / "notify.py"))
         self.assertTrue(Path(created["path"]).is_file())
         # The skeleton declares [PreToolUse]; installed shim-able claude gets a wrapper command.
         self.assertIn("claude", created["deploys_to"])
@@ -352,7 +352,7 @@ class TestNew(_HooksHome, unittest.TestCase):
     def test_a_harness_alias_resolves(self):
         self.seed({"claude": {"command": "claude", "aliases": ["cc"]}})
         reply = page.post(self.ctx, "new", {"harness": "cc", "name": "via_alias"})
-        self.assertTrue((self.home / ".quiver" / "hooks" / "claude" / "via_alias.py").is_file())
+        self.assertTrue((self.home / ".swe" / "hooks" / "claude" / "via_alias.py").is_file())
         self.assertEqual(reply["created"]["harness"], "claude")
 
 
@@ -360,8 +360,8 @@ class TestRoute(HubBase):
     def setUp(self):
         super().setUp()
         self.ctx = SimpleNamespace(home=self.srv.home, machine=self.srv.state.machine)
-        # The hub's own home is a real home for the page: ~/.quiver exists.
-        (self.srv.home / ".quiver").mkdir(exist_ok=True)
+        # The hub's own home is a real home for the page: ~/.swe exists.
+        (self.srv.home / ".swe").mkdir(exist_ok=True)
         _hook(self.srv.home, "claude", "guard.py")
         (self.srv.home / ".claude").mkdir()
 
@@ -379,7 +379,7 @@ class TestRoute(HubBase):
     def test_post_needs_a_device_and_our_origin(self):
         self.assertEqual(
             self.srv.request("POST", "/v1/app/hooks/link", body={})[0], 401)
-        with patch("quiver.webapp.pages.doctor._run_init", return_value=None) as ran:
+        with patch("swe.webapp.pages.doctor._run_init", return_value=None) as ran:
             status, data = self.srv.request(
                 "POST", "/v1/app/hooks/replace", body={},
                 headers={**self.auth(), "Origin": "https://evil.example"})

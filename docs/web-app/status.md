@@ -56,13 +56,13 @@ card appears behind the sheet and the row reads Added.
 
 ## Data
 
-`src/quiver/status/` is a stdlib port of the app's `QuiverCore/Status`:
+`src/swe/status/` is a stdlib port of the app's `QuiverCore/Status`:
 
 | Module | Swift | What |
 |---|---|---|
 | `catalog.py` | `ServiceStatusModels.swift` | `SERVICES` (same ids, names, page and feed URLs, groups), `Health`, `ComponentState`, the logo each card draws, `StatusService.custom` (`isCustom`) |
 | `catalogue.py` | `StatusCatalogue.swift` | `CATALOGUE` — the 104 one-click entries — and `filter_` (`StatusCatalogue.filter`) |
-| `tracked.py` | `CustomStatusServices.swift` | the tracked extras, in `~/.quiver/data/web-status-services.json` |
+| `tracked.py` | `CustomStatusServices.swift` | the tracked extras, in `~/.swe/data/web-status-services.json` |
 | `parsers.py` | `StatusParser.swift` | Statuspage / incident.io `summary.json` and Google Cloud `incidents.json` into a `Report` |
 | `poller.py` | `ServiceStatusService.swift` | polling floors, conditional requests, `Retry-After` cooldowns, the cache file, `forget` (`ServiceStatusService.forget`) |
 | `alerts.py` | `ServiceStatusAlerts.swift` | which provider incidents push: the hub's `service` notify events when `service_status` is on in `notify.json` (see [remote-control.md](../remote-control.md)) |
@@ -71,7 +71,7 @@ The poller asks a page at most every five minutes (one minute for
 Refresh), never during a cooldown (429 or 503: `Retry-After`, else 15
 minutes, at most six hours), sends `If-None-Match` / `If-Modified-Since`
 when it has a reading to fall back on, and never shows a reading older
-than an hour. Readings live in `~/.quiver/cache/web-service-status.json`
+than an hour. Readings live in `~/.swe/cache/web-service-status.json`
 (written atomically under an flock), so a hub restart does not poll
 again. One poller per home serves every request, so overlapping loads
 share one request per page. TLS uses the fallback in
@@ -79,7 +79,7 @@ share one request per page. TLS uses the fallback in
 OS trust store, never unverified.
 
 Tracked pages live in the hub's own store,
-`~/.quiver/data/web-status-services.json` (`{"version": 1, "services":
+`~/.swe/data/web-status-services.json` (`{"version": 1, "services":
 […]}`, one record per page: id, name, page and feed URLs, group, logo;
 written atomically under an flock beside the file). Where the Mac app
 gives every added page a fresh custom id in its preferences, the web

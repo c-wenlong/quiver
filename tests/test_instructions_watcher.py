@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from quiver.instructions import watcher
-from quiver.paths import agents_file_for, instructions_dir_for, instructions_index_for
+from swe.instructions import watcher
+from swe.paths import agents_file_for, instructions_dir_for, instructions_index_for
 
 
 class WatcherTests(unittest.TestCase):
@@ -306,7 +306,7 @@ class WatcherTests(unittest.TestCase):
             self.assertIsInstance(watcher._fingerprint(self.output), bytes)
 
     def test_unsupported_platform_fails_before_polling(self):
-        from quiver.instructions import compiler
+        from swe.instructions import compiler
 
         with patch.object(compiler, "fcntl", None), \
                 patch.object(watcher.time, "sleep", side_effect=AssertionError("polled")):

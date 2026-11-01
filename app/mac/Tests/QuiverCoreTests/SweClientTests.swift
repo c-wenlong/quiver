@@ -364,7 +364,7 @@ func fixture(_ name: String) throws -> Data {
         #expect(mcpSecretName(server: "é", key: "ü") == "MCP_SECRET")
     }
 
-    /// The app hides what swe hides (src/quiver/mcp/secrets.py's
+    /// The app hides what swe hides (src/swe/mcp/secrets.py's
     /// _SECRET_FLAG_RE): cookies, signatures, bearer values, any passw-,
     /// and the British spelling of authorization, plus a --headers value.
     @Test func secretNamesMatchSwesRule() {

@@ -31,8 +31,8 @@ struct StoredAccount: Codable, Equatable {
     var lastFailure: StoredFailure?
 }
 
-/// The usage state file. Belongs under ~/.quiver/cache/ (gitignored there), for
-/// example ~/.quiver/cache/app-usage.json. Read on every call and
+/// The usage state file. Belongs under ~/.swe/cache/ (gitignored there), for
+/// example ~/.swe/cache/app-usage.json. Read on every call and
 /// rewritten per change, so two running copies of the app share one cooldown.
 struct UsageCacheStore {
     let url: URL

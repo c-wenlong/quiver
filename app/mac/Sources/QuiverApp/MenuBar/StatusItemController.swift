@@ -43,7 +43,7 @@ final class StatusItemController: NSObject {
             button.imagePosition = .imageLeading
         }
         show(model.menuBar, limit: nil, today: nil)
-        Task { [weak self] in
+        Task { [weak self, model] in
             // `tightest` too: the minute timer moves it when a window resets,
             // even if the readings themselves don't change.
             let changes = Observations { [weak model] in

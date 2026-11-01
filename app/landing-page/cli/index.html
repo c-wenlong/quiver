@@ -3,9 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CLI reference — quiver</title>
+<title>CLI reference — swe</title>
 <meta name="description" content="Every swe command and flag.">
-<link rel="icon" href="../icon.png">
+<link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="../favicon-32.png" type="image/png" sizes="32x32">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -89,7 +92,7 @@ footer a:hover { color: var(--text); }
 <header class="top">
   <div class="wrap">
     <nav>
-      <a class="brand" href="../"><img src="../icon.png" alt="">quiver</a>
+      <a class="brand" href="../"><img src="../logo-rounded.svg" alt="">swe</a>
       <div class="links">
         <a href="../overview/">Docs</a>
         <a href="../cli/">CLI reference</a>
@@ -109,23 +112,23 @@ footer a:hover { color: var(--text); }
 </blockquote>
 <h2 id="setup"><a class="anchor" href="#setup"></a>Setup</h2>
 <h3 id="swe-init"><a class="anchor" href="#swe-init"></a><code>swe init</code></h3>
-<p><em>Create ~/.quiver and symlink every harness to it</em></p>
+<p><em>Create ~/.swe and symlink every harness to it</em></p>
 <pre><code class="language-text">  swe init                    Create the layout and link all harnesses
   swe init --full             List every path, not just the counts
   swe init --check            Show what would change, write nothing (alias: -n)
   swe init --force            Replace real files too (backed up first)
-  swe init --migrate          Move a pre-0.2.7 ~/.config/swe into ~/.quiver
+  swe init --migrate          Move a pre-0.2.7 ~/.config/swe into ~/.swe
   swe init --yes              Register every new harness without asking
                                (also the non-terminal default)
-  swe init --hub=&lt;git url&gt;     Clone your hub repo as ~/.quiver first, then link
-                               (only while ~/.quiver has no hub: no AGENTS.md, no .git)
+  swe init --hub=&lt;git url&gt;     Clone your hub repo as ~/.swe first, then link
+                               (only while ~/.swe has no hub: no AGENTS.md, no .git)
   swe init --accounts         Only sync the extra account homes the
                                accounts.sync.* switches name (takes --check, --json)
 
   Collision: -n means dry-run here and on swe install, but fetch-fresh-data on swe list.
 
   A symlink is a shortcut file: each harness's folder points at the one
-  real copy in ~/.quiver, so editing once updates it everywhere.
+  real copy in ~/.swe, so editing once updates it everywhere.
 
 New harnesses
   Found via their skills folder. Ticked ones are registered and linked,
@@ -133,15 +136,15 @@ New harnesses
   left alone. swe hs archives or stars them later.
 
 What it owns
-  ~/.quiver/AGENTS.md   one instruction file, linked in under each harness's
+  ~/.swe/AGENTS.md   one instruction file, linked in under each harness's
                         own name (CLAUDE.md, QWEN.md, CRUSH.md, GEMINI.md)
-  ~/.quiver/skills/     one skill tree, linked in as every harness's skills/
-  ~/.quiver/hooks/      hook scripts, one folder per harness (hooks/claude/),
+  ~/.swe/skills/     one skill tree, linked in as every harness's skills/
+  ~/.swe/hooks/      hook scripts, one folder per harness (hooks/claude/),
                         each script linked into that harness's hooks dir;
                         declaring the hook in its settings stays with you
-  ~/.quiver/.linkignore paths to leave alone, one gitignore-style pattern per
+  ~/.swe/.linkignore paths to leave alone, one gitignore-style pattern per
                         line, e.g. .agents/skills or .config/*/AGENTS.md
-  ~/.quiver/backups/    anything replaced, timestamped
+  ~/.swe/backups/    anything replaced, timestamped
 
 States
   linked    already points at the canonical file
@@ -153,15 +156,15 @@ States
                never touched or counted
 </code></pre>
 <h3 id="swe-instructions"><a class="anchor" href="#swe-instructions"></a><code>swe instructions</code></h3>
-<p><em>Compile shared instruction chapters into ~/.quiver/AGENTS.md</em></p>
+<p><em>Compile shared instruction chapters into ~/.swe/AGENTS.md</em></p>
 <pre><code class="language-text">  swe instructions init     Fold the current AGENTS.md into a first chapter
   swe instructions build    Build the complete shared instruction file
   swe instructions check    Exit 1 if the generated file is missing or stale
   swe instructions watch    Build now, then rebuild on source changes
 
-  Edit chapters under ~/.quiver/AGENTS_MD/ and list their relative .md
+  Edit chapters under ~/.swe/AGENTS_MD/ and list their relative .md
   paths in index.txt, in order. Blank lines and # comments are ignored.
-  Build writes ~/.quiver/AGENTS.md atomically, only when its SHA256 changes.
+  Build writes ~/.swe/AGENTS.md atomically, only when its SHA256 changes.
   Check writes nothing. Watch reports source errors and keeps waiting; Ctrl-C stops it.
   Harness symlinks keep pointing at the generated AGENTS.md. Edit the chapters,
   not the generated file. A running chat may need a new chat to read the update.
@@ -169,38 +172,38 @@ States
   build, check and init take --json for the app's document.
 </code></pre>
 <h3 id="swe-setup"><a class="anchor" href="#swe-setup"></a><code>swe setup</code></h3>
-<p><em>Sectioned setup wizard for Quiver</em></p>
+<p><em>Sectioned setup wizard for SWE</em></p>
 <pre><code class="language-text">  swe setup                    Run all six interactive setup stages
   swe setup --quick            Only visit missing or actionable stages
   swe setup harnesses          Discover and register coding CLIs
   swe setup providers          Review provider credential coverage
   swe setup mcp                Import MCP servers into mcp.json
-  swe setup skills             Unify safe roots under ~/.quiver/skills
+  swe setup skills             Unify safe roots under ~/.swe/skills
   swe setup report             Configure summarizer and writer models
   swe setup check              Verify the resulting setup
 
-  Returning-user prompts show current values; Enter keeps them. Quiver creates a
+  Returning-user prompts show current values; Enter keeps them. SWE creates a
   timestamped backup before changing harness.json, mcp.json, or config.json.
 
   swe setup --apply            Apply safe discovery changes without prompts
   swe setup --json             Print the discovery preview as JSON
   swe setup --non-interactive  Preview without prompts or writes
-  swe setup --hub=&lt;git url&gt;    Clone your hub repo as ~/.quiver first, then
-                               run any of the above (only while ~/.quiver has no hub yet)
+  swe setup --hub=&lt;git url&gt;    Clone your hub repo as ~/.swe first, then
+                               run any of the above (only while ~/.swe has no hub yet)
 
-  While ~/.quiver has no hub yet (no AGENTS.md, no .git), the wizard first asks
+  While ~/.swe has no hub yet (no AGENTS.md, no .git), the wizard first asks
   for your hub repo's URL; a blank answer starts an empty hub.
 
   Provider credentials remain external. Use swe providers info &lt;name&gt; for the
   expected key file and environment variable; harness OAuth remains harness-owned.
 </code></pre>
 <h3 id="swe-config"><a class="anchor" href="#swe-config"></a><code>swe config</code></h3>
-<p><em>View or update Quiver configuration</em></p>
+<p><em>View or update SWE configuration</em></p>
 <pre><code class="language-text">  swe config                     Print resolved configuration
   swe config get &lt;key&gt;           Print one resolved dotted key
   swe config set &lt;key&gt; &lt;value&gt;   Save a string, number, boolean, or JSON array
   swe config unset &lt;key&gt;         Remove a user-set value
-  swe config edit                Open ~/.quiver/config/config.json in VISUAL or EDITOR
+  swe config edit                Open ~/.swe/config/config.json in VISUAL or EDITOR
   swe config check               Validate types, report setup, and secret safety
   swe config setup report        Configure cheap summary and strong writer models
 
@@ -209,7 +212,7 @@ Examples
   swe config get report.writer.model
   swe config unset report.session.model
 
-Quiver never stores model credentials in this file. Claude and Codex continue
+SWE never stores model credentials in this file. Claude and Codex continue
 to use their own login state and environment.
 </code></pre>
 <h3 id="swe-doctor"><a class="anchor" href="#swe-doctor"></a><code>swe doctor</code></h3>
@@ -223,11 +226,18 @@ to use their own login state and environment.
                                Run one finding's fix, as a Run button does
 
   Plain swe doctor only reads. --fix runs the local repairs
-  in order (setup, discover, init), reading the report again after each,
-  and prints what it fixed and what is left. Installs and the drops that
-  delete entries (undeclare, marketplace-drop) never run in a batch: they
-  run only for one finding named with --message. With --json, --fix prints
+  in order (setup, discover, init, plugin-fix), reading the report again
+  after each, and prints what it fixed and what is left. Installs, plugin
+  reinstalls, MCP entry overwrites (mcp-sync) and the drops that delete
+  entries or links (undeclare, marketplace-drop, dangling-link) never run
+  in a batch: they run only
+  for one finding named with --message. With --json, --fix prints
   {dry_run, ran, fixed, still_failing, skipped, not_cleared, fixable_left}.
+
+  Doctor also reports plugin drift (swe find plugins) as plugins.*,
+  broken top-level links in ~/.swe, and MCP servers failing a local
+  check (swe mcp doctor without the network) as mcp.server, each with
+  its fix.
 
   Catches the common failure mode: npm install -g under nvm while
   interactive/non-interactive shells use Homebrew Node (tool missing from PATH).
@@ -308,7 +318,7 @@ Flags
   visibility is --harness=all instead.
 
 Link states
-  ✓  linked to ~/.quiver      ○  nothing there yet, or safe to absorb
+  ✓  linked to ~/.swe      ○  nothing there yet, or safe to absorb
   ↻  symlink points elsewhere  ✗  real file in the way, needs --force
   ○  holds files that exist nowhere else, left alone on purpose
   ·  no known convention, or harness not installed
@@ -334,7 +344,7 @@ Examples
   swe add &lt;name&gt; -i                    Interactive, pre-filled name
   swe add &lt;name&gt; &lt;cmd&gt; --no-replace --json  For the app: refuse existing names
 
-  The registry is one file, ~/.quiver/config/harness.json, listing every
+  The registry is one file, ~/.swe/config/harness.json, listing every
   tool quiver knows. Adding a tool here does not install it — it tells
   quiver the tool exists, so swe list/swe use/swe edit can find it.
   If the tool already exists, it updates the entry.
@@ -474,7 +484,7 @@ Examples
   swe session -w 3
   swe session -s 2026-07-01 -e 2026-07-30
   swe session --search=login
-  swe session 30 -q quiver
+  swe session 30 -q refactor
   swe session index --on
 </code></pre>
 <h3 id="swe-report"><a class="anchor" href="#swe-report"></a><code>swe report</code></h3>
@@ -487,10 +497,10 @@ Examples
   swe report followup done &lt;id&gt;  Mark a follow-up done manually
   swe report followup work &lt;id&gt;  Resume its source or start a contextual session
 
-Before any model runs, Quiver displays session counts, exclusions, cache hits,
+Before any model runs, SWE displays session counts, exclusions, cache hits,
 planned calls, and estimated input tokens. Normal plans ask for y/N. Plans over
 configured limits require the exact phrase process all.
-When a report completes with warnings, Quiver prints the exact
+When a report completes with warnings, SWE prints the exact
 swe report warnings &lt;manifest.json&gt; command for that report.
 
 Source flags
@@ -504,7 +514,7 @@ Source flags
 
 Reports run in two passes: a cheap model summarizes each session, then a
 stronger model writes the final report from those summaries. The flags below
-pick the harness/model for each pass; leave any of them out and Quiver falls
+pick the harness/model for each pass; leave any of them out and SWE falls
 back to report.session.* / report.writer.* in swe config.
 
 Runner override flags
@@ -554,7 +564,7 @@ Flags
   swe remote setup [--apply]             Check every step to a paired phone:
                                             Tailscale, MagicDNS, HTTPS, the
                                             certificate, the hub, tailscale
-                                            serve. --apply does Quiver's part.
+                                            serve. --apply does SWE's part.
   swe remote pair [--name=N]             Mint a one-time pairing token;
                                             prints the URL to open on the phone
                                             (and a QR when qrencode is installed).
@@ -619,7 +629,7 @@ Flags
                                             line per device; revoking a device
                                             removes it), --off removes them.
 
-  State lives under ~/.quiver/data/remote/: device credentials in
+  State lives under ~/.swe/data/remote/: device credentials in
   devices.json (0600), per-session event journals and transcript cursors.
 </code></pre>
 <h2 id="reference"><a class="anchor" href="#reference"></a>Reference</h2>
@@ -632,7 +642,7 @@ Flags
   swe find amd               AGENTS.md and every harness pointing at it
   swe find skills            Skills, plugins, and every harness skill root
   swe find plugins           Plugins across every plugin-capable harness, and
-                             where ~/.quiver/plugins drifted from claude and codex
+                             where ~/.swe/plugins drifted from claude and codex
   swe find mcps              MCP servers in the hub, and which harnesses have them
   swe find skills --full     List every path, not just the counts
   swe find plugins -i        Browse them: arrows to move and descend, q to quit
@@ -706,10 +716,10 @@ Actions  Each one checks first and does nothing if the plugin is
   Cursor is read-only: it keeps no install record swe can read.
 
   Collision: swe find also has a --harness, but it means active|all there.
-  swe find plugins shows drift between ~/.quiver/plugins and each harness.
+  swe find plugins shows drift between ~/.swe/plugins and each harness.
 </code></pre>
 <h3 id="swe-hooks"><a class="anchor" href="#swe-hooks"></a><code>swe hooks</code></h3>
-<p><em>Manage the hook scripts under ~/.quiver/hooks</em></p>
+<p><em>Manage the hook scripts under ~/.swe/hooks</em></p>
 <pre><code class="language-text">  swe hooks                       Every hook, its tier, link state, declaration
   swe hooks list [--harness=&lt;h&gt;]  One harness only
   swe hooks info &lt;name&gt;           One script: path, docstring, state, events
@@ -725,15 +735,15 @@ Actions  Each one checks first and does nothing if the plugin is
                                     --yes skips the confirmation)
 
 Tiers
-  shared    ~/.quiver/hooks/shared/&lt;name&gt;.py — one script deployed
+  shared    ~/.swe/hooks/shared/&lt;name&gt;.py — one script deployed
            into every installed shim-able harness through a generated
            wrapper (hooks/&lt;h&gt;/_generated/). Its # events: [PreToolUse, ...]
            header says which normalized events it wants.
   harness   the per-harness scripts swe links into each hooks root
-  foreign  a script or declared command no ~/.quiver source claims —
+  foreign  a script or declared command no ~/.swe source claims —
            another installer owns it; swe lists it, never writes it
 
-  Scripts live one folder per harness under ~/.quiver/hooks/, and
+  Scripts live one folder per harness under ~/.swe/hooks/, and
   swe init links each into that harness's hooks dir (~/.claude/hooks,
   ~/.factory/hooks, or capabilities.hooks.root in harness.json).
   The contract registry (events, schema, settings file, quirks like
@@ -765,7 +775,7 @@ States
   swe skills link &lt;harness&gt; [target]   Symlink a harness root to shared/other
   swe skills unlink &lt;harness&gt; [--mkdir] Break a harness symlink
   swe skills move &lt;name&gt; --from=A --to=B Move a skill folder between roots
-  swe skills hub               Plugins in ~/.quiver/plugins and where they are installed
+  swe skills hub               Plugins in ~/.swe/plugins and where they are installed
   swe skills discover [--apply] Scan Desktop/Documents for skill catalogs
   swe skills catalog add [path] [label] Register a skills directory (default: .)
   swe skills catalog .                Add the current directory as a catalog
@@ -774,12 +784,12 @@ Flags
   -d, --desc                   Show skill descriptions
 
 Scopes scanned
-  shared          ~/.quiver/skills (the tree every harness skills/ symlinks to)
+  shared          ~/.swe/skills (the tree every harness skills/ symlinks to)
   cursor-builtin  ~/.cursor/skills-cursor
   cursor-plugin   ~/.cursor/plugins/cache
   claude-plugin   ~/.claude/plugins/cache
   project         ./.cursor/skills (current directory)
-  &lt;catalog&gt;       Paths from ~/.quiver/config/skill_catalogs.json
+  &lt;catalog&gt;       Paths from ~/.swe/config/skill_catalogs.json
 
   Discover finds folders named skills under ~/Desktop and ~/Documents,
   then swe skills discover --apply or swe skills catalog add registers them.
@@ -801,11 +811,11 @@ Help  swe skills help &lt;topic&gt; — catalog, discover, tree, link, unlink, m
   swe providers info &lt;name|alias&gt;
       Show details for one provider, including key status + path
   swe providers add &lt;name&gt; [--url=URL] [--env=ENV] [--file=NAME]
-      Register a provider in ~/.quiver/config/providers.json
+      Register a provider in ~/.swe/config/providers.json
   swe providers remove &lt;name&gt;
       Unregister a provider (does not delete your key file)
 
-  Keys live in ~/.quiver/secrets/providers/.api_keys (override
+  Keys live in ~/.swe/secrets/providers/.api_keys (override
   with --api-keys-dir=DIR). quiver stores metadata only — never the
   raw key. Run swe providers --help for full key-storage and masking details.
 </code></pre>
@@ -824,7 +834,7 @@ Help  swe skills help &lt;topic&gt; — catalog, discover, tree, link, unlink, m
 
 Help  swe mcp &lt;command&gt; help for details on each — flags, examples, the exact
         model each command uses.
-Source of truth  ~/.quiver/mcp.json
+Source of truth  ~/.swe/mcp.json
 </code></pre>
 <h2 id="github"><a class="anchor" href="#github"></a>GitHub</h2>
 <h3 id="swe-gh"><a class="anchor" href="#swe-gh"></a><code>swe gh</code></h3>
@@ -842,7 +852,7 @@ Source of truth  ~/.quiver/mcp.json
   swe gh pr merge &lt;N&gt; [--method=M] [--auto]
                                             Merge a PR (default: squash)
   swe gh pr worktree &lt;N&gt;           Checkout the PR head under
-                                            ~/.quiver/worktrees (a session's
+                                            ~/.swe/worktrees (a session's
                                             launch point)
   swe gh issue [--repo=R]          Issues
   swe gh issue view &lt;N&gt;           One issue: body, comments, and the
@@ -851,7 +861,7 @@ Source of truth  ~/.quiver/mcp.json
                                             Comment on an issue as you
   swe gh issue worktree &lt;N&gt;       Branch quiver/issue-N off the default
                                             branch, checked out under
-                                            ~/.quiver/worktrees
+                                            ~/.swe/worktrees
   swe gh run [--repo=R]            Workflow runs (alias: actions)
   swe gh run rerun &lt;id&gt; [--failed]  Re-run a workflow run
   swe gh pages [--repo=R]          GitHub Pages site + latest build
@@ -891,7 +901,7 @@ Source of truth  ~/.quiver/mcp.json
   swe autocomplete bash   Generate + inject bash completion
   swe autocomplete fish   Generate + inject fish completion
 
-  Writes a completion script to ~/.quiver/completions/ and adds a
+  Writes a completion script to ~/.swe/completions/ and adds a
   source line to your shell profile (~/.zshrc, ~/.bashrc, or fish config).
 
   After running, restart your terminal or run:
@@ -905,7 +915,7 @@ Source of truth  ~/.quiver/mcp.json
 <pre><code class="language-text">  swe version    swe -v    swe --version
 
   Prints the installed version and exits. Reads no config, so it works even
-  when ~/.quiver is broken. --json emits the standard envelope:
+  when ~/.swe is broken. --json emits the standard envelope:
   name, version and the Python version under `data`.
 </code></pre>
 <h3 id="swe-bug"><a class="anchor" href="#swe-bug"></a><code>swe bug</code></h3>
@@ -923,7 +933,7 @@ Source of truth  ~/.quiver/mcp.json
 
 </main>
 <footer>
-  <span>quiver is MIT licensed.</span>
+  <span>swe is MIT licensed.</span>
   <div class="right">
     <a href="../overview/">Docs</a>
     <a href="../changelog/">Changelog</a>

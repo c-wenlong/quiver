@@ -14,21 +14,21 @@ import Testing
         // Claude Code names its keychain item after the config home, so a reused
         // home would hand the old account's login to the new one.
         let home = try scratch()
-        let store = ProfileStore(root: home.appending(path: ".quiver/accounts"), userHome: home)
+        let store = ProfileStore(root: home.appending(path: ".swe/accounts"), userHome: home)
         let first = try store.add(vendor: .claude, name: "Work")
         try store.remove(id: first.id)
         let second = try store.add(vendor: .claude, name: "Work")
         #expect(second.id == "claude-work-2")
         #expect(store.paths(for: second).home != store.paths(for: first).home)
         // And the retirement survives a fresh store reading the file.
-        let fresh = ProfileStore(root: home.appending(path: ".quiver/accounts"), userHome: home)
+        let fresh = ProfileStore(root: home.appending(path: ".swe/accounts"), userHome: home)
         try fresh.remove(id: second.id)
         #expect(try fresh.add(vendor: .claude, name: "Work").id == "claude-work-3")
     }
 
     @Test func aNonDefaultEntryClaimingADefaultIdIsMalformed() throws {
         let home = try scratch()
-        let root = home.appending(path: ".quiver/accounts")
+        let root = home.appending(path: ".swe/accounts")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try ##"{"schema":1,"profiles":[{"id":"claude-default","vendor":"claude","name":"Fake","isDefault":false,"color":"#123456"}]}"##
             .write(to: root.appending(path: "profiles.json"), atomically: true, encoding: .utf8)
@@ -148,7 +148,7 @@ private final class CountedUsage: UsageFetching, Sendable {
 
     @Test func twoStoresAddingAtOnceKeepBothAccounts() async throws {
         let home = scratch.url
-        let root = home.appending(path: ".quiver/accounts")
+        let root = home.appending(path: ".swe/accounts")
         // Two stores on one folder stand in for two running copies of the app.
         await withTaskGroup(of: Void.self) { group in
             for copy in 0..<2 {

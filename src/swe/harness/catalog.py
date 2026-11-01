@@ -1,0 +1,260 @@
+"""Catalog of known AI coding CLI harnesses for discovery.
+
+This is a recognition table, not a seed. Nothing here is written to
+~/.swe/config/harness.json on first run; `swe discover` matches what is
+actually on PATH against these names and commands, and only what it finds
+gets registered. A machine's registry therefore describes that machine.
+
+Two consequences worth keeping in mind when editing:
+
+  * No `version` field. A version is a fact about an install, so it comes
+    from `swe check` probing the binary. A constant here would be printed
+    as though it were live, which is what the old defaults file did.
+  * A wrong `command` is worse than a missing entry. `_resolve_executable`
+    trusts it, so a name that shadows an unrelated binary (cursor's CLI is
+    `cursor-agent`, and a bare `agent` is something else entirely) makes
+    discovery confidently wrong rather than silently quiet.
+"""
+
+HARNESS_CATALOG: dict[str, dict] = {
+    # Vendor CLIs from the major model labs.
+    "claude": {
+        "command": "claude",
+        "description": "Anthropic's flagship, defined the skills, MCP and hooks others copy",
+        "tags": ["agentic", "coding", "byok"],
+        "aliases": ["cc"],
+        "primary_color": "#D97757",
+    },
+    "codex": {
+        "command": "codex",
+        "description": "OpenAI's, OS-level sandbox by default, network off unless approved",
+        "tags": ["agentic", "coding", "byok"],
+        "aliases": ["cx"],
+        # The logo's middle stop and the blue the app already shows.
+        "primary_color": "#7A9DFF",
+    },
+    "gemini": {
+        "command": "gemini",
+        "description": "Google's first, 1M token context, 1,000 free requests a day",
+        "tags": ["agentic", "coding", "byok"],
+        "aliases": ["gg"],
+        "primary_color": "#969DFF",
+    },
+    "copilot": {
+        "command": "copilot",
+        "description": "First cross platform harness in CLI, VSCode and Cloud",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["cp"],
+    },
+    "cursor": {
+        # `cursor-agent`, not `agent`: the short name collides with unrelated
+        # binaries that ship into ~/.local/bin.
+        "command": "cursor-agent",
+        "description": "The editor's CLI half, shares its rules and index, print mode for CI",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["cs"],
+    },
+    "qwen-code": {
+        "command": "qwen",
+        "description": "Alibaba's Gemini CLI fork, drive it from Telegram or WeChat",
+        "tags": ["agentic", "coding", "byok"],
+        "aliases": ["qw"],
+        "primary_color": "#6F69F7",
+    },
+    "mistral-vibe": {
+        "command": "vibe",
+        "description": "Mistral's, own 24B Apache weights, runs offline on one GPU",
+        "tags": ["agentic", "coding", "byok"],
+        "aliases": ["mv"],
+        "primary_color": "#FF8205",
+    },
+    "kimi": {
+        "command": "kimi",
+        "description": "Moonshot's Kimi Code CLI, the kimi-cli successor",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["km"],
+    },
+    "grok": {
+        "command": "grok",
+        "description": "xAI's terminal agent, plans and subagents in a TUI",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["gk"],
+    },
+
+    # Open source and model-agnostic.
+    "opencode": {
+        "command": "opencode",
+        "description": "OS, 75+ providers, local model support, fully customisable",
+        "tags": ["agentic", "coding", "open-source", "byok"],
+        "aliases": ["oc"],
+        "primary_color": "#8B5CF6",
+    },
+    "crush": {
+        "command": "crush",
+        "description": "Charm's, prettiest TUI, swaps models mid-session, context intact",
+        "tags": ["agentic", "coding", "byok"],
+        "aliases": ["cr"],
+        "primary_color": "#FF6DAA",
+    },
+    "cline": {
+        "command": "cline",
+        "description": "VS Code extension first, inference at cost or BYOK, no subscription",
+        "tags": ["agentic", "coding", "open-source", "byok"],
+        "aliases": ["cl"],
+    },
+    "kilo": {
+        "command": "kilo",
+        "description": "Kilo Code's CLI, an opencode fork; extension and CLI share ~/.config/kilo",
+        "tags": ["agentic", "coding", "open-source", "byok"],
+        "aliases": ["ki"],
+    },
+    "goose": {
+        "command": "goose",
+        "description": "Block's, extensions are MCP servers, local or hosted models",
+        "tags": ["agentic", "coding", "open-source", "byok"],
+        "aliases": ["gs"],
+    },
+    "aider": {
+        "command": "aider",
+        "description": "Git-native pair programmer, commits every edit as it goes",
+        "tags": ["agentic", "coding", "open-source", "byok"],
+        "aliases": ["ad"],
+    },
+    "continue": {
+        # The CLI installs as `cn`; `continue` is the shell keyword.
+        "command": "cn",
+        "description": "Headless CI runs and PR review, team acquired by Cursor Jun 2026",
+        "tags": ["agentic", "coding", "open-source", "byok"],
+        "aliases": ["cn"],
+    },
+    "pi": {
+        "command": "pi",
+        "description": "Mario's minimal agent harness for full control",
+        "tags": ["agentic", "coding", "customisable", "byok"],
+        "aliases": ["pi"],
+    },
+    "forge": {
+        "command": "forge",
+        "description": "Lives in your zsh prompt, fire it inline with a : prefix",
+        "tags": ["agentic", "coding", "byok"],
+        "aliases": ["fc"],
+    },
+
+    # Autonomous, enterprise and long tail.
+    "devin": {
+        "command": "devin",
+        "description": "Cognition's, lives in the terminal and the cloud",
+        "tags": ["agentic", "coding", "cloud"],
+        "aliases": ["dv"],
+    },
+    "droid": {
+        "command": "droid",
+        "description": "Factory's, spawns a worker per feature and syncs them through git",
+        "tags": ["agentic", "coding", "autonomous", "byok"],
+        "aliases": ["df"],
+    },
+    "augment": {
+        "command": "auggie",
+        "description": "Indexes up to 500k files across repos, retrieval is the whole pitch",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["au"],
+    },
+    "kiro": {
+        "command": "kiro-cli",
+        "description": "AWS's, writes requirements and design docs before any code",
+        "tags": ["agentic", "coding", "byok"],
+        "aliases": ["kr"],
+    },
+    "blackbox": {
+        "command": "blackbox",
+        "description": "Fans one task to four models, a judge picks the winner",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["bb"],
+    },
+    "freebuff": {
+        "command": "freebuff",
+        "description": "Free harness for light tasks, single thread, Chinese models only",
+        "tags": ["agentic", "coding", "free"],
+        "aliases": ["fb"],
+    },
+    "antigravity": {
+        # The GUI app is the product; `agy` is its terminal CLI.
+        "command": "agy",
+        "description": "Google's agent-first IDE, plus the `agy` terminal agent",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["ag", "agy"],
+    },
+    "commandcode": {
+        # `command-code` is the full binary; `cmd` its macOS/Linux alias.
+        "command": "command-code",
+        "description": "Taste-learning coding agent built for open models",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["cmd"],
+    },
+    "qoder": {
+        # The script and tap install `qodercli`; npm adds a `qoder` alias.
+        "command": "qodercli",
+        "description": "Alibaba's agentic coding platform, IDE plus terminal CLI",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["qd"],
+    },
+    "qoder-cn": {
+        "command": "qoderclicn",
+        "description": "Qoder's China edition (qoder.com.cn)",
+        "tags": ["agentic", "coding", "subscription"],
+        "aliases": ["qc"],
+    },
+}
+
+# Basenames to skip when scanning PATH (common false positives).
+EXCLUDE_BASENAMES = frozenset(
+    {
+        # A local model runtime, not a harness. It used to sit in the
+        # catalog "so discovery names it", but catalog hits are what
+        # --apply registers, so it kept landing in harness.json.
+        "ollama",
+        "agentd",
+        "python",
+        "python3",
+        "pip",
+        "pip3",
+        "node",
+        "npm",
+        "npx",
+        "git",
+        "docker",
+        "kubectl",
+        "brew",
+        "make",
+        "cargo",
+        "go",
+        "ruby",
+        "perl",
+        "bash",
+        "zsh",
+        "sh",
+        "curl",
+        "wget",
+        "ssh",
+        "scp",
+        "rsync",
+        "sed",
+        "awk",
+        "grep",
+        "rg",
+        "find",
+        "ls",
+        "cat",
+        "echo",
+        "swe",
+    }
+)
+
+# Extra directories to scan beyond $PATH.
+EXTRA_BIN_DIRS = [
+    "~/.local/bin",
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "~/.npm-global/bin",
+    "~/go/bin",
+]

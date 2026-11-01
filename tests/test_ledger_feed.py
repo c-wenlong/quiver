@@ -10,10 +10,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.ledger import feed
-from quiver.ledger.models import LedgerRecord, UsageEvent
-from quiver.ledger.scan import scan
-from quiver.ledger.store import LedgerStore, ledger_path_for
+from swe.ledger import feed
+from swe.ledger.models import LedgerRecord, UsageEvent
+from swe.ledger.scan import scan
+from swe.ledger.store import LedgerStore, ledger_path_for
 
 T0 = 1_760_000_000.0
 
@@ -172,7 +172,7 @@ class TestFeedPoll(unittest.TestCase):
         self.assertAlmostEqual(self.calls[1][1], T0 + feed.INTERVAL_S - feed.WINDOW_S)
 
     def test_two_profiles_one_account_poll_once(self):
-        accounts_dir = self.home / ".quiver" / "accounts"
+        accounts_dir = self.home / ".swe" / "accounts"
         accounts_dir.mkdir(parents=True)
         profile_desktop = accounts_dir / "cursor" / "p1" / "desktop"
         (accounts_dir / "profiles.json").write_text(json.dumps({"profiles": [
@@ -190,7 +190,7 @@ class TestFeedPoll(unittest.TestCase):
         self.assertEqual(count, 1)
 
     def test_no_write_is_held_across_the_next_accounts_fetch(self):
-        accounts_dir = self.home / ".quiver" / "accounts"
+        accounts_dir = self.home / ".swe" / "accounts"
         accounts_dir.mkdir(parents=True)
         (accounts_dir / "profiles.json").write_text(json.dumps({"profiles": [
             {"id": "p1", "vendor": "cursor", "isDefault": False}]}))
@@ -291,7 +291,7 @@ class TestFeedScheduling(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
         (self.home / "Library" / "Application Support" / "Cursor").mkdir(parents=True)
-        from quiver.webapp.api import WebApp
+        from swe.webapp.api import WebApp
         self.webapp = WebApp(self.home, download_prices=False)
         self.addCleanup(self.webapp.close)
 
@@ -415,13 +415,13 @@ class TestPageReadsAndTheFeedConnection(unittest.TestCase):
     until the hub restarted."""
 
     def setUp(self):
-        from quiver.webapp.api import WebApp
+        from swe.webapp.api import WebApp
         self.home = Path(tempfile.mkdtemp())
         self.webapp = WebApp(self.home, download_prices=False)
         self.addCleanup(self.webapp.close)
 
     def test_a_feed_commit_after_a_page_read_leaves_the_next_scan_working(self):
-        from quiver.webapp.api import WebApp
+        from swe.webapp.api import WebApp
         # Hold the round back so it lands after the page's read, the
         # order the wedged hub's WAL shows (scan, read, feed commit).
         with mock.patch.object(WebApp, "_kick_feed"):
@@ -436,7 +436,7 @@ class TestPageReadsAndTheFeedConnection(unittest.TestCase):
     def test_a_failed_scan_ends_its_transaction(self):
         import sqlite3
 
-        from quiver.webapp import api
+        from swe.webapp import api
 
         def fails(store, home):
             store.set_meta("probe", "1")  # opens the implicit transaction

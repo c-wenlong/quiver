@@ -309,24 +309,24 @@ private struct LinksStep: View {
                     instructionsRow(preview.instructions)
                     Divider().overlay(Theme.border)
                     row(icon: "sparkles", title: "Skills",
-                        detail: "~/.quiver/skills becomes every agent's skills folder, so a skill you add shows up in all of them.")
+                        detail: "~/.swe/skills becomes every agent's skills folder, so a skill you add shows up in all of them.")
                     Divider().overlay(Theme.border)
                     row(icon: "powerplug", title: "MCP servers", detail: mcpDetail(preview.mcp))
                 }
                 .padding(.horizontal, Theme.cardPadding)
                 .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
-                Text("Anything replaced is backed up to ~/.quiver/backups first. A real file that would be lost stays where it is.")
+                Text("Anything replaced is backed up to ~/.swe/backups first. A real file that would be lost stays where it is.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
         }
     }
 
-    /// `swe setup --hub`: shown while `~/.quiver` has no hub yet.
+    /// `swe setup --hub`: shown while `~/.swe` has no hub yet.
     private func hubCard(demo: String?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Start from your hub repo").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
-            Text("Optional. Clone your own hub repo into ~/.quiver, so its AGENTS.md, skills, plugins and MCP servers come with it. Leave it empty to start an empty hub.")
+            Text("Optional. Clone your own hub repo into ~/.swe, so its AGENTS.md, skills, plugins and MCP servers come with it. Leave it empty to start an empty hub.")
                 .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text(FirstRunSetupModel.hubForkNote)
@@ -364,7 +364,7 @@ private struct LinksStep: View {
 
     private func clonedCard(_ cloned: SetupPreview.Hub.Cloned) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Cloned \(cloned.url) into ~/.quiver.", systemImage: "checkmark.circle")
+            Label("Cloned \(cloned.url) into ~/.swe.", systemImage: "checkmark.circle")
                 .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
             Text("Its AGENTS.md, skills, plugins and MCP servers are on this Mac now. Set up links them into each agent.")
@@ -387,13 +387,13 @@ private struct LinksStep: View {
             return "None found in your agents yet. Add servers later on the MCP servers page."
         }
         let names = servers.map(\.name).joined(separator: ", ")
-        return "Copies \(servers.count) server\(servers.count == 1 ? "" : "s") your agents already use into ~/.quiver/mcp.json: \(names)."
+        return "Copies \(servers.count) server\(servers.count == 1 ? "" : "s") your agents already use into ~/.swe/mcp.json: \(names)."
     }
 
     @ViewBuilder
     private func instructionsRow(_ instructions: SetupPreview.Instructions?) -> some View {
         row(icon: "doc.text", title: "Shared instructions",
-            detail: "~/.quiver/AGENTS.md, linked into each agent as its own file (CLAUDE.md, AGENTS.md, GEMINI.md…).") {
+            detail: "~/.swe/AGENTS.md, linked into each agent as its own file (CLAUDE.md, AGENTS.md, GEMINI.md…).") {
             if let instructions {
                 if instructions.agentsFileCustomised {
                     Text("Your AGENTS.md is already there and stays as it is.")

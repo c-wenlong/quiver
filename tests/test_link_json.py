@@ -34,7 +34,7 @@ def run_swe_in(home: Path, cwd: Path, *args: str):
         "NO_COLOR": "1",
     }
     return subprocess.run(
-        [sys.executable, "-m", "quiver.cli", *args],
+        [sys.executable, "-m", "swe.cli", *args],
         capture_output=True, text=True, env=env, timeout=60, cwd=cwd,
     )
 
@@ -49,12 +49,12 @@ def write_skill(skills: Path, name: str) -> Path:
 def build_machine(home: Path) -> Path:
     """claude is fully linked; codex has its own instructions and skills.
 
-    ~/.claude/CLAUDE.md            -> ~/.quiver/AGENTS.md   (linked)
-    ~/.claude/skills               -> ~/.quiver/skills      (linked)
+    ~/.claude/CLAUDE.md            -> ~/.swe/AGENTS.md   (linked)
+    ~/.claude/skills               -> ~/.swe/skills      (linked)
     ~/.codex/AGENTS.md             a real file              (conflict)
     ~/.codex/skills/only-codex     a skill nobody else has  (keep)
     """
-    quiver = home / ".quiver"
+    quiver = home / ".swe"
     agents = quiver / "AGENTS.md"
     agents.parent.mkdir(parents=True, exist_ok=True)
     agents.write_text("# shared instructions\n")
@@ -106,7 +106,7 @@ class InitCheckJsonTest(unittest.TestCase):
         self.assertEqual(doc["schema"], 1)
         data = doc["data"]
         self.assertEqual(
-            data["agents_file"], str(self.home / ".quiver" / "AGENTS.md"))
+            data["agents_file"], str(self.home / ".swe" / "AGENTS.md"))
         self.assertTrue(data["agents_file_exists"])
         rows = {row["name"]: row for row in data["harnesses"]}
         self.assertEqual(rows["claude"]["instructions"], {
@@ -132,7 +132,7 @@ class InitCheckJsonTest(unittest.TestCase):
         self.assertEqual(snapshot(self.home), before)
 
     def test_missing_shared_file_is_reported_not_created(self):
-        (self.home / ".quiver" / "AGENTS.md").unlink()
+        (self.home / ".swe" / "AGENTS.md").unlink()
         before = snapshot(self.home)
         data = self.init_check()["data"]
         self.assertFalse(data["agents_file_exists"])
@@ -156,7 +156,7 @@ class InitCheckJsonTest(unittest.TestCase):
         write_registry(self.home, registry)
         (self.home / ".zed").mkdir()
         (self.home / ".zed" / "skills").symlink_to(
-            self.home / ".quiver" / "skills")
+            self.home / ".swe" / "skills")
         rows = {r["name"]: r for r in self.init_check()["data"]["harnesses"]}
         self.assertIsNone(rows["zed"]["instructions"])
         self.assertEqual(rows["zed"]["skills"], {
@@ -165,7 +165,7 @@ class InitCheckJsonTest(unittest.TestCase):
         })
 
     def test_linkignored_path_reads_ignored(self):
-        (self.home / ".quiver" / ".linkignore").write_text(".codex/skills\n")
+        (self.home / ".swe" / ".linkignore").write_text(".codex/skills\n")
         rows = {r["name"]: r for r in self.init_check()["data"]["harnesses"]}
         self.assertEqual(rows["codex"]["skills"]["state"], "ignored")
         self.assertEqual(rows["codex"]["instructions"]["state"], "conflict")
@@ -178,7 +178,7 @@ class InitCheckJsonTest(unittest.TestCase):
         self.assertEqual(rows["newthing"]["skills"]["state"], "skipped")
 
     def test_failures_keep_stdout_empty(self):
-        (self.home / ".quiver" / ".linkignore").mkdir()
+        (self.home / ".swe" / ".linkignore").mkdir()
         result = run_swe(self.home, "init", "--check", "--json")
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, "")

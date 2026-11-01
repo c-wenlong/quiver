@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.harness.catalog import HARNESS_CATALOG
-from quiver.harness.installers import (
+from swe.harness.catalog import HARNESS_CATALOG
+from swe.harness.installers import (
     GUI_APPS,
     INSTALLERS,
     METHOD_TOOL,

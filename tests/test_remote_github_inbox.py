@@ -8,13 +8,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quiver.github import cli as ghcli
-from quiver.github import gh
-from quiver.remote.catalog import Catalog
-from quiver.remote import notify
-from quiver.remote.hub import GLOBAL_KEY, HubState
-from quiver.github import shared as G
-from quiver.webapp.pages import inbox as gh_inbox
+from swe.github import cli as ghcli
+from swe.github import gh
+from swe.remote.catalog import Catalog
+from swe.remote import notify
+from swe.remote.hub import GLOBAL_KEY, HubState
+from swe.github import shared as G
+from swe.webapp.pages import inbox as gh_inbox
 
 from tests._tempdir import temp_dir
 from tests.test_remote_hub import HubBase, _session
@@ -149,7 +149,7 @@ class TestMerge(_GithubCatalog):
         self.assertEqual(calls, [1])
 
     def test_unread_github_never_ages_out(self):
-        from quiver.remote.catalog import INBOX_MAX_AGE_S
+        from swe.remote.catalog import INBOX_MAX_AGE_S
         now = 1_800_000_000.0
         old = "2026-09-01T00:00:00Z"  # way past the 3-day cutoff
         cat = self._cat(github=[_gh_row(nid="9", updated=old)])
@@ -320,7 +320,7 @@ class TestUnreadRows(unittest.TestCase):
         failed = {"status": "upstream-error", "notifications": [],
                   "error": "502"}
         ok_env = gh.GhEnv(installed=True, authenticated=True)
-        with patch("quiver.github.cli._fetch_inbox", return_value=failed), \
+        with patch("swe.github.cli._fetch_inbox", return_value=failed), \
                 patch.object(gh, "probe_env", return_value=ok_env):
             self.assertIsNone(gh_inbox.unread_rows(self.home))
 
@@ -331,7 +331,7 @@ class TestUnreadRows(unittest.TestCase):
                 gh, "probe_env",
                 return_value=gh.GhEnv(installed=True,
                                       authenticated=False)) as probe, \
-                patch("quiver.github.cli._fetch_inbox") as fetch:
+                patch("swe.github.cli._fetch_inbox") as fetch:
             self.assertIsNone(gh_inbox.unread_rows(self.home))
         probe.assert_called()
         fetch.assert_not_called()
@@ -356,7 +356,7 @@ class TestMarkReadUnion(unittest.TestCase):
             return {"status": "ok", "notifications": notes}
         fake = FakeGh(self, notes=[_raw("9")])
         ok_env = gh.GhEnv(installed=True, authenticated=True)
-        with patch("quiver.github.cli._fetch_inbox",
+        with patch("swe.github.cli._fetch_inbox",
                    side_effect=fake_fetch), \
                 patch.object(gh, "probe_env", return_value=ok_env):
             body = gh_inbox.post(self.ctx, "read", {"ids": ["9"]})

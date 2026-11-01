@@ -1,6 +1,6 @@
-"""`plugin_drift` reports where ~/.quiver/plugins has not reached a harness.
+"""`plugin_drift` reports where ~/.swe/plugins has not reached a harness.
 
-Every test builds a whole fake HOME: a marketplace under ~/.quiver/plugins,
+Every test builds a whole fake HOME: a marketplace under ~/.swe/plugins,
 claude's known_marketplaces.json / installed_plugins.json / settings.json and
 codex's config.toml plus plugin cache, each an exact copy of the source unless
 the test says otherwise. The baseline is therefore drift-free, and each test
@@ -16,10 +16,10 @@ import time
 import unittest
 from pathlib import Path
 
-from quiver.find.plugin_drift import (
+from swe.find.plugin_drift import (
     Finding,
     plugin_drift,
-    quiver_plugins,
+    swe_plugins,
 )
 
 
@@ -47,7 +47,7 @@ class _FakeHome:
         super().setUp()
         self.home = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
-        self.market = self.home / ".quiver" / "plugins" / "mk"
+        self.market = self.home / ".swe" / "plugins" / "mk"
         self.plugin = self.market / "tool"
         self.manifest = {
             "name": "mk",
@@ -129,9 +129,9 @@ class _FakeHome:
         return [(f.harness, f.kind) for f in self.drift(**kw)]
 
 
-class QuiverPluginsTest(_FakeHome, unittest.TestCase):
+class SwePluginsTest(_FakeHome, unittest.TestCase):
     def test_lists_local_plugins_with_version(self):
-        found = quiver_plugins(self.home)
+        found = swe_plugins(self.home)
         self.assertEqual(len(found), 1)
         sp = found[0]
         self.assertEqual((sp.marketplace, sp.name, sp.version), ("mk", "tool", "1.0.0"))
@@ -139,7 +139,7 @@ class QuiverPluginsTest(_FakeHome, unittest.TestCase):
         self.assertEqual(sp.path, self.plugin)
 
     def test_url_sourced_plugin_is_skipped(self):
-        names = [sp.name for sp in quiver_plugins(self.home)]
+        names = [sp.name for sp in swe_plugins(self.home)]
         self.assertNotIn("remote", names)
 
     def test_escaping_and_absolute_sources_are_skipped(self):
@@ -151,21 +151,21 @@ class QuiverPluginsTest(_FakeHome, unittest.TestCase):
             {"name": "url", "source": "https://example.com/x.git"},
         ]
         self._write_manifest()
-        self.assertEqual([sp.name for sp in quiver_plugins(self.home)], ["tool"])
+        self.assertEqual([sp.name for sp in swe_plugins(self.home)], ["tool"])
 
     def test_no_plugins_dir(self):
-        shutil.rmtree(self.home / ".quiver")
-        self.assertEqual(quiver_plugins(self.home), [])
+        shutil.rmtree(self.home / ".swe")
+        self.assertEqual(swe_plugins(self.home), [])
         self.assertEqual(self.drift(), [])
 
     def test_malformed_marketplace_json(self):
         _write(self.market / ".claude-plugin" / "marketplace.json", "{not json")
-        self.assertEqual(quiver_plugins(self.home), [])
+        self.assertEqual(swe_plugins(self.home), [])
         (self.market / ".claude-plugin" / "marketplace.json").write_bytes(b"\xff\xfe{")
-        self.assertEqual(quiver_plugins(self.home), [])
+        self.assertEqual(swe_plugins(self.home), [])
         _write(self.market / ".claude-plugin" / "marketplace.json",
                json.dumps({"name": "mk", "plugins": "nope"}))
-        self.assertEqual(quiver_plugins(self.home), [])
+        self.assertEqual(swe_plugins(self.home), [])
 
 
 class NoDriftTest(_FakeHome, unittest.TestCase):
@@ -216,9 +216,9 @@ class UnregisteredTest(_FakeHome, unittest.TestCase):
         self.assertEqual([f.kind for f in found], ["unregistered"])
 
     def test_a_remote_only_marketplace_is_unregistered_too(self):
-        # Every plugin comes from git, so quiver_plugins finds nothing in it,
+        # Every plugin comes from git, so swe_plugins finds nothing in it,
         # but the marketplace itself still needs registering.
-        remote = self.home / ".quiver" / "plugins" / "far"
+        remote = self.home / ".swe" / "plugins" / "far"
         _write(remote / ".claude-plugin" / "marketplace.json", json.dumps(
             {"name": "far", "plugins": [{"name": "r", "source": {
                 "source": "github", "repo": "o/r"}}]}))
@@ -227,7 +227,7 @@ class UnregisteredTest(_FakeHome, unittest.TestCase):
                                  ("codex", "far", "unregistered")])
 
     def test_dir_with_spaces_is_quoted(self):
-        spaced = self.home / ".quiver" / "plugins" / "my mk"
+        spaced = self.home / ".swe" / "plugins" / "my mk"
         shutil.copytree(self.market, spaced, symlinks=True)
         found = [f for f in self.drift(harnesses=("claude",)) if f.kind == "unregistered"]
         self.assertEqual(found[0].fix, f"claude plugin marketplace add '{spaced}'")
@@ -373,7 +373,7 @@ class LinkedManifestTest(_FakeHome, unittest.TestCase):
         [finding] = self.drift()
         real = Path(os.path.realpath(self.plugin))
         link, target = str(real / ".codex-plugin"), str(real / ".claude-plugin")
-        staged = link + ".quiver-tmp"
+        staged = link + ".swe-tmp"
         # copy to a new path first, so a copy that fails leaves the link and
         # its finding; the link is the only thing removed
         self.assertEqual(finding.argv, (("cp", "-R", target, staged),
@@ -382,7 +382,7 @@ class LinkedManifestTest(_FakeHome, unittest.TestCase):
         self.assertEqual(finding.fix, f"cp -R {target} {staged} && rm {link} && mv {staged} {link}")
 
     def test_a_failed_copy_keeps_the_link_and_the_finding(self):
-        from quiver.find.plugin_drift import FixError, apply_fix
+        from swe.find.plugin_drift import FixError, apply_fix
 
         def fail_on_cp(argv, **kwargs):
             if argv[0] == "cp":
@@ -400,9 +400,9 @@ class LinkedManifestTest(_FakeHome, unittest.TestCase):
         # cp into an existing folder writes through any link in it, and
         # clearing the path first could delete a real folder, so neither
         # happens: the fix names what is in the way and runs nothing.
-        from quiver.find.plugin_drift import FixError, apply_fix
+        from swe.find.plugin_drift import FixError, apply_fix
 
-        staged = self.plugin / ".codex-plugin.quiver-tmp"
+        staged = self.plugin / ".codex-plugin.swe-tmp"
         outside = self.home / "outside"
         _write(outside / "plugin.json", "keep me\n")
 
@@ -413,7 +413,7 @@ class LinkedManifestTest(_FakeHome, unittest.TestCase):
             os.symlink(outside, staged)
 
         def link_to_it():
-            # .codex-plugin -> .codex-plugin.quiver-tmp, a real folder
+            # .codex-plugin -> .codex-plugin.swe-tmp, a real folder
             _write(staged / "plugin.json", "keep me\n")
             self.link_manifest(staged.name)
 
@@ -488,7 +488,7 @@ class LinkedManifestTest(_FakeHome, unittest.TestCase):
         self.assertEqual(self.kinds(), [("codex", "not-installed")])
 
     def test_running_the_fix_then_reinstalling_clears_it(self):
-        from quiver.find.plugin_drift import apply_fix
+        from swe.find.plugin_drift import apply_fix
 
         apply_fix(self.home, "codex:linked-manifest:tool@mk")
         manifest = self.plugin / ".codex-plugin"

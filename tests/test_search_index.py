@@ -1,6 +1,6 @@
 """Read path of the app's FTS5 session-search index.
 
-``~/.quiver/data/search/search.sqlite`` is written by the Quiver app;
+``~/.swe/data/search/search.sqlite`` is written by the Quiver app;
 ``sessions/search_index.py`` only reads it. These tests build the exact
 frozen schema into a throwaway HOME, then check availability gating, the
 phrase/AND/OR ladder, agent and limit filters, orphan suppression, the
@@ -18,8 +18,8 @@ from pathlib import Path
 from unittest import mock
 from unittest.mock import patch
 
-from quiver.sessions import search_index
-from quiver.sessions.models import Session
+from swe.sessions import search_index
+from swe.sessions.models import Session
 from tests.test_json_output import decode, run_swe
 
 
@@ -466,9 +466,9 @@ class McpSearchTest(TempHomeTest):
         patcher = mock.patch.dict(sys.modules, _fake_mcp_modules())
         patcher.start()
         self.addCleanup(patcher.stop)
-        sys.modules.pop("quiver.mcp.server", None)
-        self.addCleanup(lambda: sys.modules.pop("quiver.mcp.server", None))
-        import quiver.mcp.server as server
+        sys.modules.pop("swe.mcp.server", None)
+        self.addCleanup(lambda: sys.modules.pop("swe.mcp.server", None))
+        import swe.mcp.server as server
 
         self.server = server
         self.home_patch = patch.dict(os.environ, {"HOME": str(self.home)})

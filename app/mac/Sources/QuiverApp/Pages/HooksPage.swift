@@ -2,7 +2,7 @@ import AppKit
 import QuiverCore
 import SwiftUI
 
-/// The hook scripts under `~/.quiver/hooks`, laid out by the event that
+/// The hook scripts under `~/.swe/hooks`, laid out by the event that
 /// fires them: pick a harness, read its session from SessionStart to
 /// SessionEnd, and click a script to open it in the panel beside the list.
 /// Linking goes through `swe init` — the only writer of links — and a new
@@ -31,7 +31,7 @@ struct HooksPage: View {
 
     var body: some View {
         Page(title: "Hooks",
-             subtitle: "Scripts in ~/.quiver/hooks, by the event that fires them in each harness.") {
+             subtitle: "Scripts in ~/.swe/hooks, by the event that fires them in each harness.") {
             Button("New hook", systemImage: "plus") { adding = true }
                 .primaryButton()
                 .disabled(model.creating)
@@ -74,7 +74,7 @@ struct HooksPage: View {
                 FindingsCard(findings: inventory.findings)
             }
             if inventory.hooks.isEmpty {
-                EmptyCard(text: "No hooks in ~/.quiver/hooks yet. A hook script runs when its harness fires an event.",
+                EmptyCard(text: "No hooks in ~/.swe/hooks yet. A hook script runs when its harness fires an event.",
                           icon: "bolt", actionTitle: "New hook") { adding = true }
             } else {
                 board(inventory.hooks)
@@ -222,7 +222,7 @@ private struct LinksStrip: View {
                                 // writing, so it waits for a clean model there.
                                 .disabled(model.linking || app.agentsMd.projectHasUnsavedChanges)
                                 .hoverTip(app.agentsMd.projectHasUnsavedChanges ? AgentsModel.saveFirst
-                                          : "Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.",
+                                          : "Runs swe init --force, which copies each real file in the way to ~/.swe/backups before linking over it.",
                                           replacesLabel: false)
                         }
                     }
@@ -233,7 +233,7 @@ private struct LinksStrip: View {
                     Task { await model.link(force: true, swe: app.swe, for: app.swePath) }
                 }
             } message: {
-                Text("This runs swe init --force. Each real file in the way is copied to ~/.quiver/backups, then replaced with a link to the shared copy.")
+                Text("This runs swe init --force. Each real file in the way is copied to ~/.swe/backups, then replaced with a link to the shared copy.")
             }
         }
     }
@@ -482,7 +482,7 @@ private struct HookButton<Label: View>: View {
 
 /// One hook beside the list: what fires it and where it's declared, where
 /// it's linked, and the script itself in a raw editor. The script is the
-/// hub copy under ~/.quiver/hooks; edits to it reach every link `swe init`
+/// hub copy under ~/.swe/hooks; edits to it reach every link `swe init`
 /// made. InstructionDocument preserves the file's executable bit across a
 /// save.
 private struct HookDetailView: View {
@@ -529,7 +529,7 @@ private struct HookDetailView: View {
                 ErrorCard(message: leaveError)
             }
             if let check, !check.editable {
-                PrimitiveLockNote(text: "Only scripts inside ~/.quiver/hooks can be edited, so \(hook.script) is read-only.")
+                PrimitiveLockNote(text: "Only scripts inside ~/.swe/hooks can be edited, so \(hook.script) is read-only.")
             }
             header
             if let check {
@@ -771,7 +771,7 @@ private struct InfoLine<Content: View>: View {
 // MARK: - New hook sheet
 
 /// `swe hooks new` writes the executable skeleton under
-/// `~/.quiver/hooks/<harness>`; the sheet then shows the stanza the reply
+/// `~/.swe/hooks/<harness>`; the sheet then shows the stanza the reply
 /// carries for the user to paste into a settings file — the app never
 /// writes one — plus where that file is.
 private struct NewHookSheet: View {

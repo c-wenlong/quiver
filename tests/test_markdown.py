@@ -8,8 +8,8 @@ byte for byte, because most of a transcript is ordinary prose.
 
 import unittest
 
-from quiver.console import strip_ansi
-from quiver.markdown import render_markdown
+from swe.console import strip_ansi
+from swe.markdown import render_markdown
 
 BOLD = "\x1b[1m"
 DIM = "\x1b[2m"
@@ -219,7 +219,7 @@ plain tail line
                 self.assertNotIn("](", plain)
 
     def test_the_pager_can_wrap_every_rendered_line(self):
-        from quiver.console import visible_len, wrap_ansi
+        from swe.console import visible_len, wrap_ansi
 
         for line in render_markdown(self.DOC):
             for wrapped in wrap_ansi(line, 24):

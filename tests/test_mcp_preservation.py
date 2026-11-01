@@ -24,9 +24,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.mcp import cli as mcp_cli
-from quiver.mcp.cli import _merge_format_keys
-from quiver.mcp.secrets import redact
+from swe.mcp import cli as mcp_cli
+from swe.mcp.cli import _merge_format_keys
+from swe.mcp.secrets import redact
 
 
 class MergeFormatKeysTest(unittest.TestCase):
@@ -182,7 +182,7 @@ class RedactParityTest(unittest.TestCase):
 class SummaryMaskingTest(unittest.TestCase):
     def test_http_summary_masks_url_secret(self):
         with patch(
-            "quiver.mcp.secrets.load_secrets",
+            "swe.mcp.secrets.load_secrets",
             return_value={"K": "sk-abcdef0123456789xyz"},
         ):
             s = mcp_cli.server_summary(
@@ -193,7 +193,7 @@ class SummaryMaskingTest(unittest.TestCase):
 
     def test_wrapped_summary_masks_url_secret(self):
         with patch(
-            "quiver.mcp.secrets.load_secrets",
+            "swe.mcp.secrets.load_secrets",
             return_value={"K": "sk-abcdef0123456789xyz"},
         ):
             s = mcp_cli.server_summary(

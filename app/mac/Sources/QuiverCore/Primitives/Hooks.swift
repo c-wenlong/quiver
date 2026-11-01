@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// `swe hooks list --json`: every hook script under `~/.quiver/hooks`, with
+/// `swe hooks list --json`: every hook script under `~/.swe/hooks`, with
 /// the destination each harness would link it to and the declarations found
 /// in its settings files. The `findings` ride along from `swe hooks check
 /// --json`, which the same fetch runs: the check exits 1 while findings
@@ -36,7 +36,7 @@ public struct HookInventory: SnapshotValue {
     }
 }
 
-/// One hook script: its file under `~/.quiver/hooks/<harness>` (`source`),
+/// One hook script: its file under `~/.swe/hooks/<harness>` (`source`),
 /// where `swe init` would link it (`destination`), and the declarations the
 /// harness's settings files hold for it. `state` is `swe init`'s link
 /// vocabulary (linked, create, relink, absorb, keep, conflict, skipped,
@@ -62,7 +62,7 @@ public struct Hook: Codable, Sendable, Equatable, Identifiable {
     public let script: String
     /// The registry name the hooks folder is for.
     public let harness: String
-    /// The script in the hub, under `~/.quiver/hooks/<harness>`.
+    /// The script in the hub, under `~/.swe/hooks/<harness>`.
     public let source: String
     /// Where the harness reads it, linked by `swe init`.
     public let destination: String
@@ -287,7 +287,7 @@ public struct HookInfo: Decodable, Sendable, Equatable {
 /// and the stanza to paste into one. quiver writes only the script; a
 /// settings file is never written by the app or swe.
 public struct NewHookReply: Decodable, Sendable, Equatable {
-    /// The new script under `~/.quiver/hooks/<harness>`, executable.
+    /// The new script under `~/.swe/hooks/<harness>`, executable.
     public let path: String
     public let harness: String
     /// The command a declaration runs, `~/.claude/hooks/name.py`-spelled.
@@ -308,21 +308,21 @@ public struct HookScript: Sendable, Equatable {
     /// resolve, so it is the user's to edit. The resolved side matters:
     /// `realpath` of the script can contain `/var`→`/private/var` or a
     /// symlinked home, so the root is resolved to compare like for like.
-    /// A script that lands outside (a link under `~/.quiver/hooks` that
+    /// A script that lands outside (a link under `~/.swe/hooks` that
     /// points elsewhere, say) is view only.
     public let editable: Bool
 
     public init(source: String, home: URL,
                 resolve: (String) -> String = FolderOwners.realPath,
                 exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) {
-        let hooks = home.appending(path: ".quiver/hooks").path
+        let hooks = home.appending(path: ".swe/hooks").path
         self.exists = exists(source)
         editable = self.exists && PrimitiveOwnership.isInside(source, root: hooks, resolve: resolve)
     }
 }
 
 extension SweClient {
-    /// `swe hooks list --json`: every script under `~/.quiver/hooks` and how
+    /// `swe hooks list --json`: every script under `~/.swe/hooks` and how
     /// each harness links it.
     public func hooksList() async throws -> HookInventory {
         try await call(["hooks", "list", "--json"])
@@ -348,7 +348,7 @@ extension SweClient {
     }
 }
 
-/// The Hooks page's model: the scripts under `~/.quiver/hooks`, their link
+/// The Hooks page's model: the scripts under `~/.swe/hooks`, their link
 /// states and the check's findings, kept between launches so the last list
 /// shows at once. Linking goes through `swe init` (the only writer of
 /// links); creating goes through `swe hooks new`. A change reloads the list
@@ -445,7 +445,7 @@ public final class HooksModel {
     }
 
     /// `swe init`, the only linking the app runs; `force` backs up each
-    /// real file in the way to `~/.quiver/backups` first. Reloads either
+    /// real file in the way to `~/.swe/backups` first. Reloads either
     /// way: a failed init may still have linked some hooks.
     /// - Parameter source: the swe `swe` is, as set in Settings. The reload
     ///   is dropped if another swe was picked meanwhile; nil reloads anyway.

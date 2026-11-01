@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.sessions.models_analytics import classify_provider, collect_model_usage
+from swe.sessions.models_analytics import classify_provider, collect_model_usage
 
 
 class ModelsAnalyticsTest(unittest.TestCase):
@@ -47,10 +47,10 @@ class ModelsAnalyticsTest(unittest.TestCase):
                 return str(root / "missing")
 
             with mock.patch(
-                "quiver.sessions.models_analytics.os.path.expanduser",
+                "swe.sessions.models_analytics.os.path.expanduser",
                 side_effect=expand,
             ), mock.patch(
-                "quiver.sessions.models_analytics.glob.glob",
+                "swe.sessions.models_analytics.glob.glob",
                 side_effect=AssertionError("Claude traversal must use os.scandir"),
             ):
                 usage = collect_model_usage()
@@ -74,7 +74,7 @@ class ModelsAnalyticsTest(unittest.TestCase):
             connection.close()
 
             with mock.patch(
-                "quiver.sessions.models_analytics.os.path.expanduser",
+                "swe.sessions.models_analytics.os.path.expanduser",
                 side_effect=self._expand_for(
                     root, {"~/.local/share/opencode/opencode.db": db}
                 ),
@@ -103,7 +103,7 @@ class ModelsAnalyticsTest(unittest.TestCase):
             connection.close()
 
             with mock.patch(
-                "quiver.sessions.models_analytics.os.path.expanduser",
+                "swe.sessions.models_analytics.os.path.expanduser",
                 side_effect=self._expand_for(
                     root, {"~/.local/share/kilo/kilo.db": db}
                 ),
@@ -136,7 +136,7 @@ class ModelsAnalyticsTest(unittest.TestCase):
             }))
 
             with mock.patch(
-                "quiver.sessions.models_analytics.os.path.expanduser",
+                "swe.sessions.models_analytics.os.path.expanduser",
                 side_effect=self._expand_for(
                     root, {"~/.cline/data/sessions/": sessions}
                 ),
@@ -161,7 +161,7 @@ class ModelsAnalyticsTest(unittest.TestCase):
             )
 
             with mock.patch(
-                "quiver.sessions.models_analytics.os.path.expanduser",
+                "swe.sessions.models_analytics.os.path.expanduser",
                 side_effect=self._expand_for(root, {"~/.codex/sessions/": codex}),
             ):
                 usage = collect_model_usage()
@@ -179,7 +179,7 @@ class ModelsAnalyticsTest(unittest.TestCase):
             )
 
             with mock.patch(
-                "quiver.sessions.models_analytics.os.path.expanduser",
+                "swe.sessions.models_analytics.os.path.expanduser",
                 side_effect=self._expand_for(
                     root, {"~/.config/manicode/projects/": freebuff}
                 ),
@@ -199,7 +199,7 @@ class ModelsAnalyticsTest(unittest.TestCase):
             (chat / "log.jsonl").write_text('{"model":"gpt-4.1"}\n', encoding="utf-8")
 
             with mock.patch(
-                "quiver.sessions.models_analytics.os.path.expanduser",
+                "swe.sessions.models_analytics.os.path.expanduser",
                 side_effect=self._expand_for(
                     root,
                     {
@@ -220,13 +220,13 @@ class ModelsAnalyticsTest(unittest.TestCase):
         )
 
         with mock.patch(
-            "quiver.sessions.models_analytics.os.path.expanduser",
+            "swe.sessions.models_analytics.os.path.expanduser",
             side_effect=lambda path: "/tmp/opencode.db" if "opencode" in path else "/missing",
         ), mock.patch(
-            "quiver.sessions.models_analytics.os.path.exists",
+            "swe.sessions.models_analytics.os.path.exists",
             side_effect=lambda path: path == "/tmp/opencode.db",
         ), mock.patch(
-            "quiver.sessions.models_analytics.sqlite3.connect", return_value=connection
+            "swe.sessions.models_analytics.sqlite3.connect", return_value=connection
         ):
             usage = collect_model_usage()
 

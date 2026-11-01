@@ -1,7 +1,7 @@
 """`--json` for the app's Skills and Harnesses pages.
 
 `swe skills --json` (installed skills and each harness's skills-root link),
-`swe skills hub --json` (what the ~/.quiver plugin marketplaces offer),
+`swe skills hub --json` (what the ~/.swe plugin marketplaces offer),
 `swe skills link|unlink --json`, and `swe harness star|archive --json`.
 
 Same contract as test_json_output: one enveloped document on stdout and
@@ -131,7 +131,7 @@ class SkillsListJsonTest(unittest.TestCase):
         write_skill(self.home / ".cursor" / "skills-cursor", "cursor-own")
         catalog = self.home / "work" / "kit"
         write_skill(catalog, "from-catalog")
-        config = self.home / ".quiver" / "config"
+        config = self.home / ".swe" / "config"
         (config / "skill_catalogs.json").write_text(json.dumps(
             {"catalogs": [{"label": "kit", "path": str(catalog)}]}))
         skills = {s["name"]: s for s in self.data()["skills"]}
@@ -141,7 +141,7 @@ class SkillsListJsonTest(unittest.TestCase):
         self.assertEqual(skills["from-catalog"]["harnesses"], [])
 
     def test_an_unreadable_linkignore_warns_and_still_lists(self):
-        ignore = self.home / ".quiver" / ".linkignore"
+        ignore = self.home / ".swe" / ".linkignore"
         ignore.mkdir()  # a directory where a file belongs cannot be read
         result = run_swe(self.home, "skills", "--json")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -215,7 +215,7 @@ class SkillsLinkJsonTest(unittest.TestCase):
         env = {"HOME": str(self.home), "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
                "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "NO_COLOR": "1"}
         env.update({k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")})
-        result = subprocess.run([sys.executable, "-m", "quiver.cli", "skills", "unlink", "codx", "--json"],
+        result = subprocess.run([sys.executable, "-m", "swe.cli", "skills", "unlink", "codx", "--json"],
                                 capture_output=True, text=True, env=env, cwd=work, timeout=60)
         self.assertEqual(result.returncode, 1)
         self.assertIn("Unknown skill root", result.stderr)
@@ -232,8 +232,8 @@ class SkillsLinkJsonTest(unittest.TestCase):
 
 
 def write_marketplace(home: Path) -> Path:
-    """~/.quiver/plugins/kit: one plugin, `toolkit`, shipping two skills."""
-    market = home / ".quiver" / "plugins" / "kit"
+    """~/.swe/plugins/kit: one plugin, `toolkit`, shipping two skills."""
+    market = home / ".swe" / "plugins" / "kit"
     (market / ".claude-plugin").mkdir(parents=True)
     (market / ".claude-plugin" / "marketplace.json").write_text(json.dumps({
         "name": "kit",
@@ -273,7 +273,7 @@ class SkillsHubJsonTest(unittest.TestCase):
 
     def test_lists_each_plugin_with_its_skills(self):
         data = self.data()
-        self.assertEqual(data["hub"], str(self.home / ".quiver"))
+        self.assertEqual(data["hub"], str(self.home / ".swe"))
         (plugin,) = data["plugins"]
         self.assertEqual(plugin["name"], "toolkit")
         self.assertEqual(plugin["marketplace"], "kit")
@@ -329,7 +329,7 @@ class SkillsHubJsonTest(unittest.TestCase):
                "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
         env.update({k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")})
         result = subprocess.run(
-            [sys.executable, "-m", "quiver.cli", "find", "plugins", f"--fix={fix_id}", "--json"],
+            [sys.executable, "-m", "swe.cli", "find", "plugins", f"--fix={fix_id}", "--json"],
             capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(log.read_text().strip(), "plugin install toolkit@kit")
@@ -402,7 +402,7 @@ class SkillsListLivePluginTest(unittest.TestCase):
         build_machine(self.home)
         # The plugin lives at ./src/probe-dir, not ./toolkit: the path comes
         # from the marketplace manifest, never from the plugin's name.
-        self.market = self.home / ".quiver" / "plugins" / "kit"
+        self.market = self.home / ".swe" / "plugins" / "kit"
         self.source = self.market / "src" / "probe-dir"
         (self.market / ".claude-plugin").mkdir(parents=True)
         self.write_manifest("./src/probe-dir")
@@ -490,7 +490,7 @@ class SkillsListLivePluginTest(unittest.TestCase):
         self.assertEqual(sorted(skills), ["chisel", "hammer"])
 
     def test_a_source_also_registered_as_a_catalog_is_listed_once(self):
-        config = self.home / ".quiver" / "config"
+        config = self.home / ".swe" / "config"
         (config / "skill_catalogs.json").write_text(json.dumps(
             {"catalogs": [{"label": "kit", "path": str(self.source / "skills")}]}))
         result = run_swe(self.home, "skills", "--json")

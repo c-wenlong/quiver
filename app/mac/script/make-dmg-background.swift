@@ -1,6 +1,6 @@
 // Draws the DMG window's background: the Quiver wordmark, an arrow from
-// the app's slot to the Applications slot, and the app icon's five glyphs
-// scattered faintly around the edges. make-dmg.sh renders it at 1x and 2x
+// the app's slot to the Applications slot, and the app icon's three
+// arrowheads scattered faintly around the edges. make-dmg.sh renders it at 1x and 2x
 // and joins the two into one HiDPI TIFF for Finder.
 //
 //   swift script/make-dmg-background.swift <scale> <out.png>
@@ -19,14 +19,13 @@ guard args.count == 3, let scale = Double(args[1]), scale > 0 else {
 let width = 640.0, height = 400.0
 let appSlot = CGPoint(x: 170, y: 200), applicationsSlot = CGPoint(x: 470, y: 200)
 
-// TokenTracker's neutral ramp for the page, the icon's own colours for the glyphs.
+// TokenTracker's neutral ramp for the page, the icon's own colours for the arrowheads.
 func rgb(_ hex: UInt32, _ alpha: Double = 1) -> NSColor {
     NSColor(srgbRed: Double((hex >> 16) & 0xff) / 255, green: Double((hex >> 8) & 0xff) / 255,
             blue: Double(hex & 0xff) / 255, alpha: alpha)
 }
 let page = rgb(0xfafafa), ink = rgb(0x171717), muted = rgb(0x737373), arrowInk = rgb(0xa3a3a3)
-let red = 0xff1d25 as UInt32, green = 0x00c832 as UInt32, blue = 0x008cff as UInt32
-let yellow = 0xffcc00 as UInt32, purple = 0xa30dff as UInt32
+let red = 0xfa3228 as UInt32, yellow = 0xffd200 as UInt32, green = 0x14e63c as UInt32
 
 let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(width * scale), pixelsHigh: Int(height * scale),
                            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -43,63 +42,51 @@ flipped.imageInterpolation = .high
 page.setFill()
 NSRect(x: 0, y: 0, width: width, height: height).fill()
 
-// One glyph from the icon, drawn as a stroke around `centre`, `size` wide.
-func glyph(_ kind: Int, at centre: CGPoint, size: Double, angle: Double, color: UInt32, alpha: Double) {
+// One arrowhead from the icon, `size` wide, filled around `centre`. In the
+// icon's 64-unit tile it is 11.22 wide: a polygon through the centres of its
+// rounded corners (radius 1.2), grown by a round-joined stroke, so the notch
+// in its base stays sharp.
+func arrowhead(at centre: CGPoint, size: Double, angle: Double, color: UInt32, alpha: Double) {
     let gc = NSGraphicsContext.current!.cgContext
     gc.saveGState()
     gc.translateBy(x: centre.x, y: centre.y)
     gc.rotate(by: angle * .pi / 180)
-    let s = size / 2
+    let unit = size / 11.22
+    gc.scaleBy(x: unit, y: unit)
     let path = NSBezierPath()
-    path.lineWidth = size * 0.2
-    path.lineCapStyle = .round
+    path.move(to: CGPoint(x: 0, y: -2.8))
+    path.line(to: CGPoint(x: 4.42, y: 2.81))
+    path.line(to: CGPoint(x: 0, y: 0.97))
+    path.line(to: CGPoint(x: -4.42, y: 2.81))
+    path.close()
+    path.lineWidth = 2.4
     path.lineJoinStyle = .round
-    rgb(color, alpha).set()
-    switch kind {
-    case 0:  // >
-        path.move(to: CGPoint(x: -s * 0.6, y: -s))
-        path.line(to: CGPoint(x: s * 0.6, y: 0))
-        path.line(to: CGPoint(x: -s * 0.6, y: s))
-        path.stroke()
-    case 1:  // square
-        path.appendRoundedRect(NSRect(x: -s * 0.8, y: -s * 0.8, width: s * 1.6, height: s * 1.6),
-                               xRadius: s * 0.12, yRadius: s * 0.12)
-        path.stroke()
-    case 2:  // ^
-        path.move(to: CGPoint(x: -s * 0.8, y: s * 0.6))
-        path.line(to: CGPoint(x: 0, y: -s * 0.6))
-        path.line(to: CGPoint(x: s * 0.8, y: s * 0.6))
-        path.stroke()
-    case 3:  // ring
-        path.appendOval(in: NSRect(x: -s * 0.8, y: -s * 0.8, width: s * 1.6, height: s * 1.6))
-        path.stroke()
-    default:  // { }
-        let text = NSAttributedString(string: "{ }", attributes: [
-            .font: NSFont.systemFont(ofSize: size * 1.1, weight: .heavy),
-            .foregroundColor: rgb(color, alpha),
-        ])
-        let bounds = text.size()
-        text.draw(at: CGPoint(x: -bounds.width / 2, y: -bounds.height / 2))
-    }
+    // One layer, so the fill and the stroke over its edge composite once.
+    gc.setAlpha(alpha)
+    gc.beginTransparencyLayer(auxiliaryInfo: nil)
+    rgb(color).set()
+    path.fill()
+    path.stroke()
+    gc.endTransparencyLayer()
     gc.restoreGState()
 }
 
 // Scattered along the top and bottom bands, clear of the icons, their
 // labels and the wordmark. The bottom band stays above y=360 so a Finder
 // path bar, which covers the window's last 28pt, does not clip it.
-let glyphs: [(Int, CGPoint, Double, Double, UInt32)] = [
-    (0, CGPoint(x: 48, y: 52), 26, -8, red),
-    (1, CGPoint(x: 116, y: 96), 18, 12, green),
-    (3, CGPoint(x: 590, y: 60), 24, 0, yellow),
-    (2, CGPoint(x: 522, y: 104), 20, 10, blue),
-    (4, CGPoint(x: 66, y: 346), 22, -6, purple),
-    (3, CGPoint(x: 150, y: 322), 14, 0, yellow),
-    (1, CGPoint(x: 592, y: 338), 22, -14, green),
-    (0, CGPoint(x: 498, y: 350), 16, 6, red),
-    (2, CGPoint(x: 330, y: 352), 14, -4, blue),
+let arrowheads: [(CGPoint, Double, Double, UInt32)] = [
+    (CGPoint(x: 48, y: 52), 26, -8, red),
+    (CGPoint(x: 116, y: 96), 18, 12, yellow),
+    (CGPoint(x: 590, y: 60), 24, 0, green),
+    (CGPoint(x: 522, y: 104), 20, 10, red),
+    (CGPoint(x: 66, y: 346), 22, -6, green),
+    (CGPoint(x: 150, y: 322), 14, 0, yellow),
+    (CGPoint(x: 592, y: 338), 22, -14, yellow),
+    (CGPoint(x: 498, y: 350), 16, 6, red),
+    (CGPoint(x: 330, y: 352), 14, -4, green),
 ]
-for (kind, centre, size, angle, color) in glyphs {
-    glyph(kind, at: centre, size: size, angle: angle, color: color, alpha: 0.22)
+for (centre, size, angle, color) in arrowheads {
+    arrowhead(at: centre, size: size, angle: angle, color: color, alpha: 0.22)
 }
 
 func drawCentred(_ string: String, y: Double, font: NSFont, color: NSColor, kern: Double = 0) {

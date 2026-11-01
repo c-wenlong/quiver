@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.paths import atomic_write_text, backup_tree
+from swe.paths import atomic_write_text, backup_tree
 
 
 class SslVerificationTest(unittest.TestCase):
@@ -26,7 +26,7 @@ class SslVerificationTest(unittest.TestCase):
     """
 
     def test_no_code_path_disables_verification(self):
-        source = Path("src/quiver/harness/rate_limits.py").read_text()
+        source = Path("src/swe/harness/rate_limits.py").read_text()
         code = "\n".join(
             ln for ln in source.splitlines()
             if not ln.lstrip().startswith("#")
@@ -36,7 +36,7 @@ class SslVerificationTest(unittest.TestCase):
             self.assertNotIn(banned, code, f"{banned} is back in rate_limits")
 
     def test_fallback_context_still_verifies(self):
-        from quiver.harness.rate_limits import _verified_context
+        from swe.harness.rate_limits import _verified_context
 
         ctx = _verified_context()
         if ctx is None:
@@ -45,7 +45,7 @@ class SslVerificationTest(unittest.TestCase):
         self.assertTrue(ctx.check_hostname)
 
     def test_gives_up_when_no_ca_bundle_exists(self):
-        from quiver.harness.rate_limits import _verified_context
+        from swe.harness.rate_limits import _verified_context
 
         real = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
 
@@ -57,7 +57,7 @@ class SslVerificationTest(unittest.TestCase):
         # The OS trust store is tried before certifi, so hide it too or the
         # machine's own /etc/ssl/cert.pem satisfies the lookup.
         with mock.patch("builtins.__import__", no_certifi), mock.patch(
-            "quiver.harness.rate_limits._SYSTEM_CA_BUNDLES",
+            "swe.harness.rate_limits._SYSTEM_CA_BUNDLES",
             ("/nonexistent/cert.pem",),
         ):
             self.assertIsNone(
@@ -109,7 +109,7 @@ class AtomicWritePermissionTest(unittest.TestCase):
         self.assertEqual([q for q in self.d.iterdir() if ".tmp" in q.name], [])
 
     def test_the_mcp_writer_uses_it(self):
-        from quiver.mcp.cli import save_json
+        from swe.mcp.cli import save_json
 
         p = self.d / "harness.json"
         p.write_text("{}")
@@ -142,26 +142,26 @@ class ForcedLinkBacksUpTest(unittest.TestCase):
 
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
-        (self.home / ".quiver" / "skills").mkdir(parents=True)
+        (self.home / ".swe" / "skills").mkdir(parents=True)
         self.root = self.home / ".codex" / "skills"
         self.root.mkdir(parents=True)
         (self.root / "only-copy").mkdir()
         (self.root / "only-copy" / "SKILL.md").write_text("irreplaceable")
 
     def _link(self, **kw):
-        from quiver.skills.link_ops import link_skill_root
+        from swe.skills.link_ops import link_skill_root
 
         return link_skill_root("codex", home=self.home, cwd=self.home, **kw)
 
     def test_refuses_without_force(self):
-        from quiver.skills.link_ops import SkillLayoutError
+        from swe.skills.link_ops import SkillLayoutError
 
         with self.assertRaises(SkillLayoutError):
             self._link()
         self.assertTrue((self.root / "only-copy" / "SKILL.md").exists())
 
     def test_force_backs_up_before_deleting(self):
-        from quiver.paths import backups_dir_for
+        from swe.paths import backups_dir_for
 
         self._link(force=True)
         saved = list(backups_dir_for(self.home).rglob("SKILL.md"))
@@ -178,7 +178,7 @@ class BackupTreeHardeningTest(unittest.TestCase):
 
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
-        (self.home / ".quiver" / "backups").mkdir(parents=True)
+        (self.home / ".swe" / "backups").mkdir(parents=True)
         self.tree = self.home / ".h" / "skills"
         self.tree.mkdir(parents=True)
         (self.tree / "ok").mkdir()
@@ -220,7 +220,7 @@ class ParserFailuresAreReportedTest(unittest.TestCase):
     """
 
     def setUp(self):
-        from quiver.sessions import failures
+        from swe.sessions import failures
 
         failures.clear()
         self.addCleanup(failures.clear)
@@ -229,8 +229,8 @@ class ParserFailuresAreReportedTest(unittest.TestCase):
     def test_a_failure_inside_a_json_handler_is_recorded(self):
         import json as _json
 
-        from quiver.sessions.engines import json_engine
-        from quiver.sessions.engines.json_engine import JsonParserConfig
+        from swe.sessions.engines import json_engine
+        from swe.sessions.engines.json_engine import JsonParserConfig
 
         d = Path(tempfile.mkdtemp())
         idx = d / "index.json"
@@ -245,7 +245,7 @@ class ParserFailuresAreReportedTest(unittest.TestCase):
         self.assertIn("demo", self.failures.snapshot())
 
     def test_an_escaping_failure_is_still_recorded(self):
-        from quiver.sessions.aggregator import _run_parser
+        from swe.sessions.aggregator import _run_parser
 
         def boom():
             raise RuntimeError("escaped")
@@ -271,7 +271,7 @@ class ParserFailuresAreReportedTest(unittest.TestCase):
         )
         offenders = [
             f.name
-            for f in Path("src/quiver/sessions/engines").glob("*.py")
+            for f in Path("src/swe/sessions/engines").glob("*.py")
             if pattern.search(f.read_text())
         ]
         self.assertEqual(offenders, [], f"whole-tool failures still silent: {offenders}")
@@ -285,11 +285,11 @@ class UnknownRootRefTest(unittest.TestCase):
     """
 
     def setUp(self):
-        from quiver.skills.layout import SkillLayoutError
+        from swe.skills.layout import SkillLayoutError
 
         self.error = SkillLayoutError
         self.home = Path(tempfile.mkdtemp())
-        (self.home / ".quiver" / "skills").mkdir(parents=True)
+        (self.home / ".swe" / "skills").mkdir(parents=True)
         self.work = Path(tempfile.mkdtemp())
         (self.work / "codx").mkdir()
         self._old = os.getcwd()
@@ -297,7 +297,7 @@ class UnknownRootRefTest(unittest.TestCase):
         self.addCleanup(os.chdir, self._old)
 
     def _resolve(self, ref):
-        from quiver.skills.layout import resolve_root_ref
+        from swe.skills.layout import resolve_root_ref
 
         return resolve_root_ref(ref, home=self.home, cwd=self.home)
 
@@ -324,7 +324,7 @@ class UnknownRootRefTest(unittest.TestCase):
             self.assertTrue(self._resolve(ref)[1])
 
     def test_link_refuses_a_typo_before_touching_anything(self):
-        from quiver.skills.link_ops import link_skill_root
+        from swe.skills.link_ops import link_skill_root
 
         with self.assertRaises(self.error):
             link_skill_root("codx", home=self.home, cwd=self.home, force=True)

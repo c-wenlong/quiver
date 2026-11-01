@@ -1,6 +1,6 @@
 """Regression cover for the 0.2.7 root merge.
 
-Two roots (``~/.quiver`` for harness-facing assets, ``~/.config/swe`` for
+Two roots (``~/.swe`` for harness-facing assets, ``~/.config/swe`` for
 quiver's own state) became one. These tests pin the resulting layout, prove the
 migration moves everything without losing or clobbering data, and check the
 things most likely to rot: a path constant escaping the root, a cache landing
@@ -15,9 +15,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver import paths
-from quiver.init import commands as init_commands
-from quiver.init.migrate import (
+from swe import paths
+from swe.init import commands as init_commands
+from swe.init.migrate import (
     CACHE_FILES,
     CONFIG_FILES,
     DROP,
@@ -44,8 +44,8 @@ class LayoutInvariantTest(unittest.TestCase):
         for name in self.ALL_PATHS:
             value = getattr(paths, name)
             self.assertTrue(
-                str(value).startswith(str(paths.QUIVER_DIR)),
-                f"{name} = {value} escaped {paths.QUIVER_DIR}",
+                str(value).startswith(str(paths.SWE_DIR)),
+                f"{name} = {value} escaped {paths.SWE_DIR}",
             )
 
     def test_no_path_points_into_dot_config(self):
@@ -55,8 +55,8 @@ class LayoutInvariantTest(unittest.TestCase):
             )
 
     def test_root_is_named_for_the_project_not_the_command(self):
-        self.assertEqual(paths.QUIVER_DIR.name, ".quiver")
-        self.assertEqual(paths.QUIVER_DIR.parent, Path.home())
+        self.assertEqual(paths.SWE_DIR.name, ".swe")
+        self.assertEqual(paths.SWE_DIR.parent, Path.home())
 
     def test_authored_state_sits_in_config(self):
         for name in ("HARNESS_FILE", "TOOLS_FILE", "STARS_FILE", "ARCHIVE_FILE",
@@ -67,7 +67,7 @@ class LayoutInvariantTest(unittest.TestCase):
     def test_mcp_registry_sits_at_the_root_beside_agents_md(self):
         # mcp.json is the control plane for a whole subsystem, not one more
         # settings file, so it sits alongside AGENTS.md rather than in config/.
-        self.assertEqual(paths.MCP_SOURCE_FILE.parent, paths.QUIVER_DIR)
+        self.assertEqual(paths.MCP_SOURCE_FILE.parent, paths.SWE_DIR)
         self.assertEqual(paths.MCP_SOURCE_FILE.name, "mcp.json")
 
     def test_mcp_server_checkouts_are_gitignored(self):
@@ -92,9 +92,9 @@ class LayoutInvariantTest(unittest.TestCase):
         self.assertIn("data/web-ledger/", paths.GITIGNORE_BODY.splitlines())
 
     def test_mcp_secrets_are_gitignored(self):
-        # Resolved MCP tokens. A user who runs `git init` in ~/.quiver must
+        # Resolved MCP tokens. A user who runs `git init` in ~/.swe must
         # not commit them on the first `git add .`.
-        from quiver.mcp import secrets
+        from swe.mcp import secrets
 
         self.assertIn(f"{secrets.SECRETS_DIRNAME}/", paths.GITIGNORE_BODY.splitlines())
 
@@ -105,8 +105,8 @@ class LayoutInvariantTest(unittest.TestCase):
 
     def test_mcp_helpers_respect_an_explicit_home(self):
         fake = Path("/tmp/does-not-exist-home")
-        self.assertEqual(paths.mcp_servers_dir_for(fake), fake / ".quiver" / "mcp" / "servers")
-        self.assertEqual(paths.mcp_source_file_for(fake), fake / ".quiver" / "mcp.json")
+        self.assertEqual(paths.mcp_servers_dir_for(fake), fake / ".swe" / "mcp" / "servers")
+        self.assertEqual(paths.mcp_source_file_for(fake), fake / ".swe" / "mcp.json")
 
     def test_regenerable_state_sits_in_cache(self):
         for name in ("SESSION_CACHE_FILE", "RATE_LIMITS_CACHE_FILE"):
@@ -117,7 +117,7 @@ class LayoutInvariantTest(unittest.TestCase):
         self.assertFalse(str(paths.CACHE_DIR).startswith(str(paths.CONFIG_DIR)))
 
     def test_helpers_and_constants_agree(self):
-        self.assertEqual(paths.quiver_dir_for(), paths.QUIVER_DIR)
+        self.assertEqual(paths.swe_dir_for(), paths.SWE_DIR)
         self.assertEqual(paths.agents_file_for(), paths.AGENTS_FILE)
         self.assertEqual(paths.skills_dir_for(), paths.SKILLS_DIR)
         self.assertEqual(paths.config_dir_for(), paths.CONFIG_DIR)
@@ -126,11 +126,11 @@ class LayoutInvariantTest(unittest.TestCase):
 
     def test_helpers_respect_an_explicit_home(self):
         fake = Path("/tmp/does-not-exist-home")
-        self.assertEqual(paths.quiver_dir_for(fake), fake / ".quiver")
-        self.assertEqual(paths.config_dir_for(fake), fake / ".quiver" / "config")
+        self.assertEqual(paths.swe_dir_for(fake), fake / ".swe")
+        self.assertEqual(paths.config_dir_for(fake), fake / ".swe" / "config")
 
     def test_init_layout_reexports_the_same_helpers(self):
-        from quiver.init import layout
+        from swe.init import layout
 
         self.assertEqual(layout.agents_file(), paths.AGENTS_FILE)
         self.assertEqual(layout.skills_dir(), paths.SKILLS_DIR)
@@ -182,8 +182,8 @@ class PlanMigrationTest(unittest.TestCase):
             self.assertEqual(
                 dest["rate_limits_cache.json"].parent, paths.cache_dir_for(home)
             )
-            self.assertEqual(dest["completions"], home / ".quiver" / "completions")
-            self.assertEqual(dest["reports"], home / ".quiver" / "reports")
+            self.assertEqual(dest["completions"], home / ".swe" / "completions")
+            self.assertEqual(dest["reports"], home / ".swe" / "reports")
 
     def test_dead_source_is_dropped_not_moved(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -203,7 +203,7 @@ class PlanMigrationTest(unittest.TestCase):
             self.assertEqual(dest["something_new.json"].parent, paths.config_dir_for(home))
 
     def test_mcp_json_lands_at_the_hub_path(self):
-        # The MCP hub is ~/.quiver/mcp.json — routing it into config/
+        # The MCP hub is ~/.swe/mcp.json — routing it into config/
         # stranded every server where no reader looks.
         with tempfile.TemporaryDirectory() as tmp:
             home = _legacy_home(tmp, extra={"mcp.json": '{"mcpServers":{}}'})
@@ -321,8 +321,8 @@ class ApplyMigrationTest(unittest.TestCase):
             self.assertFalse((home / ".config" / "swe").exists())
             self.assertTrue((paths.config_dir_for(home) / "tools.json").is_file())
             self.assertTrue((paths.cache_dir_for(home) / "session_cache.json").is_file())
-            self.assertTrue((home / ".quiver" / "completions" / "swe.zsh").is_file())
-            self.assertTrue((home / ".quiver" / "reports" / "r1.json").is_file())
+            self.assertTrue((home / ".swe" / "completions" / "swe.zsh").is_file())
+            self.assertTrue((home / ".swe" / "reports" / "r1.json").is_file())
 
     def test_file_contents_survive_byte_for_byte(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -411,7 +411,7 @@ def _keys(path: Path, text: str = 'export OPENAI_API_KEY="sk-test"\n') -> Path:
 class SecretsLayoutTest(unittest.TestCase):
     def test_each_store_has_its_own_folder_under_secrets(self):
         home = Path("/tmp/does-not-exist-home")
-        secrets_dir = home / ".quiver" / "secrets"
+        secrets_dir = home / ".swe" / "secrets"
         self.assertEqual(paths.provider_keys_file_for(home), secrets_dir / "providers" / ".api_keys")
         self.assertEqual(paths.mcp_secrets_file_for(home), secrets_dir / "mcp" / ".api_keys")
 
@@ -425,16 +425,16 @@ class SecretsLayoutTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             old_keys = _keys(home / ".api_keys")
-            old_mcp = _keys(home / ".quiver" / "secrets" / ".api_keys")
+            old_mcp = _keys(home / ".swe" / "secrets" / ".api_keys")
             self.assertEqual(paths.provider_keys_path_for(home), old_keys)
             self.assertEqual(paths.mcp_secrets_path_for(home), old_mcp)
 
     def test_mcp_secrets_load_from_either_place(self):
-        from quiver.mcp import secrets
+        from swe.mcp import secrets
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            _keys(home / ".quiver" / "secrets" / ".api_keys", "export TOKEN=old\n")
+            _keys(home / ".swe" / "secrets" / ".api_keys", "export TOKEN=old\n")
             self.assertEqual(secrets.load_secrets(home), {"TOKEN": "old"})
             _keys(paths.mcp_secrets_file_for(home), "export TOKEN=new\n")
             self.assertEqual(secrets.load_secrets(home), {"TOKEN": "new"})
@@ -450,7 +450,7 @@ class MoveSecretsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = self._home(tmp)
             _keys(home / ".api_keys")
-            loose = _keys(home / ".quiver" / "secrets" / ".api_keys", "export TOKEN=x\n")
+            loose = _keys(home / ".swe" / "secrets" / ".api_keys", "export TOKEN=x\n")
             loose.chmod(0o644)
 
             notes = move_secrets(home)
@@ -466,7 +466,7 @@ class MoveSecretsTest(unittest.TestCase):
             self.assertEqual(paths.mcp_secrets_file_for(home).read_text(), "export TOKEN=x\n")
             self.assertEqual(paths.mcp_secrets_file_for(home).stat().st_mode & 0o777, 0o600)
             # An older swe on the same machine still reads the old MCP path.
-            old_mcp = home / ".quiver" / "secrets" / ".api_keys"
+            old_mcp = home / ".swe" / "secrets" / ".api_keys"
             self.assertTrue(old_mcp.is_symlink())
             self.assertEqual(old_mcp.read_text(), "export TOKEN=x\n")
 
@@ -528,7 +528,7 @@ class MoveSecretsTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            root = home / ".quiver"
+            root = home / ".swe"
             root.mkdir()
             (root / ".gitignore").write_text("cache/\n!secrets/providers/.api_keys\n")
             subprocess.run(["git", "init", "-q", str(root)], check=True)
@@ -636,7 +636,7 @@ class CmdInitMigrationTest(unittest.TestCase):
             home = _legacy_home(tmp)
             self._run(home, ["--check", "--migrate"])
             self.assertTrue((home / ".config" / "swe").is_dir())
-            self.assertFalse((home / ".quiver" / "config").exists())
+            self.assertFalse((home / ".swe" / "config").exists())
 
     def test_init_moves_the_key_stores_and_check_only_reports(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -655,7 +655,7 @@ class CmdInitMigrationTest(unittest.TestCase):
             home = Path(tmp)
             (home / ".claude").mkdir()
             self._run(home, [])
-            self.assertTrue((home / ".quiver" / ".gitignore").is_file())
+            self.assertTrue((home / ".swe" / ".gitignore").is_file())
 
     def test_a_dangling_scaffold_symlink_is_not_written_through(self):
         # exists() is false for a dangling link, so the AGENTS.md seed used

@@ -35,8 +35,8 @@ final class AttachmentRulesTests: XCTestCase {
     }
 
     func testAnEchoSplitsIntoFilesAndText() {
-        let echo = "@/Users/k/.quiver/data/remote/inbox/0123456789abcdef01234567/1730000000-a1b2c3-photo-1.jpg "
-            + "@/Users/k/.quiver/data/remote/inbox/0123456789abcdef01234567/1730000001-d4e5f6-log.txt why does this fail?"
+        let echo = "@/Users/k/.swe/data/remote/inbox/0123456789abcdef01234567/1730000000-a1b2c3-photo-1.jpg "
+            + "@/Users/k/.swe/data/remote/inbox/0123456789abcdef01234567/1730000001-d4e5f6-log.txt why does this fail?"
         let split = AttachmentRules.splitEcho(echo)
         XCTAssertEqual(split.names, ["photo-1.jpg", "log.txt"])
         XCTAssertEqual(split.text, "why does this fail?")
@@ -49,7 +49,7 @@ final class AttachmentRulesTests: XCTestCase {
         XCTAssertEqual(AttachmentRules.splitEcho(quoted).names, [])
         XCTAssertEqual(AttachmentRules.splitEcho(quoted).text, quoted)
         // A home folder with a space in it.
-        let spaced = AttachmentRules.splitEcho("@/Volumes/Work Drive/k/.quiver/data/remote/inbox/0123456789abcdef01234567/1730000000-a1b2c3-a.png what")
+        let spaced = AttachmentRules.splitEcho("@/Volumes/Work Drive/k/.swe/data/remote/inbox/0123456789abcdef01234567/1730000000-a1b2c3-a.png what")
         XCTAssertEqual(spaced.names, ["a.png"])
         XCTAssertEqual(spaced.text, "what")
     }
@@ -419,9 +419,9 @@ final class ChatAttachmentTests: XCTestCase {
     func testTheEchoOfASendWithFilesReplacesItsBubble() {
         let chat = ChatModel(key: "claude:1", app: AppModel())
         chat.stage("what is this", clientId: "c1", toTray: false, files: ["1730000000-a1b2c3-a.png"])
-        let echo = "@/h/.quiver/data/remote/inbox/0123456789abcdef01234567/1730000000-a1b2c3-a.png what is this"
+        let echo = "@/h/.swe/data/remote/inbox/0123456789abcdef01234567/1730000000-a1b2c3-a.png what is this"
         XCTAssertTrue(ChatModel.echoes(echo, "what is this"))
-        let spaced = "@/Volumes/Work Drive/.quiver/data/remote/inbox/0123456789abcdef01234567/1730000000-a1b2c3-a.png what is this"
+        let spaced = "@/Volumes/Work Drive/.swe/data/remote/inbox/0123456789abcdef01234567/1730000000-a1b2c3-a.png what is this"
         XCTAssertTrue(ChatModel.echoes(spaced, "what is this"))
         XCTAssertFalse(ChatModel.echoes(spaced, "this"))
         XCTAssertEqual(AttachmentRules.splitEcho(echo).names, ["a.png"])

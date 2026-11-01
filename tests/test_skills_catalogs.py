@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.skills.catalog_discover import apply_skill_catalog_findings, discover_skill_catalogs
-from quiver.skills.catalogs import (
+from swe.skills.catalog_discover import apply_skill_catalog_findings, discover_skill_catalogs
+from swe.skills.catalogs import (
     _same_path,
     add_skill_catalog,
     discover_catalog_dirs,
@@ -13,15 +13,15 @@ from quiver.skills.catalogs import (
     remove_skill_catalog,
     suggest_catalog_label,
 )
-from quiver.skills.discovery import discover_skills, skill_roots
+from swe.skills.discovery import discover_skills, skill_roots
 
 
 def _catalog_patches(config_dir: Path, catalogs_file: Path):
     return (
-        patch("quiver.paths.CONFIG_DIR", config_dir),
-        patch("quiver.paths.SKILL_CATALOGS_FILE", catalogs_file),
-        patch("quiver.skills.catalogs.SKILL_CATALOGS_FILE", catalogs_file),
-        patch("quiver.skills.catalogs.CONFIG_DIR", config_dir),
+        patch("swe.paths.CONFIG_DIR", config_dir),
+        patch("swe.paths.SKILL_CATALOGS_FILE", catalogs_file),
+        patch("swe.skills.catalogs.SKILL_CATALOGS_FILE", catalogs_file),
+        patch("swe.skills.catalogs.CONFIG_DIR", config_dir),
     )
 
 
@@ -76,7 +76,7 @@ class SkillsCatalogTest(unittest.TestCase):
 
             p1, p2, p3, p4 = _catalog_patches(config_dir, catalogs_file)
             with p1, p2, p3, p4, patch(
-                "quiver.skills.catalog_discover.discover_catalog_dirs",
+                "swe.skills.catalog_discover.discover_catalog_dirs",
                 return_value=[catalog.resolve()],
             ):
                 findings = discover_skill_catalogs(home=home, cwd=home)
@@ -97,7 +97,7 @@ class SkillsCatalogTest(unittest.TestCase):
 
             p1, p2, p3, p4 = _catalog_patches(config_dir, catalogs_file)
             with p1, p2, p3, p4, patch("os.getcwd", return_value=str(catalog)):
-                from quiver.skills.catalog_commands import cmd_skills_catalog
+                from swe.skills.catalog_commands import cmd_skills_catalog
 
                 self.assertEqual(cmd_skills_catalog(["."]), 0)
                 saved = load_skill_catalogs()
@@ -157,10 +157,10 @@ class SkillsCatalogTest(unittest.TestCase):
             p1, p2, p3, p4 = _catalog_patches(config_dir, catalogs_file)
             with p1, p2, p3, p4:
                 add_skill_catalog(root, "team")
-                with patch("quiver.skills.catalogs.resolve_catalog_path",
+                with patch("swe.skills.catalogs.resolve_catalog_path",
                            side_effect=RuntimeError("symlink loop")):
                     self.assertFalse(remove_skill_catalog("/loop"))
-                with patch("quiver.skills.catalogs.expand_user",
+                with patch("swe.skills.catalogs.expand_user",
                            side_effect=OSError("unreadable")):
                     self.assertFalse(_same_path("~/team/skills", root))
                 self.assertEqual([c["label"] for c in load_skill_catalogs()], ["team"])
@@ -169,7 +169,7 @@ class SkillsCatalogCommandTest(unittest.TestCase):
     def _run(self, args):
         import io
         from contextlib import redirect_stdout
-        from quiver.skills.catalog_commands import cmd_skills_catalog
+        from swe.skills.catalog_commands import cmd_skills_catalog
         out = io.StringIO()
         with redirect_stdout(out):
             code = cmd_skills_catalog(args)
@@ -247,7 +247,7 @@ class SkillsCatalogCommandTest(unittest.TestCase):
 
 class SkillsDiscoverCommandTest(unittest.TestCase):
     def _finding(self, label="cat", status="new", count=2):
-        from quiver.skills.catalog_discover import SkillCatalogFinding
+        from swe.skills.catalog_discover import SkillCatalogFinding
         return SkillCatalogFinding(path=Path("/x/skills"), label=label,
                                    skill_count=count, source="desktop",
                                    status=status)
@@ -256,7 +256,7 @@ class SkillsDiscoverCommandTest(unittest.TestCase):
         import io
         from contextlib import redirect_stdout
         from unittest import mock
-        from quiver.skills import catalog_commands as cc
+        from swe.skills import catalog_commands as cc
         apply_fn = mock.Mock(return_value=apply_return if apply_return is not None else [])
         out = io.StringIO()
         with patch.object(cc, "discover_skill_catalogs", lambda **k: findings), \

@@ -112,7 +112,7 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
     private let scratch: TempDir
     init() throws { scratch = try TempDir() }
 
-    /// A snapshot file inside this test's folder, never the real `~/.quiver`.
+    /// A snapshot file inside this test's folder, never the real `~/.swe`.
     func snapshotFile() -> URL {
         scratch.url.appending(path: "\(UUID().uuidString)/app-other-limits.json")
     }
@@ -484,7 +484,7 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
 
     @Test func devinAndCursorProfilesGetTheirOwnTrees() throws {
         let root = scratch.url.appending(path: "accounts-\(UUID().uuidString)")
-        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let store = ProfileStore(root: root.appending(path: ".swe/accounts"), userHome: root)
 
         // No file yet: only Claude and Codex synthesise defaults.
         #expect(try store.load().map(\.id) == ["claude-default", "codex-default"])
@@ -497,8 +497,8 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
 
         // Same shape as the other extras: <root>/<vendor>/<id>/{home,desktop}.
         let paths = store.paths(for: devin)
-        #expect(paths.home.path == root.appending(path: ".quiver/accounts/devin/devin-work/home").path)
-        #expect(paths.desktopData?.path == root.appending(path: ".quiver/accounts/devin/devin-work/desktop").path)
+        #expect(paths.home.path == root.appending(path: ".swe/accounts/devin/devin-work/home").path)
+        #expect(paths.desktopData?.path == root.appending(path: ".swe/accounts/devin/devin-work/desktop").path)
         #expect(FileManager.default.fileExists(atPath: paths.desktopData!.path))
     }
 }

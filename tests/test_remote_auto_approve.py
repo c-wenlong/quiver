@@ -14,7 +14,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.remote import commands, pairing
+from swe.remote import commands, pairing
 
 from tests.test_remote_hub import _Server
 

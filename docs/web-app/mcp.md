@@ -17,7 +17,7 @@ Its writes are a server's Sync, with its Preview, and its Remove.
 - The server × harness grid, in two sections by how a server runs.
   **Local: runs on <hub machine>** is every server a harness launches with
   a command (stdio, and an `mcp-remote` wrapper), plus the folders in
-  `~/.quiver/mcp/servers` no server uses ("Not in the hub"), sorted by
+  `~/.swe/mcp/servers` no server uses ("Not in the hub"), sorted by
   name. A server whose command or an argument is a path inside one of
   those folders gets a **checkout** tag, the folder name and its git
   branch, ahead/behind counts and a Local changes badge. **Remote** is
@@ -36,12 +36,12 @@ Its writes are a server's Sync, with its Preview, and its Remove.
   app's Settings › Providers › Inference lists keys: a set value shows
   masked (`ntn_••••••••1234`, the app's `APIKeyMask`), with an eye to
   reveal it, a copy button and **Replace**; a missing one is a password
-  field with **Save**. Saving writes `~/.quiver/secrets/mcp/.api_keys` on
+  field with **Save**. Saving writes `~/.swe/secrets/mcp/.api_keys` on
   the hub (`set_secret`, as `swe mcp secret set NAME` does), clears the
   field and repaints the sheet. Revealed values are forgotten when the
   sheet closes.
 - **Sync** is the Mac sheet's: **Copy from** (each definition's first
-  harness, plus the Quiver hub when `mcp.json` holds the server), then a
+  harness, plus the SWE hub when `mcp.json` holds the server), then a
   switch per harness that lacks the server (on by default for compared
   harnesses that use MCP) and per harness with a different definition
   ("replaces its own definition", always opt-in). **Preview** shows swe's
@@ -80,9 +80,9 @@ Its writes are a server's Sync, with its Preview, and its Remove.
   "health": true,
   "error": null,
   "folders": {
-    "root": "~/.quiver/mcp/servers", "exists": true, "error": null,
+    "root": "~/.swe/mcp/servers", "exists": true, "error": null,
     "items": [{"name": "linear-mcp", "group": "custom",
-               "path": "~/.quiver/mcp/servers/custom/linear-mcp",
+               "path": "~/.swe/mcp/servers/custom/linear-mcp",
                "git": {"branch": "main", "ahead": 0, "behind": 1,
                        "has_changes": true, "is_repo": true},
                "used_by": ["linear"]}]
@@ -175,7 +175,7 @@ How it runs:
   writing a plan nobody saw. The page's Sync button always previews first
   when the picks changed, so its confirm lists what is on disk now.
 - **`${NAME}` with no value.** From the hub, a server whose `${NAME}` has
-  no value in `~/.quiver/secrets/mcp/.api_keys` is refused with 409
+  no value in `~/.swe/secrets/mcp/.api_keys` is refused with 409
   `secrets_missing` ("Not syncing: no value for NOTION_TOKEN (used by
   notion). Set NOTION_TOKEN in this server's sheet, or on the hub with: swe
   mcp secret set NOTION_TOKEN"),
@@ -191,10 +191,10 @@ How it runs:
 
 The sheet's footer has **Remove…** (red text) on the left, as the app's
 does. It opens a confirm above the footer: "Remove demo? It goes from
-Claude Code, Quiver hub on box." with the command, `swe mcp remove demo
---from=claude,quiver`, and a red Remove. On success the sheet closes and
+Claude Code, SWE hub on box." with the command, `swe mcp remove demo
+--from=claude,swe`, and a red Remove. On success the sheet closes and
 the list repaints from the answer, with "Removed demo from Claude Code,
-Quiver hub." above it until the list is read again; a refusal stays in
+SWE hub." above it until the list is read again; a refusal stays in
 the sheet and the list is read again.
 
 `POST /v1/app/mcp/remove` with `{"server", "from": [places]}` (`quiver`
@@ -236,14 +236,14 @@ URL, reached from any machine). Only that kind's fields show.
   is saved: each harness signs in the first time it connects, if it
   supports OAuth); and **Other headers**, rows like the env vars.
 - **Where**: Add to, defaulting to the compared harnesses, with All active
-  and None; "Always saved to the Quiver hub too"; Replace if it already
+  and None; "Always saved to the SWE hub too"; Replace if it already
   exists. For a Remote server a harness that can't take it is switched off
   with the reason: Claude Desktop takes local servers only in its config,
   and opencode and Codex can't use an SSE server. The page reads this from
   `caps` (`{harness: {"remote", "sse"}}`) in the payload.
 
 A secret's value is a password field. On success the sheet closes and the
-list repaints with "Added github in Quiver hub, Codex." above it.
+list repaints with "Added github in SWE hub, Codex." above it.
 
 `POST /v1/app/mcp/add` with `{"name", "kind": "command" | "url",
 "command": [words] | "url" + "transport": "http" | "sse" + "sign_in":
@@ -251,7 +251,7 @@ list repaints with "Added github in Quiver hub, Codex." above it.
 "secret"}], "targets": [harnesses], "force"}` runs `swe mcp add`
 in process: `mcp/cli.py`'s `add_plan` (the definition and targets,
 checked) and `add_server` (the writes), the two halves the CLI shares.
-A secret var's value goes to `~/.quiver/secrets/mcp/.api_keys` through
+A secret var's value goes to `~/.swe/secrets/mcp/.api_keys` through
 `set_secret` under `SERVER_KEY` (the app's `mcpSecretName`). The hub's
 `mcp.json` keeps `${SERVER_KEY}`; the harness configs picked get the value
 itself, as `swe mcp add` and a sync write them. A value already written as
@@ -309,7 +309,7 @@ store), and bad shapes are 422. The answer is swe's `--json` report, `{"name", "
   page refuses and asks for a refresh.
 - **Show in Finder and Open in editor** are Mac only; a folder's full path
   shows on hover instead.
-- **The servers folder is always `~/.quiver/mcp/servers`.** The Mac app
+- **The servers folder is always `~/.swe/mcp/servers`.** The Mac app
   reads a Settings > Paths override from its own preferences, which the
   web app never reads.
 - **Git state arrives with the list** rather than filling in row by row.

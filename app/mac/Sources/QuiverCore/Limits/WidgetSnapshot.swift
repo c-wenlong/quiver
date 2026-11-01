@@ -358,7 +358,7 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
 
 /// The snapshot file the app writes and the widget extension reads. The
 /// extension is sandboxed with read access to this one folder, so it lives
-/// under `~/.quiver` like everything else Quiver keeps.
+/// under `~/.swe` like everything else Quiver keeps.
 public struct WidgetSnapshotStore: Sendable {
     public let file: URL
 
@@ -367,7 +367,7 @@ public struct WidgetSnapshotStore: Sendable {
     }
 
     public static func defaultFile(home: URL = realHome()) -> URL {
-        home.appending(path: ".quiver/cache/widgets/snapshot.json")
+        home.appending(path: ".swe/cache/widgets/snapshot.json")
     }
 
     public func write(_ snapshot: WidgetSnapshot) throws {

@@ -16,10 +16,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.reports import transcripts
-from quiver.reports.transcripts import _find_session_file
-from quiver.sessions import status
-from quiver.sessions.models import Session
+from swe.reports import transcripts
+from swe.reports.transcripts import _find_session_file
+from swe.sessions import status
+from swe.sessions.models import Session
 
 NOW = 1_700_000_000.0
 

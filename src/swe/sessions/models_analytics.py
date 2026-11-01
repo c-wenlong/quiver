@@ -1,0 +1,217 @@
+"""Model usage analytics mined read-only from tool session logs."""
+
+import glob
+import json
+import os
+import re
+import sqlite3
+
+from swe.sessions import opencode_store
+
+
+def classify_provider(model: str) -> str:
+    """Classify provider from model name using regex patterns."""
+    model_lower = model.lower()
+    patterns = [
+        (r"^accounts?/fireworks/", "fireworks"),
+        (r"^fireworks/", "fireworks"),
+        (r"^openai/", "openai"),
+        (r"^(gpt|o[1-9]|chatgpt)", "openai"),
+        (r"^anthropic/", "anthropic"),
+        (r"^(claude|claude-opus|claude-sonnet|claude-sonnet|haiku|<synthetic>)", "anthropic"),
+        (r"^google/", "google"),
+        (r"^(gemini|googlegemini)", "google"),
+        (r"^deepseek/", "deepseek"),
+        (r"^deepseek", "deepseek"),
+        (r"^meta/", "meta"),
+        (r"^(llama|llamameta)", "meta"),
+        (r"^mistral/", "mistral"),
+        (r"^mistral", "mistral"),
+        (r"^aws?/bedrock/", "aws"),
+        (r"^(aws|amazon)/", "aws"),
+        (r"^azure/", "azure"),
+        (r"^ollama/", "ollama"),
+        (r"^local/", "local"),
+        (r"^(qwen|qwen3|qwen2)", "alibaba"),
+        (r"^(kimi|moonshot)", "moonshot"),
+        (r"^minimax/", "minimax"),
+        (r"^minimax", "minimax"),
+        (r"^groq/", "groq"),
+        (r"^(glm|zhipu)", "zhipu"),
+        (r"^zhipu", "zhipu"),
+        (r"^gemma", "google"),
+        (r"^(big-pickle|bigpickle)", "bigscience"),
+        (r"^synthesis|synthetic", "synthetic"),
+        (r"^mimo", "xiaomi"),
+    ]
+    for pattern, provider in patterns:
+        if re.match(pattern, model_lower):
+            return provider
+    return "other"
+
+
+def _scan_jsonl_models(path: str, max_lines: int) -> dict[tuple[str, str], int]:
+    seen: dict[tuple[str, str], int] = {}
+    with open(path) as handle:
+        for _ in range(max_lines):
+            line = handle.readline()
+            if not line:
+                break
+            match = re.search(r'"model":"([^"]+)"', line)
+            if match:
+                key = ("", match.group(1))
+                seen[key] = seen.get(key, 0) + 1
+                break
+    return seen
+
+
+def _drizzle_model_counts(db_path: str) -> dict[tuple[str, str], int]:
+    """Model counts from an opencode-schema ``message`` table, plus the
+    ``session_message`` replies OpenCode 2.x writes instead.
+
+    Kilo is an opencode fork: kilo.db has the same ``message.data`` JSON
+    with ``model.providerID``/``model.modelID``.
+    """
+    seen: dict[tuple[str, str], int] = {}
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT json_extract(data, '$.model.providerID'),
+                   json_extract(data, '$.model.modelID'),
+                   COUNT(*)
+            FROM message
+            WHERE json_extract(data, '$.model.modelID') IS NOT NULL
+            GROUP BY 1, 2
+            """
+        )
+        for provider, model, cnt in cur.fetchall():
+            if model:
+                seen[(provider or "", model)] = cnt
+        # OpenCode 2.x keeps new replies only in ``session_message``, with
+        # the model as ``model.id``; rows copied from ``message`` keep their
+        # id and were counted above.
+        if opencode_store.has_v2_messages(conn):
+            cur.execute(
+                """
+                SELECT json_extract(sm.data, '$.model.providerID'),
+                       json_extract(sm.data, '$.model.id'),
+                       COUNT(*)
+                FROM session_message sm
+                WHERE sm.type = 'assistant'
+                  AND json_extract(sm.data, '$.model.id') IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM message m WHERE m.id = sm.id)
+                GROUP BY 1, 2
+                """
+            )
+            for provider, model, cnt in cur.fetchall():
+                if model:
+                    key = (provider or "", model)
+                    seen[key] = seen.get(key, 0) + cnt
+    except Exception:
+        pass
+    finally:
+        if conn is not None:
+            conn.close()
+    return seen
+
+
+def collect_model_usage() -> dict[str, dict[tuple[str, str], int]]:
+    """Return raw model counts keyed by tool name."""
+    raw: dict[str, dict[tuple[str, str], int]] = {}
+
+    db_path = os.path.expanduser("~/.local/share/opencode/opencode.db")
+    if os.path.exists(db_path):
+        seen = _drizzle_model_counts(db_path)
+        if seen:
+            raw["opencode"] = seen
+
+    kilo_db = os.path.expanduser("~/.local/share/kilo/kilo.db")
+    if os.path.exists(kilo_db):
+        seen = _drizzle_model_counts(kilo_db)
+        if seen:
+            raw["kilo"] = seen
+
+    # Cline 3.x stamps provider/model on each session's <id>.json metadata.
+    cline_dir = os.path.expanduser("~/.cline/data/sessions/")
+    if os.path.exists(cline_dir):
+        try:
+            seen = {}
+            for meta in glob.glob(os.path.join(cline_dir, "*", "*.json")):
+                try:
+                    with open(meta, encoding="utf-8") as fh:
+                        data = json.load(fh)
+                except Exception:
+                    continue
+                if not isinstance(data, dict) or "session_id" not in data:
+                    continue
+                model = data.get("model")
+                if model:
+                    key = (data.get("provider") or "", model)
+                    seen[key] = seen.get(key, 0) + 1
+            if seen:
+                raw["cline"] = seen
+        except Exception:
+            pass
+
+    claude_dir = os.path.expanduser("~/.claude/projects/")
+    if os.path.exists(claude_dir):
+        try:
+            seen: dict[tuple[str, str], int] = {}
+            # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+            with os.scandir(claude_dir) as entry_it:
+                for entry in entry_it:
+                    if not entry.is_dir() or not entry.name.startswith("-"):
+                        continue
+                    with os.scandir(entry.path) as file_it:
+                        for file_entry in file_it:
+                            if not file_entry.is_file() or not file_entry.name.endswith(".jsonl"):
+                                continue
+                            for key, cnt in _scan_jsonl_models(file_entry.path, 30).items():
+                                seen[key] = seen.get(key, 0) + cnt
+                if seen:
+                    raw["claude"] = seen
+        except Exception:
+            pass
+
+    codex_dir = os.path.expanduser("~/.codex/sessions/")
+    if os.path.exists(codex_dir):
+        try:
+            seen: dict[tuple[str, str], int] = {}
+            for jsonl in glob.glob(os.path.join(codex_dir, "*", "*", "*", "*.jsonl")):
+                for key, cnt in _scan_jsonl_models(jsonl, 20).items():
+                    seen[key] = seen.get(key, 0) + cnt
+            if seen:
+                raw["codex"] = seen
+        except Exception:
+            pass
+
+    freebuff_dir = os.path.expanduser("~/.config/manicode/projects/")
+    if os.path.exists(freebuff_dir):
+        try:
+            seen: dict[tuple[str, str], int] = {}
+            # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+            with os.scandir(freebuff_dir) as entry_it:
+                for entry in entry_it:
+                    if not entry.is_dir():
+                        continue
+                    chats_dir = os.path.join(entry.path, "chats")
+                    if not os.path.exists(chats_dir):
+                        continue
+                    # ⚡ Bolt: Using os.scandir to reduce stat syscalls
+                    with os.scandir(chats_dir) as s_entry_it:
+                        for s_entry in s_entry_it:
+                            if not s_entry.is_dir():
+                                continue
+                            log_path = os.path.join(s_entry.path, "log.jsonl")
+                            if os.path.exists(log_path):
+                                for key, cnt in _scan_jsonl_models(log_path, 50).items():
+                                    seen[key] = seen.get(key, 0) + cnt
+                if seen:
+                    raw["freebuff"] = seen
+        except Exception:
+            pass
+
+    return raw

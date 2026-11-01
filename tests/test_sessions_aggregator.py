@@ -3,8 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.aggregator import PARSER_REGISTRY, get_all_sessions
-from quiver.sessions.models import Session
+from swe.sessions.aggregator import PARSER_REGISTRY, get_all_sessions
+from swe.sessions.models import Session
 
 
 class SessionsAggregatorTest(unittest.TestCase):
@@ -37,7 +37,7 @@ class SessionsAggregatorTest(unittest.TestCase):
 
         registry = [("fake", one_parser, ("fake",))]
 
-        with patch("quiver.sessions.aggregator.PARSER_REGISTRY", registry):
+        with patch("swe.sessions.aggregator.PARSER_REGISTRY", registry):
             sessions = get_all_sessions(limit=None)
         self.assertEqual([s.timestamp for s in sessions], [300, 200, 100])
 
@@ -58,7 +58,7 @@ class SessionsAggregatorTest(unittest.TestCase):
 
             registry = [("fake", one_parser, ("fake",))]
 
-            with patch("quiver.sessions.aggregator.PARSER_REGISTRY", registry):
+            with patch("swe.sessions.aggregator.PARSER_REGISTRY", registry):
                 sessions = get_all_sessions(limit=None, cwd=str(project))
 
             paths = {s.path for s in sessions}
@@ -75,7 +75,7 @@ class SessionsAggregatorTest(unittest.TestCase):
             ("codex", lambda: [fake_codex], ("codex", "cx")),
         ]
 
-        with patch("quiver.sessions.aggregator.PARSER_REGISTRY", registry):
+        with patch("swe.sessions.aggregator.PARSER_REGISTRY", registry):
             sessions = get_all_sessions(limit=None, agent="cc")
 
         self.assertEqual(len(sessions), 1)
@@ -84,7 +84,7 @@ class SessionsAggregatorTest(unittest.TestCase):
     def test_cache_roundtrip(self):
         """Cache stores sessions to disk and loads them back."""
         import json
-        from quiver.sessions.aggregator import _save_cached_sessions, _load_cached_sessions
+        from swe.sessions.aggregator import _save_cached_sessions, _load_cached_sessions
 
         fake = [
             Session(timestamp=100, agent="a", path="/a", title="t1", session_id="s1", tool_name="claude"),
@@ -93,7 +93,7 @@ class SessionsAggregatorTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             cache_file = Path(tmp) / "session_cache.json"
-            with patch("quiver.sessions.aggregator.SESSION_CACHE_FILE", cache_file):
+            with patch("swe.sessions.aggregator.SESSION_CACHE_FILE", cache_file):
                 _save_cached_sessions(fake)
                 self.assertTrue(cache_file.exists())
 
@@ -105,7 +105,7 @@ class SessionsAggregatorTest(unittest.TestCase):
 
     def test_cache_keeps_title_source_and_tolerates_old_payloads(self):
         import json
-        from quiver.sessions.aggregator import _save_cached_sessions, _load_cached_sessions
+        from swe.sessions.aggregator import _save_cached_sessions, _load_cached_sessions
 
         fake = [
             Session(timestamp=100, agent="a", path="/a", title="t1", session_id="s1",
@@ -113,7 +113,7 @@ class SessionsAggregatorTest(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as tmp:
             cache_file = Path(tmp) / "session_cache.json"
-            with patch("quiver.sessions.aggregator.SESSION_CACHE_FILE", cache_file):
+            with patch("swe.sessions.aggregator.SESSION_CACHE_FILE", cache_file):
                 _save_cached_sessions(fake)
                 loaded = _load_cached_sessions()
                 self.assertEqual(loaded[0].title_source, "rename")
@@ -129,13 +129,13 @@ class SessionsAggregatorTest(unittest.TestCase):
         """Stale cache returns None, forcing re-parse."""
         import json
         import time as _time
-        from quiver.sessions.aggregator import _save_cached_sessions, _load_cached_sessions
+        from swe.sessions.aggregator import _save_cached_sessions, _load_cached_sessions
 
         fake = [Session(timestamp=100, agent="a", path="/a", tool_name="claude")]
 
         with tempfile.TemporaryDirectory() as tmp:
             cache_file = Path(tmp) / "session_cache.json"
-            with patch("quiver.sessions.aggregator.SESSION_CACHE_FILE", cache_file):
+            with patch("swe.sessions.aggregator.SESSION_CACHE_FILE", cache_file):
                 _save_cached_sessions(fake)
                 # Backdate the cache
                 with open(cache_file) as f:

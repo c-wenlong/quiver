@@ -2,7 +2,7 @@
 
 The Mac app's AGENTS.md page (`AgentsMdPage.swift`, `AgentsModel`,
 `InitCheck`) as a web page. Module
-`quiver/webapp/pages/agents.py`, script `static/pages/agents.js`, styles
+`swe/webapp/pages/agents.py`, script `static/pages/agents.js`, styles
 `static/pages/agents.css` (it also uses a few pieces of `skills.css` and
 `skills.js`).
 
@@ -18,7 +18,7 @@ The Mac app's AGENTS.md page (`AgentsMdPage.swift`, `AgentsModel`,
   missing. When a real file or folder is in the way, a note says so with
   "Replace and back up…", which opens a confirm listing every path
   `swe init --force` would replace (instructions, skills and hooks) before
-  it runs. Then the shared `~/.quiver/AGENTS.md` as text with "Linked into
+  it runs. Then the shared `~/.swe/AGENTS.md` as text with "Linked into
   N harnesses".
 - **Project**: a folder on the hub, typed or picked from the hub's recent
   session folders, and its AGENTS.md and CLAUDE.md as tabs. The app's tab
@@ -42,7 +42,7 @@ skills folders wait and nothing asks. They share the Doctor page's one-fix
 lock (409 `busy`) and the registry lock. The reply is the Global document
 read again plus `ran` and `error` (`null` unless something failed, or a
 forced run still left a path alone because it resolves outside the home
-or into `~/.quiver`). Any other action is a 404.
+or into `~/.swe`). Any other action is a 404.
 
 `GET /v1/app/agents?folder=<path>` returns `{folder, home, files: [{name,
 path, exists, links_to, outside, text}]}` for AGENTS.md and CLAUDE.md.

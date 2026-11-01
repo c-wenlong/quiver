@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.console import c, elide, truncate
+from swe.console import c, elide, truncate
 
 
 class UnknownColourTest(unittest.TestCase):
@@ -65,13 +65,13 @@ class ElideWidthTest(unittest.TestCase):
     def test_it_lives_in_console_not_behind_a_private_name(self):
         """Two packages render paths this way; neither should reach into
         the other for a private helper."""
-        import quiver.find.commands as find_cmds
-        import quiver.skills.commands as skills_cmds
+        import swe.find.commands as find_cmds
+        import swe.skills.commands as skills_cmds
 
         self.assertNotIn("_elide", find_cmds.__dict__)
         for mod in (find_cmds, skills_cmds):
             src = Path(mod.__file__).read_text()
-            self.assertNotIn("from quiver.find.commands import _elide", src)
+            self.assertNotIn("from swe.find.commands import _elide", src)
 
 
 class SkillNameMatchTest(unittest.TestCase):
@@ -85,7 +85,7 @@ class SkillNameMatchTest(unittest.TestCase):
     ]
 
     def _match(self, query):
-        from quiver.skills import link_ops
+        from swe.skills import link_ops
 
         with mock.patch.object(link_ops, "discover_skills", return_value=self.SKILLS):
             return [
@@ -111,7 +111,7 @@ class SkillNameMatchTest(unittest.TestCase):
         self.assertEqual(self._match("nothing-like-this"), [])
 
     def test_an_exact_name_resolves_to_one_directory(self):
-        from quiver.skills import link_ops
+        from swe.skills import link_ops
 
         with mock.patch.object(link_ops, "discover_skills", return_value=self.SKILLS):
             found = link_ops.find_skill_directory(

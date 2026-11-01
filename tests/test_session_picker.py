@@ -10,8 +10,8 @@ import io
 import unittest
 from unittest.mock import Mock, patch
 
-from quiver.console import COLORS, c, strip_ansi, visible_len
-from quiver.sessions import picker
+from swe.console import COLORS, c, strip_ansi, visible_len
+from swe.sessions import picker
 
 
 ROWS = [f"session-{i}  claude  2h ago" for i in range(4)]

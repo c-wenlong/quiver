@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.reports.models import ExclusionRecord, Report, ReportManifest, SessionSummary
-from quiver.reports.store import MalformedReportStateError, ReportStore
+from swe.reports.models import ExclusionRecord, Report, ReportManifest, SessionSummary
+from swe.reports.store import MalformedReportStateError, ReportStore
 
 
 NOW = "2026-07-30T08:00:00+00:00"
@@ -155,7 +155,7 @@ class ReportStoreTest(unittest.TestCase):
     def test_atomic_replace_failure_preserves_existing_cache(self):
         path = self.store.save_session_summary(self.summary())
         before = path.read_bytes()
-        with patch("quiver.reports.store.os.replace", side_effect=OSError("disk full")):
+        with patch("swe.reports.store.os.replace", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
                 self.store.save_session_summary(self.summary("new"))
         self.assertEqual(path.read_bytes(), before)
@@ -163,7 +163,7 @@ class ReportStoreTest(unittest.TestCase):
 
     def test_manifest_failure_removes_unpaired_markdown(self):
         manifest = self.manifest()
-        with patch("quiver.reports.store._atomic_write_json", side_effect=OSError("disk full")):
+        with patch("swe.reports.store._atomic_write_json", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
                 self.store.write_report("# Daily\n", manifest)
         self.assertEqual(list((self.root / "daily").glob("*.md")), [])

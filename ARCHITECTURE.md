@@ -1,13 +1,13 @@
 # Architecture
 
-Quiver (`swe`) is a manager for AI coding CLIs. It unifies the things those
+SWE (`swe`) is a manager for AI coding CLIs. It unifies the things those
 CLIs each invented separately: instruction files, skills, plugins, MCP servers,
 session history and rate limits.
 
 The CLI is stdlib-only, with no runtime dependencies at all.
 
 Three clients sit on top of it: the macOS app in `app/mac/`, the iPhone
-app in `app/ios/`, and the web app in `src/quiver/webapp/`, which ships in
+app in `app/ios/`, and the web app in `src/swe/webapp/`, which ships in
 the Python package so the hub can serve it.
 
 This file is the overview; each topic below has a deeper document in `docs/`:
@@ -45,11 +45,11 @@ package; their allowed ordering and what each owns is in
 
 ## The layout
 
-`~/.quiver` is split by lifecycle, so the versioned half and the disposable
+`~/.swe` is split by lifecycle, so the versioned half and the disposable
 half never mix:
 
 ```
-~/.quiver/
+~/.swe/
   AGENTS.md          canonical instructions, symlinked into every harness
   AGENTS_MD/         optional authored chapters and their ordered index.txt
   .linkignore        paths `swe init` must leave alone
@@ -75,11 +75,11 @@ there.
 ## Data plane vs control plane
 
 Two repos, two lifecycles. This repo is the control plane: code, in git,
-public. `~/.quiver` is the data plane: state, in its own private git repo,
+public. `~/.swe` is the data plane: state, in its own private git repo,
 versioned separately from the CLI that reads it. Cloning this repo and
 building it gets you a `swe` with no harnesses, no stars, nothing archived —
 that state lives on the machine, or in whichever private repo the operator
-points `~/.quiver` at.
+points `~/.swe` at.
 
 The boundary is a rule, not just a directory split: code in this repo never
 hardcodes what `harness.json` can say. `skills/layout.py` and
@@ -93,7 +93,7 @@ does it support plugins, where do its skills live — is a question for
 `.gitignore` enforces the boundary mechanically: `harness.json`, `mcp.json`,
 `tools.json`, `providers.json`, `stars.json`, and the caches are all listed,
 so a machine's actual state can never land in this repo by accident.
-`~/.quiver` carries its own `.gitignore` — written by `swe init` from
+`~/.swe` carries its own `.gitignore` — written by `swe init` from
 `paths.GITIGNORE_BODY`, and listing `cache/`, `backups/`, `data/ledger/` (the
 app's usage ledger: personal and ~30 MB), `data/devin-cloud/` (your Devin
 session titles and links), `data/search/` (the app's FTS index of session
@@ -102,7 +102,7 @@ values) and `mcp/servers/` —
 plus its own git history, independent of this one. `swe init` writes that
 file only when there is none, so it never rewrites one the operator has
 edited; a root created before `secrets/` joined the list has to add the line
-by hand before versioning `~/.quiver`.
+by hand before versioning `~/.swe`.
 
 Both credential stores are shell-style `export NAME=value` files, each in
 its own folder under `secrets/`. Provider keys used to sit at `~/.api_keys`
@@ -121,21 +121,21 @@ to the old path.
 ## The core idea: one file, many names
 
 Every harness wants its own instruction filename (`CLAUDE.md`, `AGENTS.md`,
-`CRUSH.md`) in its own directory. Quiver writes one file and symlinks it under
+`CRUSH.md`) in its own directory. SWE writes one file and symlinks it under
 each name, so editing one changes all of them.
 
 With chapter mode, `swe instructions build` generates that complete shared
-file from `~/.quiver/AGENTS_MD/index.txt`. `check` detects stale output and
+file from `~/.swe/AGENTS_MD/index.txt`. `check` detects stale output and
 `watch` keeps rebuilding after edits. Edit chapters in this mode: direct
 changes to the generated file are overwritten. See
 [docs/instructions.md](docs/instructions.md).
 
-The same trick covers skills: one tree at `~/.quiver/skills`, symlinked into
+The same trick covers skills: one tree at `~/.swe/skills`, symlinked into
 every harness's `skills/` directory.
 
 Hooks do not fit that shape, so they get their own. A Claude Code Stop hook
 and a Codex hook speak different contracts and most harnesses have none, so
-nothing is shared: `~/.quiver/hooks/<harness>/` holds one harness's scripts,
+nothing is shared: `~/.swe/hooks/<harness>/` holds one harness's scripts,
 named by its `harness.json` key, and a harness only takes part once that
 directory exists. Each script is linked on its own into the harness's hooks
 directory rather than linking the directory, because installers keep their
@@ -160,12 +160,12 @@ Link state is a small vocabulary shared by `swe init`, `swe list` and
 | `keep` | a real directory holding files that exist nowhere else |
 | `conflict` | a real file where the link should go |
 | `skipped` | harness not installed (`swe init` lists it only when `harness.json` has the harness), or a new skills folder nobody has reviewed yet |
-| `ignored` | listed in `~/.quiver/.linkignore`, archived in `harness.json`, or owned by a known non-harness app (`NOT_HARNESSES` in `init/layout.py`); never touched or counted |
+| `ignored` | listed in `~/.swe/.linkignore`, archived in `harness.json`, or owned by a known non-harness app (`NOT_HARNESSES` in `init/layout.py`); never touched or counted |
 
 `keep` is the safety valve. It is never overwritten on a plain run, because
 absorbing it would hide the only copy of something behind the shared tree.
 
-`ignored` is the opt-out. `~/.quiver/.linkignore` holds home-relative
+`ignored` is the opt-out. `~/.swe/.linkignore` holds home-relative
 patterns (`fnmatch`, `*` crosses `/`, naming a directory covers its
 contents), and `init/layout.plan` stamps every matching target with that
 state before classifying it. `swe init` and `swe list` show it; `swe find`
@@ -175,7 +175,7 @@ plan.
 ## Registry: harness.json
 
 One file says everything the CLI knows about a harness:
-`~/.quiver/config/harness.json`, keyed by name. `registry.py` is the only
+`~/.swe/config/harness.json`, keyed by name. `registry.py` is the only
 module that touches it — `load_registry()`, `save_registry()`,
 `state_of()`, `is_active()`, `starred_names()`, `archived_names()`,
 `active_names()`, and the read-only `load_registry_if_present()` that
@@ -215,7 +215,7 @@ A fresh machine, or one upgrading from before this consolidation, gets a
 lazy migration the first time `load_registry()` runs: `tools.json` plus
 whichever of `stars.json` / `archived.json` exist get merged into
 `harness.json`, and the legacy files are moved — never deleted — into
-`~/.quiver/.backup/registry-migration-<date>/`. Once `harness.json` exists
+`~/.swe/.backup/registry-migration-<date>/`. Once `harness.json` exists
 on disk, it is authoritative; the migration never runs again, even if the
 legacy files are still sitting there.
 
@@ -289,8 +289,8 @@ directories behind them.
 ## Find: the harness activity filter
 
 `swe find plugins` also reports plugin drift. Claude Code and Codex both
-register a `~/.quiver/plugins` marketplace in place. Codex runs an installed
-cached copy, so an edit under `~/.quiver` reaches it only after a reinstall.
+register a `~/.swe/plugins` marketplace in place. Codex runs an installed
+cached copy, so an edit under `~/.swe` reaches it only after a reinstall.
 Claude Code reads a directory-marketplace plugin from its folder, so its
 cache is never compared. `swe skills --json` follows the same rule: such a
 Claude plugin's skills are listed from the source path its marketplace
@@ -306,7 +306,7 @@ is its own finding, `linked-manifest`: Codex skips it and installs a
 manifest it generates, with no version, so no reinstall can help until the
 link in the source is replaced by a real folder. It never writes: registration
 lives in `~/.claude/settings.json` (often Nix-managed) and
-`~/.codex/config.toml` (rewritten by Codex), which quiver must not edit.
+`~/.codex/config.toml` (rewritten by Codex), which swe must not edit.
 `swe find plugins --fix=<id>` (the app's one-click fix) is the only path
 that acts, and it does so through the harness's own CLI (or, for
 `linked-manifest`, a `cp -R` of the link's target inside the marketplace
@@ -335,7 +335,7 @@ A hidden row is never silent. Every view that filters ends with a footer —
 `N archived harnesses hidden; --harness=all to show` — so `--harness=active`
 narrows what you see without ever costing you the knowledge that something
 was narrowed. A row that cannot be resolved to a harness in `harness.json`
-at all — the shared quiver copy, an unregistered config — is never
+at all — the shared swe copy, an unregistered config — is never
 filtered either way: unknown is exactly the thing `swe find` exists to
 keep visible, regardless of `--harness`.
 
@@ -367,8 +367,8 @@ TTLs and the app's ledger schema lives in
 
 ## MCP
 
-`~/.quiver/mcp.json` is the hub. Credentials are stored as `${NAME}`
-references; values live in `~/.quiver/secrets/mcp/.api_keys` (mode 600,
+`~/.swe/mcp.json` is the hub. Credentials are stored as `${NAME}`
+references; values live in `~/.swe/secrets/mcp/.api_keys` (mode 600,
 gitignored). Resolution happens when a harness config is written, not by
 exporting to the environment, because Claude and Cursor launch from the Dock
 and never read a shell profile.
@@ -396,7 +396,7 @@ per Claude Code session. A hub entry marked `"shared": true` (`swe mcp
 gateway share`) runs once instead, in `swe mcp gateway serve`, a
 LaunchAgent (`com.cwenlong.quiver.mcp-gateway`) that serves it as MCP
 streamable HTTP at `http://127.0.0.1:8478/mcp/<name>`. While mcp.json's
-`gateway.enabled` is set (by `install`), `swe mcp sync quiver ...` writes
+`gateway.enabled` is set (by `install`), `swe mcp sync swe ...` writes
 that URL for a shared server instead of its command; Claude Desktop takes
 no URL server, so it keeps the command.
 
@@ -415,7 +415,7 @@ URL never flows back into the hub.
 
 `swe doctor` used to check one thing: Node/PATH mismatches hiding a
 globally installed harness. `harness/drift.py` adds a second, unrelated
-kind of check — places where two parts of quiver that are supposed to
+kind of check — places where two parts of swe that are supposed to
 agree have quietly drifted apart. Four checks, all read-only and cheap
 enough to run on every invocation:
 
@@ -424,7 +424,7 @@ enough to run on every invocation:
 | help vs dispatch | `help_text.py`'s HELP topics against `cli.py`'s COMMANDS |
 | registry schema | every `harness.json` entry's shape (state, pin, archived, capabilities) |
 | code-table vs data | `HARNESS_ROOTS` / `PLUGIN_FALLBACK` against the registry's capabilities |
-| dangling symlinks | top-level symlinks in the repo root and `~/.quiver` pointing nowhere |
+| dangling symlinks | top-level symlinks in the repo root and `~/.swe` pointing nowhere |
 
 Every check exists as a pure `check_*` function (plain data in, findings
 out, no I/O) for unit testing, and `run_drift_checks()` wires the real
@@ -433,10 +433,13 @@ data in for `cmd_doctor`.
 Fixing is separate from finding. `harness/doctor_fix.py` holds one runner
 per finding `action` and the order a batch runs them in; `swe doctor
 --fix` and the web Doctor page's Run both call it. Batch actions only add or relink (`setup`,
-`discover`, `init`) and run in that order, re-reading the report after
-each step, since a missing hub hides every link check. Click actions
-(`install`, and the drops that delete entries a synced settings file may
-still want elsewhere) run only for one named finding. Plain `swe doctor`
+`discover`, `init`, `plugin-fix`) and run in that order, re-reading the
+report after each step, since a missing hub hides every link check; the
+order repeats (at most three passes) while a step reveals more. Click actions
+(`install`, `plugin-reinstall`, and the drops that delete entries or
+links a synced file may still want elsewhere: `undeclare`,
+`marketplace-drop`, `dangling-link`; `mcp-sync`, which overwrites a
+broken MCP entry with the hub's) run only for one named finding. Plain `swe doctor`
 never writes.
 
 The principle behind all four, made explicit once capabilities-first
@@ -455,7 +458,7 @@ The macOS app under `app/mac/` reads `swe` through `--json`, never by parsing
 tables. The app's own structure is [docs/app-architecture.md](docs/app-architecture.md),
 and each command below maps to its Swift decoder in
 [docs/json-contracts.md](docs/json-contracts.md). Every `--json` command prints exactly one document on stdout,
-`{"schema": 1, "data": ...}` (`quiver/json_output.py`), and nothing else:
+`{"schema": 1, "data": ...}` (`swe/json_output.py`), and nothing else:
 refusals and errors go to stderr with stdout left empty. `schema` changes
 only for a breaking change to an existing shape; adding a field is not one,
 and the app refuses a schema it does not know rather than misreading it.
@@ -472,7 +475,7 @@ instead of presenting an old reading as current.
 No `--json` output carries a secret value. MCP env and header values are
 reduced to their names, `${NAME}` references are never resolved, and
 credential-shaped parts of URLs and arguments are masked
-(`quiver/mcp/secrets.py`, `scrub_url` and `scrub_args`).
+(`swe/mcp/secrets.py`, `scrub_url` and `scrub_args`).
 
 ## Command tree
 

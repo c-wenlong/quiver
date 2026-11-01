@@ -24,7 +24,7 @@
        "url": "https://github.com/c-wenlong/quiver/issues/816#issuecomment-2"}
     ],
     "branch": "quiver/issue-816",
-    "worktree": "/Users/k/.quiver/worktrees/c-wenlong__quiver-issue816",
+    "worktree": "/Users/k/.swe/worktrees/c-wenlong__quiver-issue816",
     "suggested_prompt": "Resolve c-wenlong/quiver#816: Remote app — launch an agent to resolve a GitHub issue from the issues page.\n\nWork on branch quiver/issue-816, run the tests, push, and open a PR that says Closes #816."
   }
 }}

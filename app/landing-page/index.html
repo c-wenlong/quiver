@@ -8,7 +8,10 @@
 <meta property="og:title" content="quiver">
 <meta property="og:description" content="Home base for every coding agent you run.">
 <meta property="og:image" content="media/sessions.jpg">
-<link rel="icon" href="icon.png">
+<link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -115,7 +118,7 @@ h2 { font-size: 44px; line-height: 1.08; letter-spacing: -0.025em; font-weight: 
 .cmd .p { color: var(--text-3); user-select: none; }
 .copy { flex: none; background: transparent; color: var(--text-2); border: 1px solid var(--line-strong); border-radius: 6px; font: 12px var(--sans); padding: 4px 10px; cursor: pointer; }
 .copy:hover { color: var(--text); }
-.mascot { width: 100%; height: auto; display: block; border-radius: 16px; border: 1px solid var(--line-strong); image-rendering: pixelated; }
+.logo { width: 100%; height: auto; display: block; }
 figure { margin: 0; }
 figcaption { font-size: 13px; color: var(--text-3); margin-top: 10px; text-align: center; }
 
@@ -187,7 +190,7 @@ dialog .close { margin-left: auto; }
 <header class="top">
   <div class="wrap">
     <nav>
-      <a class="brand" href="./"><img src="icon.png" alt="">quiver</a>
+      <a class="brand" href="./"><img src="logo-rounded.svg" alt="">quiver</a>
       <div class="links">
         <a href="overview/">Docs</a>
         <a href="cli/">CLI reference</a>
@@ -344,7 +347,7 @@ dialog .close { margin-left: auto; }
       </div>
     </div>
     <figure>
-      <img class="mascot" src="mascot.jpg" width="421" height="480" loading="lazy" alt="The quiver mascot: a pixel-art leather quiver with a terminal prompt on its front, holding five coloured arrows">
+      <img class="logo" src="logo-rounded.svg" width="280" height="280" loading="lazy" alt="The quiver logo: three coloured arrowheads above swe">
       <figcaption>One quiver, every arrow.</figcaption>
     </figure>
   </div>

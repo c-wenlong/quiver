@@ -24,8 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.commands import _codex_resume_args
-from quiver.sessions.parsers import _codex_is_rename, codex_thread_id, parse_codex
+from swe.sessions.commands import _codex_resume_args
+from swe.sessions.parsers import _codex_is_rename, codex_thread_id, parse_codex
 
 THREAD_ID = "01a084f0-b4fe-72d0-9b7b-1a5214957f73"
 ROLLOUT = f"rollout-2026-09-09T14-52-42-{THREAD_ID}.jsonl"
@@ -112,13 +112,13 @@ class ParseCodexTitleTest(unittest.TestCase):
                 # patched name: the mock would recurse into itself.
                 if path.startswith("~/.codex"):
                     return str(codex_home) + path[len("~/.codex"):]
-                # Account-home scans must not read the real ~/.quiver.
-                if path.startswith("~/.quiver"):
-                    return str(Path(tmp) / ".quiver") + path[len("~/.quiver"):]
+                # Account-home scans must not read the real ~/.swe.
+                if path.startswith("~/.swe"):
+                    return str(Path(tmp) / ".swe") + path[len("~/.swe"):]
                 return REAL_EXPANDUSER(path)
 
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
+                "swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
             ):
                 sessions = parse_codex()
         self.assertEqual(expect, len(sessions))
@@ -279,7 +279,7 @@ class CodexResumeArgsTest(unittest.TestCase):
     """`codex resume <uuid>`, not `codex --resume <rollout stem>`.
 
     Codex resumes through a subcommand whose argument is a thread uuid or a
-    thread name. Quiver's session id is the rollout file's stem, because that
+    thread name. SWE's session id is the rollout file's stem, because that
     is what the transcript readers look a session up by, so the uuid has to be
     lifted back out of it.
     """
@@ -357,13 +357,13 @@ class CodexResumedThreadsTest(unittest.TestCase):
             def fake_expanduser(path):
                 if path.startswith("~/.codex"):
                     return str(codex_home) + path[len("~/.codex"):]
-                # Account-home scans must not read the real ~/.quiver.
-                if path.startswith("~/.quiver"):
-                    return str(Path(tmp) / ".quiver") + path[len("~/.quiver"):]
+                # Account-home scans must not read the real ~/.swe.
+                if path.startswith("~/.swe"):
+                    return str(Path(tmp) / ".swe") + path[len("~/.swe"):]
                 return REAL_EXPANDUSER(path)
 
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
+                "swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
             ):
                 return parse_codex()
 

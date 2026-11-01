@@ -7,15 +7,15 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from quiver.reports.models import FollowUp
-from quiver.reports.work import (
+from swe.reports.models import FollowUp
+from swe.reports.work import (
     FollowUpWorkError,
     build_follow_up_prompt,
     choose_work_action,
     launch_follow_up_work,
     prepare_follow_up_work,
 )
-from quiver.sessions.models import Session
+from swe.sessions.models import Session
 
 
 REGISTRY = {
