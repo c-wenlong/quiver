@@ -312,6 +312,7 @@ final class ShareModelTests: XCTestCase {
         XCTAssertEqual(sent.text, "look\n\nhttps://example.com")
         XCTAssertEqual(sent.mode, "queue")
         XCTAssertEqual(sent.refs, ["ref-shot.jpg", "ref-spec.pdf", "ref-image.jpg"])
+        XCTAssertEqual(m.sentNote, "The hub is passing it to the agent.")
     }
 
     func testAnUnansweredSendKeepsTheSheetAndRetryReusesFilesAndItsId() async {
@@ -333,6 +334,7 @@ final class ShareModelTests: XCTestCase {
         XCTAssertEqual(hub.calls.filter { $0.hasPrefix("file") }.count, 1)
         XCTAssertEqual(hub.clientIds.count, 2)
         XCTAssertEqual(Set(hub.clientIds).count, 1)
+        XCTAssertEqual(m.sentNote, "The hub holds it until the agent finishes its turn.")
     }
 
     func testARefusedSendOrAChangedMessageGetsANewId() async {

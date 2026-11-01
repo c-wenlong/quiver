@@ -52,7 +52,7 @@ struct ShareSheet: View {
                 }
             }
         case .sent:
-            ContentUnavailableView("Sent", systemImage: "checkmark.circle")
+            ContentUnavailableView("Sent to the hub", systemImage: "checkmark.circle", description: Text(model.sentNote))
         case .ready, .sending:
             form
         }

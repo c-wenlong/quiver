@@ -57,6 +57,8 @@ final class ShareModel {
     /// What couldn't be taken from the share, and the last send failure.
     private(set) var notices: [String] = []
     private(set) var sendError: String?
+    /// The hub holds the sent message until the agent's turn ends.
+    private(set) var heldForIdle = false
 
     @ObservationIgnored private let store: HubStore
     @ObservationIgnored private let client: (PairedHub) -> ShareHub
@@ -77,6 +79,11 @@ final class ShareModel {
     }
 
     static let notPairedNote = "Pair this phone with a hub in Quiver Remote first."
+    /// Under "Sent": the hub took the message and delivers it itself, so
+    /// a delivery that fails later is reported in the session, not here.
+    var sentNote: String {
+        heldForIdle ? "The hub holds it until the agent finishes its turn." : "The hub is passing it to the agent."
+    }
     static let noSessionsNote = "No attached sessions on this hub. Attach one in Quiver Remote, then share again."
     /// A message whose POST got no answer may have reached the hub.
     static let unconfirmedNote = "Can't reach the hub, so the message may not have gone. Check the session before sending again."
@@ -168,10 +175,12 @@ final class ShareModel {
         let clientId = attempt?.clientId ?? UUID().uuidString
         attempt = (target, text, refs, clientId)
         do {
-            _ = try await api.sendMessage(row.key, text: text, mode: ShareTargets.mode(for: row),
-                                          clientId: clientId, attachments: refs)
+            let accepted = try await api.sendMessage(row.key, text: text, mode: ShareTargets.mode(for: row),
+                                                     clientId: clientId, attachments: refs)
+            heldForIdle = accepted.waiting == true
         } catch let error as HubError where error.code == "duplicate_client_id" {
             // The first try reached the hub, which still holds it.
+            heldForIdle = true
         } catch let error as HubError where error.code == "network" {
             return failed(error, note: Self.unconfirmedNote)
         } catch {
