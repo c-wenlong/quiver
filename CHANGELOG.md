@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Homebrew tap.** `brew install --cask c-wenlong/quiver/quiver`
+  installs the Mac app and `brew install c-wenlong/quiver/swe` the CLI,
+  from [c-wenlong/homebrew-quiver](https://github.com/c-wenlong/homebrew-quiver).
+  The release workflow's new `bump-homebrew-tap` job points both at each
+  release's DMG and wheel with fresh SHA-256s (`scripts/bump_tap.py`),
+  once the signed DMG is on the latest published release. It needs a
+  `HOMEBREW_TAP_TOKEN` secret and skips with a notice without one.
+  ([#1445](https://github.com/c-wenlong/quiver/issues/1445))
 - **Hub: live reply text (`message.delta`) for API channels.** Codex
   app-server, opencode serve and headless Claude sessions now send
   `message.delta` events while a reply is written: `{id, kind, text,

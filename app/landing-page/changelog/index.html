@@ -110,6 +110,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Homebrew tap.</strong> <code>brew install --cask c-wenlong/quiver/quiver</code>
+installs the Mac app and <code>brew install c-wenlong/quiver/swe</code> the CLI,
+from <a href="https://github.com/c-wenlong/homebrew-quiver">c-wenlong/homebrew-quiver</a>.
+The release workflow's new <code>bump-homebrew-tap</code> job points both at each
+release's DMG and wheel with fresh SHA-256s (<code>scripts/bump_tap.py</code>),
+once the signed DMG is on the latest published release. It needs a
+<code>HOMEBREW_TAP_TOKEN</code> secret and skips with a notice without one.
+(<a href="https://github.com/c-wenlong/quiver/issues/1445">#1445</a>)</p>
+</li>
 <li><p><strong>Hub: live reply text (<code>message.delta</code>) for API channels.</strong> Codex
 app-server, opencode serve and headless Claude sessions now send
 <code>message.delta</code> events while a reply is written: <code>{id, kind, text, seq, done}</code>, at most one per message every 100 ms, with the text
