@@ -94,11 +94,12 @@ def _resolve_data_dir(base: Path) -> Path:
         return new
     if old.is_symlink():
         # ~/.quiver is itself a link: mirror it as ~/.swe rather than
-        # move the target out from under whatever put it there.
+        # move the target out from under whatever put it there. When the
+        # mirror fails the old path keeps serving, so it is the answer.
         try:
             new.symlink_to(os.readlink(old))
         except OSError:
-            pass
+            return old
         return new
     if not old.is_dir():
         return new
@@ -110,11 +111,21 @@ def _resolve_data_dir(base: Path) -> Path:
     try:
         old.symlink_to(SWE_DIRNAME)
     except OSError:
-        pass
+        # The move happened but the compat link did not: harness symlinks
+        # pointing at ~/.quiver would dangle. Move the root back.
+        try:
+            new.rename(old)
+            return old
+        except OSError:
+            pass
     try:
         changed = _rewrite_migrated_root(new, base)
     except Exception:
         changed = 0  # the move already happened; a bad rewrite never rolls it back
+    try:
+        _rewrite_migrated_sqlite(new, base)
+    except Exception:
+        pass  # a locked or surprising store keeps its old spellings; they still resolve
     note = f"swe: moved {old} to {new}; {old} is now a symlink"
     sys.stderr.write(note + (f", rewrote {changed} file(s)\n" if changed else "\n"))
     return new
@@ -126,10 +137,14 @@ def _resolve_data_dir(base: Path) -> Path:
 # ``secrets/`` is never touched, and anything the rules miss still resolves
 # through the ``~/.quiver`` compatibility symlink.
 _REWRITE_EXTS = {".json", ".md", ".txt", ".toml", ".yml", ".yaml", ".sh", ".py", ""}
-_REWRITE_SKIP_DIRS = {"cache", "backups", "data", "secrets", ".backup"}
+# secrets/ must never be read, and backups are snapshots of what was.
+# Everything else — including data/ stores like the ledger progress map —
+# carries path strings that must be re-spelled or they go stale.
+_REWRITE_SKIP_DIRS = {"backups", "secrets", ".backup"}
 _REWRITE_SKIP_NAMES = {".gitignore", ".linkignore", ".gitmodules", ".DS_Store"}
+
 _MODULE_TOKEN = re.compile(
-    r"\bquiver\.(?=(?:bug|cli|completion_scripts|completion|config_commands|"
+    r"(?<![\w.])quiver\.(?=(?:bug|cli|completion_scripts|completion|config_commands|"
     r"configuration|console|find|flags|github|harness|help_text|history|hooks|"
     r"init|instructions|json_output|keys|ledger|markdown|mcp|mcp_formats|"
     r"mcp_server|multiselect|paths|plugins|prompt|providers|remote|reports|"
@@ -152,6 +167,10 @@ def _rewrite_migrated_root(root: Path, base: Path) -> int:
                     continue
             elif name in _REWRITE_SKIP_NAMES or path.suffix.lower() not in _REWRITE_EXTS:
                 continue
+            if path.is_symlink():
+                # A link inside the moved tree can point anywhere; writing
+                # through it would edit a file the move does not own.
+                continue
             try:
                 if path.stat().st_size > 2_000_000:
                     continue
@@ -161,11 +180,63 @@ def _rewrite_migrated_root(root: Path, base: Path) -> int:
             out = _MODULE_TOKEN.sub("swe.", _LEGACY_TOKEN.sub(".swe", text.replace(old_abs, new_abs)))
             if out != text:
                 try:
-                    path.write_text(out, encoding="utf-8")
+                    atomic_write_text(path, out)
                     changed += 1
                 except OSError:
                     pass
     return changed
+
+
+def _rewrite_migrated_sqlite(root: Path, base: Path) -> None:
+    """Re-spell ``<home>/.quiver`` inside the sqlite stores under ``root``.
+
+    Ledger events, file-tracking rows and the search index key rows by
+    path strings: left spelled the old way they stop joining with the
+    live tree (duplicate ledger accounts, orphaned file offsets). Every
+    TEXT column gets the REPLACE, guarded by a ``LIKE old%`` so values
+    that merely mention the old root without starting at it — and every
+    non-path column — are untouched. ``OR IGNORE`` because a path that
+    is also a key can already exist spelled the new way (the app wrote
+    it between the move and this pass), and one collision must not roll
+    back the rest of the file. A locked store is skipped rather than
+    forced.
+    """
+    import sqlite3
+
+    old_abs, new_abs = str(base / LEGACY_DIRNAME), str(root)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames
+                       if d not in _REWRITE_SKIP_DIRS and d != ".git"]
+        for name in filenames:
+            if not name.endswith((".sqlite", ".sqlite3", ".db")):
+                continue
+            path = Path(dirpath) / name
+            try:
+                # The app may hold the store open during the move; a short
+                # busy timeout rides out a checkpoint rather than skipping.
+                db = sqlite3.connect(path, timeout=5)
+            except sqlite3.Error:
+                continue
+            try:
+                tables = [r[0] for r in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'")]
+                for table in tables:
+                    if table.startswith("sqlite_"):
+                        continue
+                    for col, ctype in ((r[1], r[2]) for r in db.execute(
+                            f'PRAGMA table_info("{table}")')):
+                        if "TEXT" not in ctype.upper() and "CHAR" not in ctype.upper():
+                            continue
+                        db.execute(
+                            f'UPDATE OR IGNORE "{table}" SET "{col}" = '
+                            f'REPLACE("{col}", ?, ?) '
+                            f'WHERE "{col}" LIKE ?',
+                            (old_abs, new_abs, f"{old_abs}%"))
+                db.commit()
+            except sqlite3.Error:
+                pass
+            finally:
+                db.close()
 
 
 def agents_file_for(home: Path | None = None) -> Path:
@@ -253,9 +324,7 @@ def account_homes_for(vendor: str, home: Path | None = None) -> list[Path]:
     # expanduser rather than Path.home(): tests fake harness homes by
     # patching os.path.expanduser's handling of the ``~/<dir>`` prefix,
     # which a bare ``~`` lookup would slip past and read the real dirs.
-    data_dir = swe_dir_for(home) if home is not None else Path(
-        os.path.expanduser("~/.swe")
-    )
+    data_dir = swe_dir_for(home or Path(os.path.expanduser("~")))
     root = data_dir / "accounts" / vendor
     try:
         return sorted(p for p in root.glob("*/home") if p.is_dir())
