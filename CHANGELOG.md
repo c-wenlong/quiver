@@ -1527,6 +1527,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Remote: ntfy approval buttons can no longer switch off later
+  approvals.** A notification's action token accepted any menu row
+  number, so anyone who could read the ntfy topic and reach the hub
+  could answer with Devin's "switch to bypass mode" (row 5) although the
+  push showed only the first rows. Each token now carries the exact
+  choices its notification shows as buttons and spends nothing else.
+  Rows that grant past this one prompt (always allow, don't ask again,
+  session-wide allow, bypass or yolo modes, across Claude Code, Codex,
+  Devin and Gemini menus) never get a button and never ride a token;
+  the push links to the chat for them, and a paired device still
+  answers them. Prompts without a menu show Allow and Deny (no Always).
+  Any other decision on a live token burns it and gets a 403
+  (`decision_not_allowed`) plus a hub log line
+  ([#1464](https://github.com/c-wenlong/swe/issues/1464)).
+
 - **Remote: revoking a lost phone works when it shares the owner's
   tailnet login.** The owner's own tailnet devices get in without
   pairing, and Revoke refused their `tailnet:<node>` ids, so a lost

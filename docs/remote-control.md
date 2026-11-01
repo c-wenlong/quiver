@@ -1606,7 +1606,9 @@ action buttons answer straight from the lock screen: a POST to
 event lists the pane's menu rows the buttons carry those labels — up
 to ntfy's three-action cap, with a longer menu's last slot linking to
 the session chat where every option answers — and prompts with no
-option list fall back to Allow/Deny/Always); a
+option list fall back to Allow/Deny; rows that grant past the one
+prompt, such as always allow, don't ask again or bypass, never get a
+button); a
 usage/limits dashboard (`swe list` data); transcript FTS across machines
 (the search index normalizes already); diff viewer + commit/push via
 `swe gh`; `$ swe report` cards; voice dictation; offline prompt queue.
@@ -1684,7 +1686,10 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   readable by the ntfy host (and ntfy.sh's relay for iOS delivery), so
   no full-power credential and no raw pane text goes in one. Approval
   action buttons POST with a token minted per notification — bound to
-  (session, request_id), single-use, ten minutes, the resolved
+  (session, request_id) and to the decisions its buttons send, never a
+  standing grant (always allow, don't ask again, session-wide, bypass
+  or yolo rows need a paired device; anything else is a 403),
+  single-use, ten minutes, the resolved
   request's token dropped while overlapping requests keep theirs —
   which only the approval route accepts (`notify.ApprovalTokens`);
   prompts run the transcript secret-redactor and a length cap first.

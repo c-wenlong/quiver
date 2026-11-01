@@ -612,6 +612,55 @@ def menu_key_for(pane: str, decision: str) -> str | None:
     return None
 
 
+# Words that mark a menu row as a grant reaching past this one prompt:
+# claude's "don't ask again" / "allow all edits during this session",
+# codex's "don't ask again for this command", devin's "always allow"
+# and "switch to bypass mode", gemini's "allow for this session" /
+# "allow always", and the yolo / auto-accept / trust modes.
+_STANDING_WORDS = re.compile(
+    r"bypass|yolo|always|forever|permanent|dangerous|"
+    r"\b(?:don['’]?t|do\s+not|never|stop|without)\s+ask|ask\s+again|"
+    r"\bsession\b|\ball\b|\bauto|\btrust|\bremember|\bskip|"
+    r"\bfrom\s+now\b|\bfuture\b|\bevery|\baccept\s+edits|"
+    r"\bfull\s+access\b",
+    re.IGNORECASE,
+)
+# A one-shot grant once its key hints are gone: "Yes", "Allow once",
+# "Yes, proceed" (codex's "Yes, proceed (y)"), devin's "Yes  (Approve
+# once)".
+_ONE_SHOT = re.compile(
+    r"^(?:(?:yes|approve|allow|proceed|once|ok(?:ay)?)\b[.,!]?\s*)+$",
+    re.IGNORECASE,
+)
+_PAREN_HINT = re.compile(r"\([^()]*\)|\[[^\[\]]*\]")
+
+
+def standing_grant(label: str) -> bool:
+    """True when answering this menu row would grant more than the one
+    prompt on screen: an always-allow, a don't-ask-again, a session-wide
+    allow or a bypass/yolo mode.
+
+    Fails closed: a row that starts with a yes-word and is not plainly
+    one-shot ("Yes, allow `git` commands") counts as standing, the same
+    split ``menu_key_for`` draws. Rows that are not grants at all — a
+    bare "No", "No, and tell Claude what to do differently", a question's
+    "SQLite" — are not standing unless a standing word shows up.
+    """
+    text = str(label or "").strip()
+    if _STANDING_WORDS.search(text):
+        return True
+    if _YES_LABEL.match(text):
+        return not _ONE_SHOT.match(_PAREN_HINT.sub(" ", text).strip())
+    return False
+
+
+def decides(label: str) -> bool:
+    """True for a row that answers yes or no ("Yes", "No, and tell
+    Claude…"), as opposed to "Edit command" or "Describe change"."""
+    text = str(label or "").strip()
+    return bool(_YES_LABEL.match(text) or _DENY_LABEL.match(text))
+
+
 def running_context(pane: str) -> str:
     """Devin asks under a "Running command" banner; that plus the
     command block is the prompt's identity — same text the card shows
