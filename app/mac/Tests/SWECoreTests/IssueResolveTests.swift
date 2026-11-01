@@ -300,9 +300,13 @@ import Testing
     }
 
     @Test func repoFoldersMatchCheckoutsAndWorktrees() {
+        #expect(IssueResolve.inRepo("/Users/k/src/Swe", repo: "c-wenlong/swe"))
+        #expect(IssueResolve.inRepo("/Users/k/.swe/worktrees/c-wenlong__swe-issue816", repo: "c-wenlong/swe"))
+        // Folders made before the quiver -> swe rename still match.
         #expect(IssueResolve.inRepo("/Users/k/src/Quiver", repo: "c-wenlong/swe"))
         #expect(IssueResolve.inRepo("/Users/k/.swe/worktrees/c-wenlong__quiver-issue816", repo: "c-wenlong/swe"))
         #expect(IssueResolve.inRepo("/Users/k/src/quiver/.claude/worktrees/agent-1", repo: "c-wenlong/swe"))
+        #expect(!IssueResolve.inRepo("/Users/k/.swe/worktrees/other__quiver-issue7", repo: "other/swe"))
         #expect(!IssueResolve.inRepo("/Users/k/src/quiverish", repo: "c-wenlong/swe"))
         #expect(!IssueResolve.inRepo("/Users/k/src/app", repo: "bad-repo-name"))
     }

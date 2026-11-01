@@ -46,8 +46,12 @@ public enum IssueResolve {
         guard parts.count == 2 else { return false }
         let components = (cwd as NSString).standardizingPath
             .split(separator: "/").map { $0.lowercased() }
-        let mirror = "\(parts[0])__\(parts[1])"
-        return components.contains { $0 == parts[1] || $0.hasPrefix(mirror) }
+        // The repo was quiver before it became swe, and checkouts and
+        // worktrees made before the rename keep the old folder name.
+        let names = parts[0] == "c-wenlong" && parts[1] == "swe" ? ["swe", "quiver"] : [parts[1]]
+        return components.contains { component in
+            names.contains { component == $0 || component.hasPrefix("\(parts[0])__\($0)") }
+        }
     }
 
     /// This Mac's remote machine id, from `~/.swe/data/remote/machine.json`.
