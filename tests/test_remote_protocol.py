@@ -2,7 +2,7 @@
 
 import unittest
 
-from quiver.remote import protocol
+from swe.remote import protocol
 
 
 class TestSessionKey(unittest.TestCase):

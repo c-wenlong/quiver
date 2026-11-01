@@ -9,9 +9,9 @@ the 4-wide IDX cell and shifted every column after it.
 import unittest
 from unittest.mock import patch
 
-from quiver.console import strip_ansi, visible_len
-from quiver.sessions.commands import _build_session_table
-from quiver.sessions.models import Session
+from swe.console import strip_ansi, visible_len
+from swe.sessions.commands import _build_session_table
+from swe.sessions.models import Session
 
 WIDE = 200
 
@@ -28,9 +28,9 @@ def _session(agent="Codex CLI", age_ms=0, title="a title", now_ms=1_700_000_000_
 
 
 def _render(sessions, reserve=0, cap=WIDE, now_ms=1_700_000_000_000, statuses=None):
-    with patch("quiver.sessions.commands.time.time", return_value=now_ms / 1000.0), \
-         patch("quiver.sessions.commands.terminal_width", return_value=cap), \
-         patch("quiver.table.terminal_width", return_value=cap):
+    with patch("swe.sessions.commands.time.time", return_value=now_ms / 1000.0), \
+         patch("swe.sessions.commands.terminal_width", return_value=cap), \
+         patch("swe.table.terminal_width", return_value=cap):
         return _build_session_table(sessions, reserve=reserve, statuses=statuses).render()
 
 

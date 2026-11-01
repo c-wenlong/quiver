@@ -2,7 +2,7 @@
 branch = True
 parallel = True
 patch = subprocess
-source = quiver
+source = swe
 
 [report]
 fail_under = 84

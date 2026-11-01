@@ -16,8 +16,8 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 
-from quiver.sessions.engines.common import parse_iso_ts
-from quiver.sessions.models import Session
+from swe.sessions.engines.common import parse_iso_ts
+from swe.sessions.models import Session
 
 PROJECT_SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
 
@@ -83,7 +83,7 @@ class DaysOverflowTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = pathlib.Path(tmp)
             r = subprocess.run(
-                [sys.executable, "-m", "quiver.cli", "session", "--days=1000000"],
+                [sys.executable, "-m", "swe.cli", "session", "--days=1000000"],
                 env=_env(home), capture_output=True, text=True,
             )
             self.assertEqual(r.returncode, 1)
@@ -93,7 +93,7 @@ class DaysOverflowTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = pathlib.Path(tmp)
             r = subprocess.run(
-                [sys.executable, "-m", "quiver.cli", "session",
+                [sys.executable, "-m", "swe.cli", "session",
                  "--start=9999-12-30", "--end=9999-12-31"],
                 env=_env(home), capture_output=True, text=True,
             )
@@ -113,7 +113,7 @@ class MalformedSessionListingTest(unittest.TestCase):
 
     def _run_session(self, home: pathlib.Path) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, "-m", "quiver.cli", "session"],
+            [sys.executable, "-m", "swe.cli", "session"],
             env=_env(home), capture_output=True, text=True,
         )
 

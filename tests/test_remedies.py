@@ -3,8 +3,8 @@ the app all read."""
 
 import unittest
 
-from quiver.harness import remedies
-from quiver.harness.remedies import (
+from swe.harness import remedies
+from swe.harness.remedies import (
     AUTH_REQUIRED,
     PERMISSION_REQUIRED,
     SIGNED_OUT,

@@ -22,7 +22,7 @@
 # plan is against the origin/main fetched last). --only runs a subset.
 #
 # Overrides:
-#   QUIVER_SETUP_REPO   the checkout to set up (default: the one holding
+#   SWE_SETUP_REPO   the checkout to set up (default: the one holding
 #                       this script)
 #   QUIVER_INSTALL_DIR  where Quiver.app is installed (default ~/Applications)
 set -euo pipefail
@@ -48,7 +48,7 @@ main() {
     esac
   done
 
-  repo="${QUIVER_SETUP_REPO:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+  repo="${SWE_SETUP_REPO:-$(cd "$(dirname "$0")/../../.." && pwd)}"
   dest="${QUIVER_INSTALL_DIR:-$HOME/Applications}/Quiver.app"
   if [ "$(uname)" != Darwin ] && [ "$only" != checkout ]; then
     echo "setup-machine: only the checkout step runs off macOS (--only=checkout)" >&2

@@ -2,7 +2,7 @@
 
 The Mac app's Plugins page (`PluginsPage.swift`, `PluginExplorer.swift`)
 at `/#/plugins`: both tabs, with Health's Fix and Fix all, and the
-plugin sheet's Install, Enable, Disable and Uninstall per harness. Module `quiver/webapp/pages/plugins.py`,
+plugin sheet's Install, Enable, Disable and Uninstall per harness. Module `swe/webapp/pages/plugins.py`,
 script and styles `static/pages/plugins.js` and `plugins.css`.
 
 ## What it shows
@@ -15,7 +15,7 @@ Same title and subtitle as the app, and its two tabs.
   fix swe would run with a copy button. A finding swe can fix has a
   **Fix** button; one that is an edit to make by hand says so instead.
   A card folds after 8 findings. Empty states as in the app: nothing in
-  `~/.quiver/plugins`, or every harness runs what it holds.
+  `~/.swe/plugins`, or every harness runs what it holds.
 - **Fix** opens an inline confirm under the finding, the app's "Run this
   fix?": "swe will check the finding still applies, then run:" and the
   exact command(s). **Run** posts it; Escape or Cancel closes it.
@@ -87,7 +87,7 @@ The hub reads the findings again and refuses unless every id is one
 Health lists right now (404 `unknown_finding`) and one swe can run (422
 `not_runnable`); a malformed body is 422, and a second fix while one runs
 is 409 `busy` (one fix at a time across the hub). It then calls
-`quiver.find.plugin_drift.apply_fix`, the function behind
+`swe.find.plugin_drift.apply_fix`, the function behind
 `swe find plugins --fix=<id>`, in process: the commands are the ones that
 module builds from the finding, run without a shell, with `HOME` set to
 the hub's home. Fix all follows `PluginsModel.fixAll`: report order, the
@@ -113,7 +113,7 @@ error, so the page still gets the fresh findings.
 ### Install, enable, disable, uninstall
 
 `POST /v1/app/plugins/plugin` with `{"verb", "ref", "harness"}` runs
-`quiver.plugins.actions.plugin_action`, the code behind `swe plugins
+`swe.plugins.actions.plugin_action`, the code behind `swe plugins
 <verb> <ref> --harness=<h> --json`, in process: the harness's own CLI
 (`claude plugin install|uninstall|enable|disable`, `codex plugin
 add|remove`) with `HOME` pinned to the hub's, or for Codex enable and
@@ -134,7 +134,7 @@ Explore's other writes are left out; they stay in `swe` and the Mac app:
   chip; the chips show the state only.
 - **Add marketplace** (`swe plugins marketplace add`).
 - **Rename** of a marketplace or plugin display name. The names the app
-  saved in `~/.quiver/config/plugin-display-names.json` are read (never
+  saved in `~/.swe/config/plugin-display-names.json` are read (never
   written) so rows are named the same.
 - The plugin detail page's manifest form and file editor, and Show in
   Finder. The web detail is a read-only sheet.

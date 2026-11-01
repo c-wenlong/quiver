@@ -294,7 +294,7 @@ public enum McpServerRepo {
     private static func gitStateSync(of url: URL) -> GitState {
         // Without its own .git (a directory, or a file for worktrees and
         // submodules), `git status` would report the enclosing repository's
-        // state — e.g. quiver-hub's, for folders under ~/.quiver.
+        // state — e.g. quiver-hub's, for folders under ~/.swe.
         guard FileManager.default.fileExists(atPath: url.appending(path: ".git").path) else {
             return GitState(isRepo: false)
         }
@@ -342,7 +342,7 @@ public final class McpServerRepoModel {
     static let gitBatch = 4
 
     public init(root: URL = FileManager.default.homeDirectoryForCurrentUser
-        .appending(path: ".quiver/mcp/servers")) {
+        .appending(path: ".swe/mcp/servers")) {
         self.root = root
     }
 

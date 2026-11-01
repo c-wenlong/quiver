@@ -27,13 +27,13 @@ def _decode_one_document(raw: str):
 
 class HarnessDiscoverEnvelopeTest(unittest.TestCase):
     def _finding(self, name, confidence="low", status="new"):
-        from quiver.harness.discover import HarnessFinding
+        from swe.harness.discover import HarnessFinding
         return HarnessFinding(name=name, command="", path=f"/h/.{name}",
                               confidence=confidence, source="home_scan",
                               status=status, description="", tags=(), aliases=())
 
     def _run(self, args, findings, apply_return=None):
-        from quiver.harness import discover_commands as dc
+        from swe.harness import discover_commands as dc
         apply_fn = mock.Mock(return_value=(apply_return or [], []))
         out = StringIO()
         with patch.object(dc, "discover_harnesses", lambda **k: findings), \
@@ -62,14 +62,14 @@ class HarnessDiscoverEnvelopeTest(unittest.TestCase):
 
 class McpDiscoverEnvelopeTest(unittest.TestCase):
     def _finding(self, name, status="new"):
-        from quiver.mcp.discover import McpFinding
+        from swe.mcp.discover import McpFinding
         return McpFinding(name=name, tools=("claude",), status=status,
                           source_tool="claude",
                           server={"command": "npx", "args": ["-y", name]})
 
     def _run(self, args, findings, merge=None):
-        from quiver.mcp import discover_commands as dc
-        from quiver.mcp.discover import MergeResult
+        from swe.mcp import discover_commands as dc
+        from swe.mcp.discover import MergeResult
         merge = merge or MergeResult(added=[], updated=[], orphaned=[], pruned=[])
         apply_fn = mock.Mock(return_value=merge)
         out = StringIO()
@@ -87,7 +87,7 @@ class McpDiscoverEnvelopeTest(unittest.TestCase):
         self.assertEqual(doc["data"]["findings"][0]["name"], "linear")
 
     def test_json_apply_rides_in_the_same_document(self):
-        from quiver.mcp.discover import MergeResult
+        from swe.mcp.discover import MergeResult
         merge = MergeResult(added=["linear"], updated=[], orphaned=["old"], pruned=[])
         code, raw, _ = self._run(["--json", "--apply"], [self._finding("linear")],
                                  merge=merge)
@@ -99,12 +99,12 @@ class McpDiscoverEnvelopeTest(unittest.TestCase):
 
 class SkillsDiscoverEnvelopeTest(unittest.TestCase):
     def _finding(self, label, status="new"):
-        from quiver.skills.catalog_discover import SkillCatalogFinding
+        from swe.skills.catalog_discover import SkillCatalogFinding
         return SkillCatalogFinding(path=Path("/x/skills"), label=label,
                                    skill_count=3, source="desktop", status=status)
 
     def _run(self, args, findings, apply_return=None):
-        from quiver.skills import catalog_commands as cc
+        from swe.skills import catalog_commands as cc
         apply_fn = mock.Mock(return_value=apply_return if apply_return is not None else [])
         out = StringIO()
         with patch.object(cc, "discover_skill_catalogs", lambda **k: findings), \
@@ -130,8 +130,8 @@ class SkillsDiscoverEnvelopeTest(unittest.TestCase):
 
 class SetupEnvelopeTest(unittest.TestCase):
     def _run(self, args):
-        from quiver.setup import commands as sc
-        from quiver.mcp.discover import MergeResult
+        from swe.setup import commands as sc
+        from swe.mcp.discover import MergeResult
         merge = MergeResult(added=[], updated=[], orphaned=[], pruned=[])
         out = StringIO()
         # --apply links into the home it finds; keep that out of the real one.

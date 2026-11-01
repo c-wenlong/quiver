@@ -14,10 +14,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quiver.sessions import search_containers as containers
-from quiver.sessions import search_decode as decode
-from quiver.sessions import search_index
-from quiver.sessions import search_writer as writer
+from swe.sessions import search_containers as containers
+from swe.sessions import search_decode as decode
+from swe.sessions import search_index
+from swe.sessions import search_writer as writer
 from tests.test_search_writer import _Home
 
 

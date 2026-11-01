@@ -23,7 +23,7 @@ public enum DevinCloud {
 
     /// The directory Quiver uses when the environment doesn't say.
     public static func defaultDirectory(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        home.appending(path: ".quiver/data/devin-cloud")
+        home.appending(path: ".swe/data/devin-cloud")
     }
 
     /// `QUIVER_DEVIN_DATA_DIR` wins, so a test build never touches the real data.

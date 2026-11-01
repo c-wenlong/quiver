@@ -50,9 +50,9 @@ public enum IssueResolve {
         return components.contains { $0 == parts[1] || $0.hasPrefix(mirror) }
     }
 
-    /// This Mac's remote machine id, from `~/.quiver/data/remote/machine.json`.
+    /// This Mac's remote machine id, from `~/.swe/data/remote/machine.json`.
     public static func localMachineId(home: URL) -> String? {
-        let url = home.appending(path: ".quiver/data/remote/machine.json")
+        let url = home.appending(path: ".swe/data/remote/machine.json")
         struct Saved: Decodable { let id: String? }
         guard let data = try? Data(contentsOf: url),
               let saved = try? JSONDecoder().decode(Saved.self, from: data),

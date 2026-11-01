@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "data": {
-    "path": "/tmp/quiver-fixture-home/.quiver/hooks/claude/guard.py",
+    "path": "/tmp/quiver-fixture-home/.swe/hooks/claude/guard.py",
     "harness": "claude",
     "command": "~/.claude/hooks/guard.py",
     "settings": [

@@ -3,9 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Contributing — quiver</title>
-<meta name="description" content="How to work on quiver.">
-<link rel="icon" href="../icon.png">
+<title>Contributing — swe</title>
+<meta name="description" content="How to work on swe.">
+<link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="../favicon-32.png" type="image/png" sizes="32x32">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -89,7 +92,7 @@ footer a:hover { color: var(--text); }
 <header class="top">
   <div class="wrap">
     <nav>
-      <a class="brand" href="../"><img src="../icon.png" alt="">quiver</a>
+      <a class="brand" href="../"><img src="../logo-rounded.svg" alt="">swe</a>
       <div class="links">
         <a href="../overview/">Docs</a>
         <a href="../cli/">CLI reference</a>
@@ -103,8 +106,8 @@ footer a:hover { color: var(--text); }
   </div>
 </header>
 <main class="wrap doc">
-<h1 id="contributing-to-quiver"><a class="anchor" href="#contributing-to-quiver"></a>Contributing to quiver</h1>
-<p>Thanks for your interest in contributing! quiver is a small, stdlib-only CLI — we want to keep it fast, portable, and easy to hack on.</p>
+<h1 id="contributing-to-swe"><a class="anchor" href="#contributing-to-swe"></a>Contributing to swe</h1>
+<p>Thanks for your interest in contributing! swe is a small, stdlib-only CLI — we want to keep it fast, portable, and easy to hack on.</p>
 <h2 id="getting-started"><a class="anchor" href="#getting-started"></a>Getting started</h2>
 <pre><code class="language-bash">git clone https://github.com/c-wenlong/quiver.git
 cd quiver
@@ -112,14 +115,14 @@ python3 -m venv .venv &amp;&amp; source .venv/bin/activate
 pip install -e &quot;.[test]&quot;
 HOME=&quot;$(mktemp -d)&quot; python3 -m unittest discover -s tests -p 'test_*.py'
 </code></pre>
-<p>Every command reads and writes <code>~/.quiver</code>, so run the suite — and any manual
+<p>Every command reads and writes <code>~/.swe</code>, so run the suite — and any manual
 <code>swe</code> check — against a throwaway <code>$HOME</code>. Otherwise a test run edits your real
 registry and counts your real sessions. CI does this for every job.</p>
 <p>Nix users can skip the venv entirely: <code>nix develop</code> opens a shell with Python,
 <code>hatchling</code> and <code>coverage</code>, and <code>PYTHONPATH</code> already pointing at <code>src/</code>.
 <code>nix build</code> builds the package and runs the suite inside the sandbox.</p>
 <h2 id="project-layout"><a class="anchor" href="#project-layout"></a>Project layout</h2>
-<p>The CLI is organized by domain under <code>src/quiver/</code>:</p>
+<p>The CLI is organized by domain under <code>src/swe/</code>:</p>
 <table>
 <thead>
 <tr>
@@ -150,7 +153,7 @@ registry and counts your real sessions. CI does this for every job.</p>
 </tr>
 <tr>
   <td><code>mcp/</code></td>
-  <td>The <code>~/.quiver/mcp.json</code> hub, per-tool format handlers, sync/diff/validate/doctor, <code>${NAME}</code> secret refs</td>
+  <td>The <code>~/.swe/mcp.json</code> hub, per-tool format handlers, sync/diff/validate/doctor, <code>${NAME}</code> secret refs</td>
 </tr>
 <tr>
   <td><code>find/</code></td>
@@ -166,7 +169,7 @@ registry and counts your real sessions. CI does this for every job.</p>
 </tr>
 <tr>
   <td><code>hooks/</code></td>
-  <td><code>swe hooks</code>: the hook scripts under <code>~/.quiver/hooks/&lt;harness&gt;/</code> and their drift check</td>
+  <td><code>swe hooks</code>: the hook scripts under <code>~/.swe/hooks/&lt;harness&gt;/</code> and their drift check</td>
 </tr>
 <tr>
   <td><code>reports/</code></td>
@@ -223,7 +226,7 @@ registry and counts your real sessions. CI does this for every job.</p>
 </tbody>
 </table>
 <p>The bottom layer imports nothing above itself: <code>paths.py</code> (every path under
-<code>~/.quiver</code>), <code>console.py</code> (colour, width, truncation), <code>table.py</code> (the table
+<code>~/.swe</code>), <code>console.py</code> (colour, width, truncation), <code>table.py</code> (the table
 renderer), <code>configuration.py</code> (<code>config/config.json</code>), <code>keys.py</code> (the one
 raw-mode key reader) and <code>flags.py</code> (the <code>--name=value</code> argv normaliser).
 <code>json_output.py</code> (the <code>--json</code> envelope), <code>prompt.py</code>, <code>multiselect.py</code> and
@@ -271,7 +274,7 @@ python3 scripts/docs_site.py        # --check reports stale output
 <h2 id="reporting-bugs"><a class="anchor" href="#reporting-bugs"></a>Reporting bugs</h2>
 <p>Use the <a href="https://github.com/c-wenlong/quiver/issues/new?template=bug_report.yml">bug report template</a> and include:</p>
 <ul>
-<li>Your OS and Python version, plus the quiver version from <code>swe version</code></li>
+<li>Your OS and Python version, plus the swe version from <code>swe version</code></li>
 <li>The exact command that failed and its full output</li>
 <li>Steps to reproduce</li>
 </ul>
@@ -283,7 +286,7 @@ to help you find a good first task there.</p>
 
 </main>
 <footer>
-  <span>quiver is MIT licensed.</span>
+  <span>swe is MIT licensed.</span>
   <div class="right">
     <a href="../overview/">Docs</a>
     <a href="../changelog/">Changelog</a>

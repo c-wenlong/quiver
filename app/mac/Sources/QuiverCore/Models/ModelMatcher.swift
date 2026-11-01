@@ -179,7 +179,7 @@ public struct ModelMatcher: Sendable {
         return parsed
     }
 
-    /// `~/.quiver/config/model-links.json`: `{"logged base": "aa id"}`.
+    /// `~/.swe/config/model-links.json`: `{"logged base": "aa id"}`.
     /// A manual link beats every rule. Read entry by entry, so a value
     /// that isn't a string skips only itself; a missing file, or one that
     /// isn't a JSON object, is no links.

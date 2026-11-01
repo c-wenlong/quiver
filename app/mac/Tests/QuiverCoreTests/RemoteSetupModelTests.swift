@@ -4,7 +4,7 @@ import Testing
 
 // The swe-remote-setup-*.json fixtures are `setup.evaluate` output for
 // made-up facts (the Python tests' `facts()` with pieces taken away), so
-// their shape is exactly what src/quiver/remote/setup.py emits without
+// their shape is exactly what src/swe/remote/setup.py emits without
 // needing a real tailnet: fresh (no Tailscale), todo (certificate not
 // fetched), pair (everything up, no phone) and ready.
 

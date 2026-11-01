@@ -1,5 +1,5 @@
 """Tests for the migrations of ``cmd_skills_scopes`` and
-``cmd_skills`` (skills/commands.py) to ``quiver.table.Table``.
+``cmd_skills`` (skills/commands.py) to ``swe.table.Table``.
 
 Both handlers used hand-rolled ``f"{...:<{w}}"`` string interpolation
 with the magic ``+9`` width offsets the cmd_list migration had to
@@ -29,9 +29,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.console import c, strip_ansi
-from quiver.skills.commands import cmd_skills
-from quiver.skills.layout import SkillRootEntry
+from swe.console import c, strip_ansi
+from swe.skills.commands import cmd_skills
+from swe.skills.layout import SkillRootEntry
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ def _run_cmd_skills(args):
 def _setup_skills_patches(testcase, skills=None):
     patches = [
         patch(
-            "quiver.skills.commands.discover_skills",
+            "swe.skills.commands.discover_skills",
             return_value=copy.deepcopy(skills if skills is not None else _skills_fixture()),
         ),
     ]
@@ -233,7 +233,7 @@ class SupersededCommandsTest(unittest.TestCase):
     """
 
     def test_tree_forwards_to_find(self):
-        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+        with patch("swe.find.commands.cmd_find_skills", return_value=0) as m:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 cmd_skills(["tree"])
@@ -242,14 +242,14 @@ class SupersededCommandsTest(unittest.TestCase):
         self.assertIn("swe find skills", strip_ansi(buf.getvalue()))
 
     def test_scope_list_forwards_to_find(self):
-        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+        with patch("swe.find.commands.cmd_find_skills", return_value=0) as m:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 cmd_skills(["scope", "list"])
             m.assert_called_once()
 
     def test_scope_all_is_passed_through(self):
-        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+        with patch("swe.find.commands.cmd_find_skills", return_value=0) as m:
             with redirect_stdout(io.StringIO()):
                 cmd_skills(["tree", "--scope=all"])
             self.assertEqual(m.call_args.kwargs.get("scope"), "all")
@@ -264,35 +264,35 @@ class BrowseIsATreeSearchIsATableTest(unittest.TestCase):
     """
 
     def test_bare_list_forwards_to_the_tree_view(self):
-        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+        with patch("swe.find.commands.cmd_find_skills", return_value=0) as m:
             with redirect_stdout(io.StringIO()):
                 cmd_skills(["list"])
             m.assert_called_once()
             self.assertTrue(m.call_args.kwargs.get("root_flag"))
 
     def test_bare_ls_forwards_too(self):
-        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+        with patch("swe.find.commands.cmd_find_skills", return_value=0) as m:
             with redirect_stdout(io.StringIO()):
                 cmd_skills(["ls"])
             m.assert_called_once()
 
     def test_a_filter_keeps_the_table(self):
         _setup_skills_patches(self)
-        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+        with patch("swe.find.commands.cmd_find_skills", return_value=0) as m:
             plain = strip_ansi(_run_cmd_skills([SEARCH]))
         m.assert_not_called()
         self.assertIn("NAME", plain)
 
     def test_list_with_a_filter_is_a_search_not_a_tree(self):
         _setup_skills_patches(self)
-        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+        with patch("swe.find.commands.cmd_find_skills", return_value=0) as m:
             plain = strip_ansi(_run_cmd_skills(["list", SEARCH]))
         m.assert_not_called()
         self.assertIn("NAME", plain)
 
     def test_desc_flag_keeps_the_table(self):
         _setup_skills_patches(self)
-        with patch("quiver.find.commands.cmd_find_skills", return_value=0) as m:
+        with patch("swe.find.commands.cmd_find_skills", return_value=0) as m:
             plain = strip_ansi(_run_cmd_skills([SEARCH, "-d"]))
         m.assert_not_called()
         self.assertIn("NAME", plain)

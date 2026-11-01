@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "data": {
-    "agents_file": "/tmp/quiver-fixture-home/.quiver/AGENTS.md",
+    "agents_file": "/tmp/quiver-fixture-home/.swe/AGENTS.md",
     "agents_file_exists": true,
     "harnesses": [
       {

@@ -6,7 +6,7 @@
 # Several agent sessions work on this repo at once, each on its own
 # branch, so the installed app is never built from the shared checkout:
 # whatever branch it happens to be on is not what shipped. This builds
-# origin/main in a worktree of its own under ~/.quiver/cache/install,
+# origin/main in a worktree of its own under ~/.swe/cache/install,
 # kept between runs so each build is incremental, then swaps the bundle
 # in and relaunches it. Sessions check their own changes with a separate
 # `open -n app/mac/build/Quiver.app` and never write to the installed copy.
@@ -19,7 +19,7 @@
 #   QUIVER_INSTALL_REF   what to build (default origin/main)
 #   QUIVER_INSTALL_DIR   where Quiver.app goes (default ~/Applications)
 #   QUIVER_INSTALL_CACHE the worktree, lock and build output (default
-#                        ~/.quiver/cache/install)
+#                        ~/.swe/cache/install)
 set -euo pipefail
 
 config="${1:-release}"
@@ -38,7 +38,7 @@ fi
 repo="$(cd "$(dirname "$0")/../../.." && pwd)"
 ref="${QUIVER_INSTALL_REF:-origin/main}"
 dest="${QUIVER_INSTALL_DIR:-$HOME/Applications}/Quiver.app"
-cache="${QUIVER_INSTALL_CACHE:-$HOME/.quiver/cache/install}"
+cache="${QUIVER_INSTALL_CACHE:-$HOME/.swe/cache/install}"
 src="$cache/src"
 out="$cache/out"
 staged="$dest.installing"
@@ -51,6 +51,16 @@ cache_lock="$cache/lock"
 dest_lock="$dest.lock"
 held_cache=0
 held_dest=0
+
+# The cache lives under ~/.swe, and creating it first would block the
+# ~/.quiver -> ~/.swe move swe runs on first sight: anything at ~/.swe
+# wins. Do the move here before mkdir -p touches the new root, mirroring
+# swe.paths._resolve_data_dir (a ~/.quiver that is itself a link stays).
+if [ ! -e "$HOME/.swe" ] && [ ! -L "$HOME/.swe" ] \
+    && [ -d "$HOME/.quiver" ] && [ ! -L "$HOME/.quiver" ]; then
+  mv "$HOME/.quiver" "$HOME/.swe" 2>/dev/null \
+    && ln -s .swe "$HOME/.quiver" 2>/dev/null
+fi
 cleanup() {
   if [ "$held_dest" = 1 ]; then
     # Stopped between the two renames: put the old app back.

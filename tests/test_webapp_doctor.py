@@ -10,39 +10,39 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quiver.harness.discover import HarnessFinding
-from quiver.harness.models import DoctorFinding, DoctorReport
-from quiver.webapp.pages import PageError
-from quiver.webapp.pages import doctor as doctor_page
+from swe.harness.discover import HarnessFinding
+from swe.harness.models import DoctorFinding, DoctorReport
+from swe.webapp.pages import PageError
+from swe.webapp.pages import doctor as doctor_page
 
 from tests.test_remote_hub import HubBase
 
 
 class _TempHome:
-    """A real temp home: ~/.quiver and harness.json live there, and every
+    """A real temp home: ~/.swe and harness.json live there, and every
     fix writes there for real. Scans of the real machine are stubbed."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.home = Path(self._tmp.name)
-        self.config = self.home / ".quiver" / "config"
+        self.config = self.home / ".swe" / "config"
         self.registry = self.config / "harness.json"
         self.ctx = SimpleNamespace(home=self.home, machine={"name": "hub-box"})
         self._patches = [
-            patch("quiver.harness.registry.CONFIG_DIR", self.config),
-            patch("quiver.harness.registry.HARNESS_FILE", self.registry),
-            patch("quiver.harness.registry.TOOLS_FILE", self.config / "tools.json"),
+            patch("swe.harness.registry.CONFIG_DIR", self.config),
+            patch("swe.harness.registry.HARNESS_FILE", self.registry),
+            patch("swe.harness.registry.TOOLS_FILE", self.config / "tools.json"),
             patch("pathlib.Path.home", return_value=self.home),
             # No probing of this machine's PATH, npm, or drift in the repo.
-            patch("quiver.harness.path_health.probe_node_env", return_value=SimpleNamespace(
+            patch("swe.harness.path_health.probe_node_env", return_value=SimpleNamespace(
                 node="/usr/bin/node", npm="/usr/bin/npm", global_bin=None, global_bin_on_path=True)),
-            patch("quiver.harness.path_health.nvm_bin_dirs", return_value=[]),
-            patch("quiver.harness.path_health.preferred_npm_bin", return_value=None),
-            patch("quiver.harness.path_health.find_off_path_tools", return_value=[]),
-            patch("quiver.harness.drift.run_drift_checks", return_value=[]),
-            patch("quiver.setup.commands.discover_harnesses", return_value=[]),
-            patch("quiver.setup.commands.discover_mcp_servers", return_value=[]),
-            patch("quiver.harness.discover.live_version", return_value=None),
+            patch("swe.harness.path_health.nvm_bin_dirs", return_value=[]),
+            patch("swe.harness.path_health.preferred_npm_bin", return_value=None),
+            patch("swe.harness.path_health.find_off_path_tools", return_value=[]),
+            patch("swe.harness.drift.run_drift_checks", return_value=[]),
+            patch("swe.setup.commands.discover_harnesses", return_value=[]),
+            patch("swe.setup.commands.discover_mcp_servers", return_value=[]),
+            patch("swe.harness.discover.live_version", return_value=None),
         ]
         for p in self._patches:
             p.start()
@@ -66,8 +66,8 @@ class _TempHome:
 
     def seed(self, registry=None):
         """A home with the hub and shared AGENTS.md, as after swe setup."""
-        (self.home / ".quiver").mkdir(exist_ok=True)
-        (self.home / ".quiver" / "AGENTS.md").write_text("# shared\n")
+        (self.home / ".swe").mkdir(exist_ok=True)
+        (self.home / ".swe" / "AGENTS.md").write_text("# shared\n")
         if registry is not None:
             self.config.mkdir(parents=True, exist_ok=True)
             self.registry.write_text(json.dumps(registry))
@@ -75,7 +75,7 @@ class _TempHome:
 
 class TestReport(_TempHome, unittest.TestCase):
     def test_the_report_is_swe_doctors(self):
-        from quiver.harness.commands import doctor_report
+        from swe.harness.commands import doctor_report
 
         report = doctor_page.get(self.ctx, {})
         self.assertEqual(report["machine"], "hub-box")
@@ -101,7 +101,7 @@ class TestRun(_TempHome, unittest.TestCase):
     def test_setup_makes_the_hub_and_the_shared_agents_md(self):
         reply = self.fix(self.finding("setup.hub"))
         self.assertEqual((reply["ran"], reply["error"]), ("setup", None))
-        self.assertTrue((self.home / ".quiver" / "AGENTS.md").is_file())
+        self.assertTrue((self.home / ".swe" / "AGENTS.md").is_file())
         self.assertNotIn("setup.hub", self.checks(reply["report"]))
         self.assertNotIn("setup.agents-md", self.checks(reply["report"]))
 
@@ -112,7 +112,7 @@ class TestRun(_TempHome, unittest.TestCase):
         self.assertEqual((reply["ran"], reply["error"]), ("init", None))
         link = self.home / ".claude" / "CLAUDE.md"
         self.assertTrue(link.is_symlink())
-        self.assertEqual(link.resolve(), (self.home / ".quiver" / "AGENTS.md").resolve())
+        self.assertEqual(link.resolve(), (self.home / ".swe" / "AGENTS.md").resolve())
         self.assertNotIn("setup.unlinked", self.checks(reply["report"]))
 
     def test_init_leaves_a_real_file_and_lists_it(self):
@@ -135,8 +135,8 @@ class TestRun(_TempHome, unittest.TestCase):
         self.assertNotIn("~/.codex/AGENTS.md", reply["blocked"])
         link = self.home / ".codex" / "AGENTS.md"
         self.assertTrue(link.is_symlink())
-        self.assertEqual(link.resolve(), (self.home / ".quiver" / "AGENTS.md").resolve())
-        backups = list((self.home / ".quiver" / "backups").iterdir())
+        self.assertEqual(link.resolve(), (self.home / ".swe" / "AGENTS.md").resolve())
+        backups = list((self.home / ".swe" / "backups").iterdir())
         self.assertEqual([b.read_text() for b in backups], ["mine\n"])
         self.assertIn("report", reply)
 
@@ -170,8 +170,8 @@ class TestRun(_TempHome, unittest.TestCase):
         settings.write_text(json.dumps({"hooks": {"Stop": [
             {"hooks": [{"command": "gone.py"},
                        {"command": "keep.py"}]}]}}))
-        from quiver.harness.drift import check_hook_drift
-        with patch("quiver.harness.drift.run_drift_checks",
+        from swe.harness.drift import check_hook_drift
+        with patch("swe.harness.drift.run_drift_checks",
                    side_effect=lambda home=None, repo_root=None:
                        check_hook_drift(home or self.home)):
             finding = self.finding("drift.hooks")
@@ -185,7 +185,7 @@ class TestRun(_TempHome, unittest.TestCase):
         self.assertEqual((reply["ran"], reply["error"]), ("undeclare", None))
         hooks = json.loads(settings.read_text())["hooks"]
         self.assertEqual(hooks, {"Stop": [{"hooks": [{"command": "keep.py"}]}]})
-        backups = list((self.home / ".quiver" / "backups").iterdir())
+        backups = list((self.home / ".swe" / "backups").iterdir())
         self.assertEqual(len(backups), 1)
         self.assertNotIn("gone.py", json.dumps(
             [f["message"] for f in reply["report"]["findings"]]))
@@ -222,7 +222,7 @@ class TestRun(_TempHome, unittest.TestCase):
 
     def test_a_busy_plugin_write_defers_the_drop(self):
         self.seed({"claude": {"command": "claude"}})
-        from quiver.webapp.pages import plugins
+        from swe.webapp.pages import plugins
         plugins._WRITE_LOCK.acquire()
         try:
             busy = doctor_page._run_undeclare(
@@ -251,7 +251,7 @@ class TestRun(_TempHome, unittest.TestCase):
         report = DoctorReport([DoctorFinding(
             "x", "warning", "m", "fix it",
             remedies=({"kind": "action", "action": "undeclare"},))])
-        with patch("quiver.harness.commands.doctor_report", return_value=report):
+        with patch("swe.harness.commands.doctor_report", return_value=report):
             with self.assertRaises(PageError) as caught:
                 doctor_page.post(self.ctx, "run", {
                     "check": "x", "message": "m", "action": "undeclare"})
@@ -266,15 +266,15 @@ class TestRun(_TempHome, unittest.TestCase):
     def test_init_never_asks(self):
         self.seed({"claude": {"command": "claude"}})
         (self.home / ".claude").mkdir()
-        with patch("quiver.init.commands._supported", return_value=True), \
-                patch("quiver.init.commands.multiselect", side_effect=AssertionError("asked")):
+        with patch("swe.init.commands._supported", return_value=True), \
+                patch("swe.init.commands.multiselect", side_effect=AssertionError("asked")):
             self.assertIsNone(self.fix(self.finding("setup.unlinked"))["error"])
 
     def test_discover_registers_the_sure_matches(self):
         self.seed()
         found = [HarnessFinding("codex", "codex", "/bin/codex", "high", "catalog", "new"),
                  HarnessFinding("maybe", "maybe", "/bin/maybe", "medium", "path_scan", "new")]
-        with patch("quiver.harness.discover.discover_harnesses", return_value=found):
+        with patch("swe.harness.discover.discover_harnesses", return_value=found):
             reply = self.fix(self.finding("setup.registry"))
         self.assertEqual((reply["ran"], reply["error"]), ("discover", None))
         self.assertEqual(list(json.loads(self.registry.read_text())), ["codex"])
@@ -282,7 +282,7 @@ class TestRun(_TempHome, unittest.TestCase):
 
     def test_a_fix_that_fails_reports_and_rereads(self):
         finding = self.finding("setup.hub")
-        with patch("quiver.setup.commands.apply_setup", side_effect=OSError("disk full")):
+        with patch("swe.setup.commands.apply_setup", side_effect=OSError("disk full")):
             reply = self.fix(finding)
         self.assertEqual(reply["error"], "disk full")
         self.assertIn("setup.hub", self.checks(reply["report"]))
@@ -290,7 +290,7 @@ class TestRun(_TempHome, unittest.TestCase):
     def test_a_stopped_linking_pass_is_the_error(self):
         finding = self.finding("setup.hub")
         applied = {"harness": [], "links": {"error": "cannot read .linkignore"}}
-        with patch("quiver.setup.commands.apply_setup", return_value=applied):
+        with patch("swe.setup.commands.apply_setup", return_value=applied):
             self.assertEqual(self.fix(finding)["error"], "cannot read .linkignore")
 
 
@@ -299,12 +299,12 @@ class TestInstall(_TempHome, unittest.TestCase):
 
     def off_path(self, source="nvm",
                  path="/home/u/.nvm/versions/node/v22/lib/node_modules/@openai/codex/bin/codex.js"):
-        from quiver.harness.path_health import OffPathHit
+        from swe.harness.path_health import OffPathHit
 
         self.seed({"codex": {"command": "codex"}})
         hit = OffPathHit("codex", path, source)
-        return patch("quiver.harness.path_health.find_off_path_tools", return_value=[("codex", "codex", hit)]), \
-            patch("quiver.harness.path_health.search_dirs_for_command", return_value=[hit])
+        return patch("swe.harness.path_health.find_off_path_tools", return_value=[("codex", "codex", hit)]), \
+            patch("swe.harness.path_health.search_dirs_for_command", return_value=[hit])
 
     def test_the_finding_names_the_method_that_put_it_there(self):
         orphans, hits = self.off_path()
@@ -322,19 +322,19 @@ class TestInstall(_TempHome, unittest.TestCase):
         self.assertEqual(finding["fix"], "swe install codex")
 
     def test_run_installs_with_that_method(self):
-        from quiver.harness.commands import InstallResult
+        from swe.harness.commands import InstallResult
 
         orphans, hits = self.off_path()
         done = InstallResult(code=0, action="Updated", path="/usr/bin/codex", version="1", output="",
                              exited=True, error=None)
         with orphans, hits, patch("shutil.which", side_effect=lambda t: f"/usr/bin/{t}" if t == "npm" else None), \
-                patch("quiver.harness.commands.install_harness", return_value=done) as install:
+                patch("swe.harness.commands.install_harness", return_value=done) as install:
             reply = self.fix(self.finding("off-path"))
         install.assert_called_once_with("codex", "npm")
         self.assertEqual((reply["ran"], reply["error"]), ("install", None))
 
     def test_a_failed_install_shows_the_end_of_its_output(self):
-        from quiver.harness.commands import InstallResult
+        from swe.harness.commands import InstallResult
 
         failed = InstallResult(code=1, action=None, path=None, version=None, exited=True,
                                output="\n".join(f"line {i}" for i in range(20)),
@@ -372,13 +372,13 @@ class TestRefusals(_TempHome, unittest.TestCase):
     def test_a_finding_without_an_action_is_refused(self):
         report = DoctorReport([DoctorFinding("npm", "warning", "npm not found on PATH",
                                              "Install Node/npm, or put npm on PATH.")])
-        with patch("quiver.harness.commands.doctor_report", return_value=report):
+        with patch("swe.harness.commands.doctor_report", return_value=report):
             error = self.refused("run", {"check": "npm", "message": "npm not found on PATH"})
         self.assertEqual((error.status, error.code), (422, "no_action"))
 
     def test_an_action_this_page_does_not_know_is_refused(self):
         report = DoctorReport([DoctorFinding("x", "warning", "m", "swe x", action="uninstall")])
-        with patch("quiver.harness.commands.doctor_report", return_value=report):
+        with patch("swe.harness.commands.doctor_report", return_value=report):
             error = self.refused("run", {"check": "x", "message": "m"})
         self.assertEqual((error.status, error.code), (422, "no_action"))
 
@@ -429,7 +429,7 @@ class TestRoute(_TempHome, HubBase):
         self.assertEqual(status, 200, data)
         report = json.loads(data)
         self.assertEqual(report["machine"], self.srv.state.machine["name"])
-        # The hub's own ~/.quiver holds its pairing store, but no AGENTS.md.
+        # The hub's own ~/.swe holds its pairing store, but no AGENTS.md.
         finding = report["findings"][0]
         self.assertEqual((finding["check"], finding["action"]), ("setup.agents-md", "setup"))
         ran = []
@@ -448,7 +448,7 @@ class TestRoute(_TempHome, HubBase):
                 body={"check": finding["check"], "message": finding["message"]})
         self.assertEqual(status, 403)
         self.assertIn("bad_origin", data.decode())
-        self.assertFalse((self.srv.home / ".quiver" / "AGENTS.md").exists())
+        self.assertFalse((self.srv.home / ".swe" / "AGENTS.md").exists())
 
     def test_refusals_carry_their_status(self):
         auth = self.auth()
@@ -471,7 +471,7 @@ class TestFindingIds(unittest.TestCase):
     confirm or busy row would otherwise mark both)."""
 
     def test_check_and_message_do_not_run_together(self):
-        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/doctor.js"
+        page = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/doctor.js"
         body = ("process.stdout.write(JSON.stringify([doctorId({ check: 'a', message: 'bc' }),"
                 " doctorId({ check: 'ab', message: 'c' })]));\n")
         done = subprocess.run(["node", "-e", "function registerPage() {}\n" + page.read_text(encoding="utf-8") + "\n" + body],

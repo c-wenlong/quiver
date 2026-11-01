@@ -1,6 +1,6 @@
 import unittest
 
-from quiver.mcp.formats import (
+from swe.mcp.formats import (
     convert_server_between_formats,
     get_conversion_issues,
     get_format_handler,
@@ -115,7 +115,7 @@ class McpFormatsTest(unittest.TestCase):
 
 class McpFormatEdgeCasesTest(unittest.TestCase):
     def test_base_handler_is_abstract(self):
-        from quiver.mcp.formats import McpFormatHandler
+        from swe.mcp.formats import McpFormatHandler
         with self.assertRaises(NotImplementedError):
             McpFormatHandler().parse({})
         with self.assertRaises(NotImplementedError):
@@ -124,7 +124,7 @@ class McpFormatEdgeCasesTest(unittest.TestCase):
     def test_template_handler_contract(self):
         # The template is documentation for new handlers; its methods still
         # honour the parse/emit contract (return a dict, tolerate junk).
-        from quiver.mcp.formats import TemplateMcpFormatHandler
+        from swe.mcp.formats import TemplateMcpFormatHandler
         handler = TemplateMcpFormatHandler()
         self.assertEqual(handler.parse("not a dict"), {})
         self.assertEqual(handler.parse({"command": "x"}), {})
@@ -162,7 +162,7 @@ class McpFormatEdgeCasesTest(unittest.TestCase):
         self.assertEqual(handler.parse({"command": []})["command"], "")
 
     def test_register_format_handler_override(self):
-        from quiver.mcp.formats import register_format_handler, _FORMAT_MCP_HANDLERS
+        from swe.mcp.formats import register_format_handler, _FORMAT_MCP_HANDLERS
         sentinel = get_format_handler("standard")
         register_format_handler("demo-format", sentinel)
         try:

@@ -1,4 +1,4 @@
-"""Unit tests for quiver.providers.registry — load/save/resolution."""
+"""Unit tests for swe.providers.registry — load/save/resolution."""
 
 import json
 import unittest
@@ -6,14 +6,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from quiver.providers.defaults import DEFAULT_PROVIDERS
-from quiver.providers.registry import alias_map, load_registry, resolve, save_registry
+from swe.providers.defaults import DEFAULT_PROVIDERS
+from swe.providers.registry import alias_map, load_registry, resolve, save_registry
 
 
 def _registry_patches(config_dir: Path, registry_file: Path):
     return (
-        patch("quiver.providers.registry.CONFIG_DIR", config_dir),
-        patch("quiver.providers.registry.PROVIDERS_REGISTRY_FILE", registry_file),
+        patch("swe.providers.registry.CONFIG_DIR", config_dir),
+        patch("swe.providers.registry.PROVIDERS_REGISTRY_FILE", registry_file),
     )
 
 
@@ -146,7 +146,7 @@ class RegistryLoadSeedingTest(unittest.TestCase):
     def test_corrupt_json_raises(self):
         """Corrupt providers.json raises rather than reading as empty — the
         old lenient path let the seed branch overwrite the broken file."""
-        from quiver.configuration import CorruptConfigurationError
+        from swe.configuration import CorruptConfigurationError
 
         with TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -175,7 +175,7 @@ class RegistryEntryValidationTest(unittest.TestCase):
         return registry_file
 
     def test_string_entry_raises_naming_the_row(self):
-        from quiver.configuration import CorruptConfigurationError
+        from swe.configuration import CorruptConfigurationError
 
         with TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -191,7 +191,7 @@ class RegistryEntryValidationTest(unittest.TestCase):
     def test_list_entry_raises_even_when_dict_would_parse_it(self):
         # ``dict([["env_vars", ["X"]]])`` happily builds a dict — the check
         # must be isinstance, not a try/except around the conversion.
-        from quiver.configuration import CorruptConfigurationError
+        from swe.configuration import CorruptConfigurationError
 
         with TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -203,7 +203,7 @@ class RegistryEntryValidationTest(unittest.TestCase):
 
     def test_removed_must_be_a_list(self):
         # ``set("kimi")`` was silently accepted as four one-letter removals.
-        from quiver.configuration import CorruptConfigurationError
+        from swe.configuration import CorruptConfigurationError
 
         with TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -223,7 +223,7 @@ class RegistryEntryValidationTest(unittest.TestCase):
     def test_removed_items_must_be_strings(self):
         # ``[["openai"]]`` passed the bare list check, then ``set(...)``
         # raised an uncaught TypeError on the unhashable item.
-        from quiver.configuration import CorruptConfigurationError
+        from swe.configuration import CorruptConfigurationError
 
         for bad in ([["openai"]], ["openai", 1], [None]):
             with self.subTest(bad=bad), TemporaryDirectory() as tmp:

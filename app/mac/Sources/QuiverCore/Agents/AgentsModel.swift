@@ -23,7 +23,7 @@ public final class AgentsModel {
     public private(set) var check: Loadable<InitCheck> = .idle
     public private(set) var linking = false
     public private(set) var linkError: String?
-    /// `~/.quiver/AGENTS.md`, once `swe init --check` has said where it is.
+    /// `~/.swe/AGENTS.md`, once `swe init --check` has said where it is.
     public private(set) var global: InstructionDocument?
     public private(set) var projectFolder: URL?
     public private(set) var projectFiles: [ProjectFile] = []

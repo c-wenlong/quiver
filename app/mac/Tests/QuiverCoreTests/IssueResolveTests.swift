@@ -34,7 +34,7 @@ import Testing
         #expect(issue.comments[1].createdAt?.date != nil)
         #expect(issue.comments[1].url?.hasSuffix("issuecomment-2") == true)
         #expect(issue.branch == "quiver/issue-816")
-        #expect(issue.worktree == "/Users/k/.quiver/worktrees/c-wenlong__quiver-issue816")
+        #expect(issue.worktree == "/Users/k/.swe/worktrees/c-wenlong__quiver-issue816")
         #expect(issue.suggestedPrompt?.contains("Closes #816") == true)
     }
 
@@ -286,7 +286,7 @@ import Testing
         let sessions = [
             session("pi", "/Users/k/elsewhere", 10),
             session("codex", "/Users/k/src/quiver/app", 60),
-            session("claude", "/Users/k/.quiver/worktrees/c-wenlong__quiver-pr459", 600),
+            session("claude", "/Users/k/.swe/worktrees/c-wenlong__quiver-pr459", 600),
         ]
         #expect(IssueResolve.defaultHarness(offered: offered, sessions: sessions,
                                             repo: "c-wenlong/quiver") == "codex")
@@ -301,7 +301,7 @@ import Testing
 
     @Test func repoFoldersMatchCheckoutsAndWorktrees() {
         #expect(IssueResolve.inRepo("/Users/k/src/Quiver", repo: "c-wenlong/quiver"))
-        #expect(IssueResolve.inRepo("/Users/k/.quiver/worktrees/c-wenlong__quiver-issue816", repo: "c-wenlong/quiver"))
+        #expect(IssueResolve.inRepo("/Users/k/.swe/worktrees/c-wenlong__quiver-issue816", repo: "c-wenlong/quiver"))
         #expect(IssueResolve.inRepo("/Users/k/src/quiver/.claude/worktrees/agent-1", repo: "c-wenlong/quiver"))
         #expect(!IssueResolve.inRepo("/Users/k/src/quiverish", repo: "c-wenlong/quiver"))
         #expect(!IssueResolve.inRepo("/Users/k/src/app", repo: "bad-repo-name"))
@@ -321,7 +321,7 @@ import Testing
         defer { withExtendedLifetime(temp) {} }
         let home = temp.url
         #expect(IssueResolve.localMachineId(home: home) == nil)
-        let dir = home.appending(path: ".quiver/data/remote")
+        let dir = home.appending(path: ".swe/data/remote")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data(#"{"id": "4e72"}"#.utf8).write(to: dir.appending(path: "machine.json"))
         #expect(IssueResolve.localMachineId(home: home) == "4e72")

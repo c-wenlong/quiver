@@ -13,8 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import dismissals
-from quiver.remote import hub as hub_mod
+from swe.remote import dismissals
+from swe.remote import hub as hub_mod
 
 from tests.test_remote_hub import _Server, _session
 

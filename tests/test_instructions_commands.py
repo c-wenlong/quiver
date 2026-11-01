@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.instructions.commands import cmd_instructions
+from swe.instructions.commands import cmd_instructions
 
 
 class InstructionsCommandsTest(unittest.TestCase):
@@ -19,7 +19,7 @@ class InstructionsCommandsTest(unittest.TestCase):
         self.env = patch.dict(os.environ, {"HOME": str(self.home)})
         self.env.start()
         self.addCleanup(self.env.stop)
-        self.source = self.home / ".quiver" / "AGENTS_MD"
+        self.source = self.home / ".swe" / "AGENTS_MD"
         self.source.mkdir(parents=True)
         (self.source / "index.txt").write_text("rules.md\n", encoding="utf-8")
         (self.source / "rules.md").write_text("# Rules\n\nBe concise.\n", encoding="utf-8")
@@ -32,7 +32,7 @@ class InstructionsCommandsTest(unittest.TestCase):
 
     def test_build_then_unchanged_and_check(self):
         self.assertEqual(self.run_command(["check"])[0], 1)
-        self.assertFalse((self.home / ".quiver" / "AGENTS.md").exists())
+        self.assertFalse((self.home / ".swe" / "AGENTS.md").exists())
         code, output, errors = self.run_command(["build"])
         self.assertEqual((code, errors), (0, ""))
         self.assertIn("Built", output)
@@ -109,7 +109,7 @@ class InstructionsCommandsTest(unittest.TestCase):
                       (self.source / "index.txt").read_text(encoding="utf-8"))
 
     def test_init_folds_existing_flat_file(self):
-        output = self.home / ".quiver" / "AGENTS.md"
+        output = self.home / ".swe" / "AGENTS.md"
         output.write_text("# My Rules\n\nBe brief.\n", encoding="utf-8")
         (self.source / "index.txt").unlink()
         (self.source / "rules.md").unlink()
@@ -127,7 +127,7 @@ class InstructionsCommandsTest(unittest.TestCase):
         self.assertIn("index.txt", errors)
 
     def test_init_keeps_the_users_own_comments(self):
-        output = self.home / ".quiver" / "AGENTS.md"
+        output = self.home / ".swe" / "AGENTS.md"
         output.write_text(
             "# My Rules\n\n<!-- Keep this section in sync -->\n\nBe brief.\n",
             encoding="utf-8")
@@ -139,7 +139,7 @@ class InstructionsCommandsTest(unittest.TestCase):
         self.assertIn("<!-- Keep this section in sync -->", chapter)
 
     def test_init_refuses_a_symlinked_output_before_creating(self):
-        output = self.home / ".quiver" / "AGENTS.md"
+        output = self.home / ".swe" / "AGENTS.md"
         target = self.home / "elsewhere.md"
         target.write_text("# Elsewhere\n", encoding="utf-8")
         output.symlink_to(target)
@@ -152,7 +152,7 @@ class InstructionsCommandsTest(unittest.TestCase):
         self.assertTrue(output.is_symlink())
 
     def test_init_refuses_to_overwrite_a_newer_save(self):
-        output = self.home / ".quiver" / "AGENTS.md"
+        output = self.home / ".swe" / "AGENTS.md"
         output.write_text("# Old\n", encoding="utf-8")
         (self.source / "index.txt").unlink()
         (self.source / "rules.md").unlink()
@@ -164,7 +164,7 @@ class InstructionsCommandsTest(unittest.TestCase):
                 return build(home, check=check, expected=expected)
             return wrapped
 
-        from quiver.instructions import commands, compiler
+        from swe.instructions import commands, compiler
         with patch.object(commands.compiler, "build", racing(compiler.build)):
             code, _, errors = self.run_command(["init"])
         self.assertEqual(code, 1)
@@ -185,7 +185,7 @@ class InstructionsCommandsTest(unittest.TestCase):
             on_result(False)
             raise KeyboardInterrupt
 
-        with patch("quiver.instructions.commands.watcher.watch", side_effect=fake_watch):
+        with patch("swe.instructions.commands.watcher.watch", side_effect=fake_watch):
             code, output, errors = self.run_command(["watch"])
         self.assertEqual(code, 0)
         self.assertIn("missing chapter", errors)
@@ -194,15 +194,15 @@ class InstructionsCommandsTest(unittest.TestCase):
         self.assertIn("Stopped", output)
 
     def test_os_error_and_build_interrupt(self):
-        with patch("quiver.instructions.commands.compiler.build", side_effect=OSError("denied")):
+        with patch("swe.instructions.commands.compiler.build", side_effect=OSError("denied")):
             code, _, errors = self.run_command(["build"])
         self.assertEqual(code, 1)
         self.assertIn("denied", errors)
-        with patch("quiver.instructions.commands.compiler.build", side_effect=KeyboardInterrupt):
+        with patch("swe.instructions.commands.compiler.build", side_effect=KeyboardInterrupt):
             self.assertEqual(self.run_command(["build"])[0], 130)
 
     def test_top_level_dispatch_and_help(self):
-        from quiver.cli import main
+        from swe.cli import main
 
         for args in (["swe", "instructions", "build"], ["swe", "instructions", "--help"]):
             with patch("sys.argv", args), contextlib.redirect_stdout(io.StringIO()):

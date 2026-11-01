@@ -4,17 +4,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.mcp.discover import apply_mcp_findings, discover_mcp_servers
+from swe.mcp.discover import apply_mcp_findings, discover_mcp_servers
 
 
 def _registry_patches(config_dir: Path, registry_file: Path, mcp_file: Path):
     return (
-        patch("quiver.harness.registry.CONFIG_DIR", config_dir),
-        patch("quiver.harness.registry.HARNESS_FILE", registry_file),
-        patch("quiver.harness.registry.TOOLS_FILE", config_dir / "tools.json"),
-        patch("quiver.paths.CONFIG_DIR", config_dir),
-        patch("quiver.paths.MCP_SOURCE_FILE", mcp_file),
-        patch("quiver.mcp.discover.MCP_SOURCE_FILE", mcp_file),
+        patch("swe.harness.registry.CONFIG_DIR", config_dir),
+        patch("swe.harness.registry.HARNESS_FILE", registry_file),
+        patch("swe.harness.registry.TOOLS_FILE", config_dir / "tools.json"),
+        patch("swe.paths.CONFIG_DIR", config_dir),
+        patch("swe.paths.MCP_SOURCE_FILE", mcp_file),
+        patch("swe.mcp.discover.MCP_SOURCE_FILE", mcp_file),
     )
 
 
@@ -22,7 +22,7 @@ class McpDiscoverTest(unittest.TestCase):
     def test_discovers_servers_not_in_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             config_dir.mkdir(parents=True)
             registry_file = config_dir / "harness.json"
             mcp_file = config_dir / "mcp.json"
@@ -67,8 +67,8 @@ class McpDiscoverTest(unittest.TestCase):
 
             p1, p2, p3, p4, p5, p6 = _registry_patches(config_dir, registry_file, mcp_file)
             with p1, p2, p3, p4, p5, p6, patch(
-                "quiver.mcp.cli.MCP_CONFIG_MAP", mcp_map
-            ), patch("quiver.mcp.discover.get_mcp_tools") as mock_tools:
+                "swe.mcp.cli.MCP_CONFIG_MAP", mcp_map
+            ), patch("swe.mcp.discover.get_mcp_tools") as mock_tools:
                 # discover_mcp_servers calls get_mcp_tools through its own
                 # module binding, so the patch lives on mcp.discover.
                 mock_tools.return_value = {"opencode": mcp_map["opencode"], "claude": mcp_map["claude"]}
@@ -81,7 +81,7 @@ class McpDiscoverTest(unittest.TestCase):
     def test_apply_writes_to_mcp_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             config_dir.mkdir(parents=True)
             registry_file = config_dir / "harness.json"
             mcp_file = config_dir / "mcp.json"
@@ -116,8 +116,8 @@ class McpDiscoverTest(unittest.TestCase):
 
             p1, p2, p3, p4, p5, p6 = _registry_patches(config_dir, registry_file, mcp_file)
             with p1, p2, p3, p4, p5, p6, patch(
-                "quiver.mcp.cli.MCP_CONFIG_MAP", mcp_map
-            ), patch("quiver.mcp.discover.get_mcp_tools") as mock_tools:
+                "swe.mcp.cli.MCP_CONFIG_MAP", mcp_map
+            ), patch("swe.mcp.discover.get_mcp_tools") as mock_tools:
                 mock_tools.return_value = {"opencode": mcp_map["opencode"]}
                 findings = discover_mcp_servers()
                 added = apply_mcp_findings(findings).added
@@ -155,7 +155,7 @@ class ThreeWayMergeTest(unittest.TestCase):
         from pathlib import Path
         from unittest.mock import patch
 
-        from quiver.mcp import discover as D
+        from swe.mcp import discover as D
 
         tmp = stack.enter_context(tempfile.TemporaryDirectory())
         path = Path(tmp) / "mcp.json"
@@ -297,7 +297,7 @@ class DiscoverReadsTheDiskTest(unittest.TestCase):
         from pathlib import Path
         from unittest.mock import patch
 
-        from quiver.mcp import discover as D
+        from swe.mcp import discover as D
 
         tmp = stack.enter_context(tempfile.TemporaryDirectory())
         path = Path(tmp) / "mcp.json"
@@ -379,6 +379,84 @@ class DiscoverReadsTheDiskTest(unittest.TestCase):
         self.assertNotIn("orphaned", [f.status for f in found])
 
 
+class ScannedServersTest(unittest.TestCase):
+    """_scanned_servers must not report the hub file itself as an
+    unmanaged config: after the ~/.quiver -> ~/.swe move the hub can show
+    up under either dir name, so the skip is by resolved path."""
+
+    def _scan(self, configs, mcp_file):
+        import contextlib
+        from unittest.mock import patch
+
+        from swe.mcp import discover as D
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch.object(D, "MCP_SOURCE_FILE", mcp_file))
+            stack.enter_context(
+                patch("swe.find.mcps.scan_configs", return_value=configs))
+            return D._scanned_servers({})
+
+    def test_the_hub_file_is_skipped_by_path_and_name(self):
+        import tempfile
+        from pathlib import Path
+
+        from swe.find.mcps import FoundConfig
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            mcp_file = home / ".swe" / "mcp.json"
+            mcp_file.parent.mkdir()
+            mcp_file.write_text('{"mcpServers": {}}')
+            configs = [
+                # The hub scanned at its real path.
+                FoundConfig(path=mcp_file,
+                            servers={"hub_srv": {"command": "x"}},
+                            harness="swe"),
+                # The hub seen through the compat symlink's name.
+                FoundConfig(path=home / ".quiver" / "mcp.json",
+                            servers={"old_srv": {"command": "x"}},
+                            harness="quiver"),
+                # A dir merely named .swe elsewhere is also not a finding.
+                FoundConfig(path=home / ".config" / "swe" / "mcp.json",
+                            servers={"name_srv": {"command": "x"}},
+                            harness="swe"),
+                FoundConfig(path=home / ".cursor" / "mcp.json",
+                            servers={"stray": {"command": "cur"}},
+                            harness="cursor"),
+            ]
+            out = self._scan(configs, mcp_file)
+        self.assertEqual(sorted(out), ["stray"])
+        self.assertEqual(out["stray"]["tool"], "cursor")
+
+    def test_an_unresolvable_path_is_skipped(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import MagicMock
+
+        from swe.find.mcps import FoundConfig
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mcp_file = Path(tmp) / "mcp.json"
+            dead = MagicMock()
+            dead.resolve.side_effect = OSError("gone")
+            bad = MagicMock()
+            # First resolve (registered-path check) answers, second fails.
+            bad.resolve.side_effect = [Path("/elsewhere"), OSError("gone")]
+            configs = [FoundConfig(path=dead,
+                                   servers={"d": {"command": "x"}},
+                                   harness="dead"),
+                       FoundConfig(path=bad,
+                                   servers={"x": {"command": "x"}},
+                                   harness="x"),
+                       FoundConfig(path=Path(tmp) / "mcp2.json",
+                                   servers={"y": {"command": "y"},
+                                            "weird": "not-a-dict"},
+                                   harness="y")]
+            out = self._scan(configs, mcp_file)
+        self.assertEqual(sorted(out), ["y"])
+
+
 class ShieldCredentialsTest(unittest.TestCase):
     """A literal credential in a harness config must never reach mcp.json.
 
@@ -393,11 +471,11 @@ class ShieldCredentialsTest(unittest.TestCase):
         from pathlib import Path
         from unittest.mock import patch
 
-        from quiver.mcp import discover as D
+        from swe.mcp import discover as D
 
         tmp = stack.enter_context(tempfile.TemporaryDirectory())
         home = Path(tmp)
-        path = home / ".quiver" / "mcp.json"
+        path = home / ".swe" / "mcp.json"
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps({"mcpServers": {}}))
         stack.enter_context(patch.object(D, "MCP_SOURCE_FILE", path))
@@ -412,8 +490,8 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
-        from quiver.mcp.secrets import load_secrets, resolve
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.secrets import load_secrets, resolve
 
         with contextlib.ExitStack() as stack:
             home, path = self._hub(stack)
@@ -440,8 +518,8 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
-        from quiver.mcp.secrets import load_secrets, resolve
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.secrets import load_secrets, resolve
 
         with contextlib.ExitStack() as stack:
             home, path = self._hub(stack)
@@ -467,7 +545,7 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
 
         with contextlib.ExitStack() as stack:
             _home, path = self._hub(stack)
@@ -487,8 +565,8 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
-        from quiver.mcp.secrets import load_secrets
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.secrets import load_secrets
 
         with contextlib.ExitStack() as stack:
             home, path = self._hub(stack)
@@ -507,7 +585,7 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
 
         with contextlib.ExitStack() as stack:
             _home, path = self._hub(stack)
@@ -531,8 +609,8 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
-        from quiver.mcp.secrets import load_secrets, set_secret
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.secrets import load_secrets, set_secret
 
         with contextlib.ExitStack() as stack:
             home, path = self._hub(stack)
@@ -554,7 +632,7 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
 
         with contextlib.ExitStack() as stack:
             _home, path = self._hub(stack)
@@ -573,8 +651,8 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
-        from quiver.mcp.secrets import load_secrets
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.secrets import load_secrets
 
         with contextlib.ExitStack() as stack:
             home, path = self._hub(stack)
@@ -601,8 +679,8 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
-        from quiver.mcp.secrets import load_secrets, resolve
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.secrets import load_secrets, resolve
 
         with contextlib.ExitStack() as stack:
             home, path = self._hub(stack)
@@ -633,8 +711,8 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
-        from quiver.mcp.secrets import load_secrets, resolve
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.secrets import load_secrets, resolve
 
         with contextlib.ExitStack() as stack:
             home, path = self._hub(stack)
@@ -662,8 +740,8 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
-        from quiver.mcp.secrets import load_secrets
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.secrets import load_secrets
 
         with contextlib.ExitStack() as stack:
             home, path = self._hub(stack)
@@ -685,7 +763,7 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
 
         with contextlib.ExitStack() as stack:
             _home, path = self._hub(stack)
@@ -703,7 +781,7 @@ class ShieldCredentialsTest(unittest.TestCase):
         import contextlib
         import json
 
-        from quiver.mcp.discover import McpFinding, apply_mcp_findings
+        from swe.mcp.discover import McpFinding, apply_mcp_findings
 
         with contextlib.ExitStack() as stack:
             _home, path = self._hub(stack)
@@ -728,7 +806,7 @@ class ServerSummaryScrubTest(unittest.TestCase):
     """discover --json must obey the same secrecy contract as list --json."""
 
     def test_credential_bearing_url_is_masked(self):
-        from quiver.mcp.cli import server_summary
+        from swe.mcp.cli import server_summary
 
         out = server_summary({"url": "https://h/mcp?key=TOKEN123&x=1"})
         self.assertNotIn("TOKEN123", out)
@@ -737,9 +815,9 @@ class ServerSummaryScrubTest(unittest.TestCase):
     def test_store_backed_url_still_shows_its_reference(self):
         from unittest.mock import patch as _patch
 
-        from quiver.mcp.cli import server_summary
+        from swe.mcp.cli import server_summary
 
-        with _patch("quiver.mcp.secrets.load_secrets",
+        with _patch("swe.mcp.secrets.load_secrets",
                     return_value={"K": "TOKEN12345678901234567890"}):
             out = server_summary({"url": "https://h/mcp?key=TOKEN12345678901234567890"})
         self.assertIn("${K}", out)
@@ -759,7 +837,7 @@ class ScannedServersAreRedactedTest(unittest.TestCase):
         from pathlib import Path
         from unittest.mock import patch
 
-        from quiver.mcp import discover as D
+        from swe.mcp import discover as D
 
         with contextlib.ExitStack() as stack:
             tmp = stack.enter_context(tempfile.TemporaryDirectory())
@@ -776,7 +854,7 @@ class ScannedServersAreRedactedTest(unittest.TestCase):
             ):
                 stack.enter_context(patch.object(D, target, **kwargs))
             stack.enter_context(patch(
-                "quiver.mcp.secrets.load_secrets",
+                "swe.mcp.secrets.load_secrets",
                 return_value={"MY_KEY": "sk-live-SECRET"}))
             found = D.discover_mcp_servers()
 
@@ -790,30 +868,30 @@ class VersionPinnedTest(unittest.TestCase):
     extension directory, which the next upgrade deletes."""
 
     def test_a_versioned_extension_path_is_flagged(self):
-        from quiver.find.mcps import version_pinned
+        from swe.find.mcps import version_pinned
 
         server = {"command": "node",
                   "args": ["/h/.ide/extensions/vendor.thing-0.7.2/cli/bundle.js"]}
         self.assertTrue(version_pinned(server))
 
     def test_an_ordinary_command_is_not_flagged(self):
-        from quiver.find.mcps import version_pinned
+        from swe.find.mcps import version_pinned
 
         self.assertEqual(version_pinned({"command": "npx", "args": ["-y", "pkg"]}), "")
 
     def test_a_remote_server_is_not_flagged(self):
-        from quiver.find.mcps import version_pinned
+        from swe.find.mcps import version_pinned
 
         self.assertEqual(version_pinned({"url": "https://x/mcp"}), "")
 
     def test_a_version_outside_a_vendored_directory_is_not_flagged(self):
-        from quiver.find.mcps import version_pinned
+        from swe.find.mcps import version_pinned
 
         self.assertEqual(
             version_pinned({"command": "/opt/tool-1.2.3/bin/run"}), "")
 
     def test_a_malformed_entry_does_not_raise(self):
-        from quiver.find.mcps import version_pinned
+        from swe.find.mcps import version_pinned
 
         self.assertEqual(version_pinned(None), "")
         self.assertEqual(version_pinned({"args": [None, 3]}), "")

@@ -34,9 +34,9 @@ public final class CatalogDatabase: @unchecked Sendable {
     /// rebuild (old links, old models) can never land after a newer one.
     private let rebuildLock = NSLock()
 
-    /// `~/.quiver/data/catalog/catalog.sqlite`.
+    /// `~/.swe/data/catalog/catalog.sqlite`.
     public static func defaultURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        home.appending(path: ".quiver/data/catalog/catalog.sqlite")
+        home.appending(path: ".swe/data/catalog/catalog.sqlite")
     }
 
     /// `QUIVER_CATALOG_DB` wins; a test build that only set

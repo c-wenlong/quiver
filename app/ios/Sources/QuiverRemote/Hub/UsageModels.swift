@@ -1,8 +1,8 @@
 import Foundation
 
-/// Wire types for `GET /v1/usage` (`src/quiver/remote/usage.py`, rows from
+/// Wire types for `GET /v1/usage` (`src/swe/remote/usage.py`, rows from
 /// `HarnessRow.to_json` and `RateLimitInfo.to_json`) and
-/// `GET /v1/app/overview` (`src/quiver/ledger/overview.py`). Every field
+/// `GET /v1/app/overview` (`src/swe/ledger/overview.py`). Every field
 /// is optional, so a hub that drops or adds one never breaks the page.
 
 // MARK: - /v1/usage

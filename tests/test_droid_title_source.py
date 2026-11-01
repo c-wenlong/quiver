@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.parsers import parse_droid
+from swe.sessions.parsers import parse_droid
 
 
 SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -49,7 +49,7 @@ def _parse_with(session_start: dict, tmp: str):
             return str(sessions_root) + "/"
         return os.path.expanduser(path)
 
-    with patch("quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
+    with patch("swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser):
         return parse_droid()
 
 

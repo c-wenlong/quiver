@@ -1,6 +1,6 @@
 """`swe setup --apply` run twice must not invent harnesses.
 
-The first apply made ~/.quiver/skills and stopped there; the second saw it
+The first apply made ~/.swe/skills and stopped there; the second saw it
 and linked skills into every root in HARNESS_ROOTS, making ~/.augment,
 ~/.kiro, ~/.pi and the rest to hold the links. The linking pass in the same
 run then read those fresh dirs as install evidence and registered and
@@ -21,8 +21,8 @@ SRC = Path(__file__).resolve().parent.parent / "src"
 # so PATH, which holds only the fake claude, is the whole machine. PATH
 # leaves out /usr/bin too: a Linux box can have a harness installed there.
 BOOT = (
-    "import sys; import quiver.harness.discover as d; d.EXTRA_BIN_DIRS = []; "
-    "from quiver.cli import main; sys.argv = ['swe'] + sys.argv[1:]; "
+    "import sys; import swe.harness.discover as d; d.EXTRA_BIN_DIRS = []; "
+    "from swe.cli import main; sys.argv = ['swe'] + sys.argv[1:]; "
     "sys.exit(main())"
 )
 
@@ -59,11 +59,11 @@ class SetupApplyTwiceTest(unittest.TestCase):
         second = self._apply()
 
         self.assertEqual(
-            sorted(p.name for p in self.home.iterdir()), [".claude", ".quiver"])
+            sorted(p.name for p in self.home.iterdir()), [".claude", ".swe"])
         self.assertTrue((self.home / ".claude" / "skills").is_symlink())
         self.assertTrue((self.home / ".claude" / "CLAUDE.md").is_symlink())
         registry = json.loads(
-            (self.home / ".quiver" / "config" / "harness.json").read_text())
+            (self.home / ".swe" / "config" / "harness.json").read_text())
         self.assertEqual(sorted(registry), ["claude"])
         applied = second["data"]["applied"]
         self.assertEqual(applied["skills"], [])

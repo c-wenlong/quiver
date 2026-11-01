@@ -8,7 +8,7 @@ enum PluginsTab: Hashable {
     /// and disable per harness.
     case explore
     /// Where the copies Claude Code and Codex run no longer match
-    /// `~/.quiver/plugins`, each with the fix swe would run.
+    /// `~/.swe/plugins`, each with the fix swe would run.
     case health
 }
 
@@ -33,7 +33,7 @@ struct PluginsPage: View {
     var body: some View {
         @Bindable var app = app
         Page(title: "Plugins",
-             subtitle: "Every plugin in every marketplace, and where Claude Code and Codex no longer match ~/.quiver/plugins.") {
+             subtitle: "Every plugin in every marketplace, and where Claude Code and Codex no longer match ~/.swe/plugins.") {
             switch app.pluginsTab {
             case .explore:
                 Button("Add marketplace", systemImage: "plus") { addingMarketplace = true }
@@ -126,9 +126,9 @@ struct PluginsPage: View {
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded(let report) where report.sources == 0:
-            Card { Label("No plugins in ~/.quiver/plugins, so there is nothing to keep in step.", systemImage: "puzzlepiece.extension").foregroundStyle(Theme.textSecondary) }
+            Card { Label("No plugins in ~/.swe/plugins, so there is nothing to keep in step.", systemImage: "puzzlepiece.extension").foregroundStyle(Theme.textSecondary) }
         case .loaded(let report) where report.drift.isEmpty:
-            Card { Label("Claude Code and Codex run what ~/.quiver/plugins holds.", systemImage: "checkmark.seal").foregroundStyle(Theme.textPrimary) }
+            Card { Label("Claude Code and Codex run what ~/.swe/plugins holds.", systemImage: "checkmark.seal").foregroundStyle(Theme.textPrimary) }
         case .loaded(let report):
             let harnesses = report.drift.map(\.harness).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
             ForEach(harnesses, id: \.self) { harness in

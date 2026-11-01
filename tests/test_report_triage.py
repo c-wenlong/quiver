@@ -1,7 +1,7 @@
 import unittest
 
-from quiver.reports.transcripts import NormalizedMessage, NormalizedTranscript
-from quiver.reports.triage import DEDICATED, NOISE, PROJECT_BATCH, classify_transcript
+from swe.reports.transcripts import NormalizedMessage, NormalizedTranscript
+from swe.reports.triage import DEDICATED, NOISE, PROJECT_BATCH, classify_transcript
 
 
 def _transcript(messages, readable=True, error=""):

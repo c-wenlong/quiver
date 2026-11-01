@@ -4,8 +4,8 @@ import json
 import time
 import unittest
 
-from quiver.remote import catalog as catalog_mod
-from quiver.remote import pairing, readstate
+from swe.remote import catalog as catalog_mod
+from swe.remote import pairing, readstate
 
 from tests.test_remote_hub import _Server, _session
 

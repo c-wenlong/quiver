@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from quiver.harness.drift import (
+from swe.harness.drift import (
     Finding,
     check_code_vs_data,
     check_completion_drift,
@@ -71,9 +71,9 @@ class HelpVsDispatchTest(unittest.TestCase):
 
 class SubcommandHelpTest(unittest.TestCase):
     def test_real_instructions_help_and_completions_agree(self):
-        from quiver.completion import _SUBCOMMANDS
-        from quiver.help_text import HELP
-        from quiver.instructions.commands import SUBCOMMANDS
+        from swe.completion import _SUBCOMMANDS
+        from swe.help_text import HELP
+        from swe.instructions.commands import SUBCOMMANDS
 
         commands = set(SUBCOMMANDS)
         self.assertEqual(

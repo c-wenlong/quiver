@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 from io import BytesIO
 
-from quiver.harness.rate_limits import (
+from swe.harness.rate_limits import (
     RateLimitInfo,
     get_all_rate_limits,
     get_rate_limit,
@@ -22,8 +22,8 @@ from quiver.harness.rate_limits import (
     _FETCHERS,
     _fill_unavailable_windows,
 )
-from quiver.harness import remedies
-from quiver.harness.models import _window
+from swe.harness import remedies
+from swe.harness.models import _window
 
 
 class RateLimitInfoTest(unittest.TestCase):
@@ -32,7 +32,7 @@ class RateLimitInfoTest(unittest.TestCase):
     def _make_info(self, used_percent, limit_reached, reset_offset,
                    plan_type="plus", window_seconds=604800):
         """Build a RateLimitInfo with reset_at relative to _NOW."""
-        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+        with patch("swe.harness.rate_limits.time.time", return_value=self._NOW):
             return RateLimitInfo(
                 tool_name="codex",
                 used_percent=used_percent,
@@ -44,7 +44,7 @@ class RateLimitInfoTest(unittest.TestCase):
 
     def test_format_column_pie_over_half(self):
         info = self._make_info(30, False, 3600)  # 1h ahead
-        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+        with patch("swe.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
         self.assertIn("◕", col)      # 70% remaining → three-quarter pie
         self.assertIn("1h0m", col)
@@ -52,21 +52,21 @@ class RateLimitInfoTest(unittest.TestCase):
 
     def test_format_column_pie_low_fill(self):
         info = self._make_info(85, False, 7200)  # 2h ahead
-        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+        with patch("swe.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
         self.assertIn("◔", col)      # 15% remaining → quarter pie
         self.assertIn("2h0m", col)
 
     def test_format_column_pie_full_green(self):
         info = self._make_info(0, False, 3600)
-        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+        with patch("swe.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
         self.assertIn("●", col)
         self.assertIn("\x1b[38;5;46m", col)
 
     def test_format_column_pie_empty_red(self):
         info = self._make_info(100, True, 503753)
-        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+        with patch("swe.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
         self.assertIn("○", col)
         self.assertIn("\x1b[38;5;196m", col)
@@ -74,7 +74,7 @@ class RateLimitInfoTest(unittest.TestCase):
     def test_format_column_limit_reached_forces_empty_pie(self):
         """limit_reached at a partial fill still draws the empty red pie."""
         info = self._make_info(40, True, 3600)
-        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+        with patch("swe.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
         self.assertIn("○", col)
         self.assertIn("38;5;196", col)
@@ -90,9 +90,9 @@ class RateLimitInfoTest(unittest.TestCase):
             window_seconds=604800,
             window="7d",
         )
-        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+        with patch("swe.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
-        from quiver.console import strip_ansi
+        from swe.console import strip_ansi
         plain = strip_ansi(col)
         self.assertEqual(plain, "◕ 7d:2d4h")
         self.assertIn("7d:", plain)
@@ -110,9 +110,9 @@ class RateLimitInfoTest(unittest.TestCase):
             remaining_units=173,
             total_units=1500,
         )
-        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+        with patch("swe.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
-        from quiver.console import strip_ansi
+        from swe.console import strip_ansi
         plain = strip_ansi(col)
         self.assertIn("173/1500", plain)
         self.assertTrue(plain[0] in "○◔◑◕●", plain)
@@ -133,7 +133,7 @@ class RateLimitInfoTest(unittest.TestCase):
             remaining_units=3,
             total_units=4,
         )
-        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+        with patch("swe.harness.rate_limits.time.time", return_value=self._NOW):
             col = info.format_column()
         self.assertIn("3/4", col)
         self.assertNotIn("75%", col)
@@ -141,18 +141,18 @@ class RateLimitInfoTest(unittest.TestCase):
 
     def test_reset_in_human_days(self):
         info = self._make_info(50, False, 5 * 86400 + 3600)  # 5d1h ahead
-        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+        with patch("swe.harness.rate_limits.time.time", return_value=self._NOW):
             self.assertEqual(info.reset_in_human, "5d1h")
 
     def test_reset_in_human_now(self):
         info = self._make_info(100, True, -10)  # already past
-        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+        with patch("swe.harness.rate_limits.time.time", return_value=self._NOW):
             self.assertEqual(info.reset_in_human, "now")
 
     def test_reset_in_human_unknown(self):
         info = self._make_info(50, False, 0, plan_type="—", window_seconds=0)
         info.reset_at = 0  # override to truly unknown
-        with patch("quiver.harness.rate_limits.time.time", return_value=self._NOW):
+        with patch("swe.harness.rate_limits.time.time", return_value=self._NOW):
             self.assertEqual(info.reset_in_human, "—")
 
     def test_format_column_shows_relogin_for_expired_credentials(self):
@@ -181,9 +181,9 @@ class RateLimitCacheTest(unittest.TestCase):
     def test_cache_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache_file = Path(tmp) / "rate_limits_cache.json"
-            with patch("quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file):
+            with patch("swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file):
                 # Save some data
-                from quiver.harness.rate_limits import _save_cached, _load_cached
+                from swe.harness.rate_limits import _save_cached, _load_cached
 
                 raw = {
                     "codex": {
@@ -208,9 +208,9 @@ class RateLimitCacheTest(unittest.TestCase):
             # _CACHE_TTL is bound once at import, so an ambient
             # SWE_RATE_LIMITS_TTL (e.g. "inf") would leak into the expiry
             # check; pin the module constant to keep the test hermetic.
-            with patch("quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file), \
-                    patch("quiver.harness.rate_limits._CACHE_TTL", 300.0):
-                from quiver.harness.rate_limits import _save_cached, _load_cached
+            with patch("swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file), \
+                    patch("swe.harness.rate_limits._CACHE_TTL", 300.0):
+                from swe.harness.rate_limits import _save_cached, _load_cached
 
                 raw = {
                     "codex": {
@@ -232,7 +232,7 @@ class RateLimitCacheTest(unittest.TestCase):
 
     def test_load_cached_defensive_branches(self):
         """Malformed cache fields degrade instead of crashing the listing."""
-        from quiver.harness.rate_limits import (
+        from swe.harness.rate_limits import (
             _load_cached, _load_cached_no_data, _save_cached,
         )
 
@@ -243,8 +243,8 @@ class RateLimitCacheTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cache_file = Path(tmp) / "rate_limits_cache.json"
             with patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file
-            ), patch("quiver.harness.rate_limits._CACHE_TTL", 300.0):
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file
+            ), patch("swe.harness.rate_limits._CACHE_TTL", 300.0):
                 now = time.time()
                 self.assertIsNone(_load_cached())
                 self.assertEqual(_load_cached_no_data(), set())
@@ -283,7 +283,7 @@ class RateLimitCacheTest(unittest.TestCase):
                 a_file = Path(tmp) / "afile"
                 a_file.write_text("x")
                 with patch(
-                    "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                    "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                     a_file / "x.json",
                 ):
                     _save_cached({"codex": info})  # must not raise
@@ -304,12 +304,12 @@ class RateLimitCacheTest(unittest.TestCase):
         }
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits._CACHE_TTL", 300.0,
+                "swe.harness.rate_limits._CACHE_TTL", 300.0,
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
                 _save_cached(raw)
                 result = get_all_rate_limits(use_cache=True)
         finally:
@@ -323,8 +323,8 @@ class RateLimitCacheTest(unittest.TestCase):
     def test_invalidate_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache_file = Path(tmp) / "rate_limits_cache.json"
-            with patch("quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file):
-                from quiver.harness.rate_limits import _save_cached
+            with patch("swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file):
+                from swe.harness.rate_limits import _save_cached
 
                 _save_cached({"codex": {"tool_name": "codex", "used_percent": 50,
                                          "limit_reached": False, "reset_at": 0,
@@ -335,7 +335,7 @@ class RateLimitCacheTest(unittest.TestCase):
 
     def test_env_var_override_sets_ttl(self):
         """``SWE_RATE_LIMITS_TTL`` overrides the default TTL at read time."""
-        from quiver.harness.rate_limits import _env_cache_ttl
+        from swe.harness.rate_limits import _env_cache_ttl
         with patch.dict(os.environ, {"SWE_RATE_LIMITS_TTL": "600"}, clear=False):
             self.assertEqual(_env_cache_ttl(default=300.0), 600.0)
         with patch.dict(os.environ, {"SWE_RATE_LIMITS_TTL": "120"}, clear=False):
@@ -343,7 +343,7 @@ class RateLimitCacheTest(unittest.TestCase):
 
     def test_env_var_override_falls_back_on_bad_value(self):
         """Unparseable / non-positive env values fall back to the default."""
-        from quiver.harness.rate_limits import _env_cache_ttl
+        from swe.harness.rate_limits import _env_cache_ttl
         for bad in ("not-a-number", "-10", "0", "  "):
             with patch.dict(os.environ, {"SWE_RATE_LIMITS_TTL": bad}, clear=False):
                 self.assertEqual(_env_cache_ttl(default=300.0), 300.0)
@@ -353,7 +353,7 @@ class RateLimitCacheTest(unittest.TestCase):
 
     def test_default_ttl_is_five_minutes(self):
         """The module-level ``_CACHE_TTL`` default is 300s (5 minutes)."""
-        from quiver.harness.rate_limits import _CACHE_TTL
+        from swe.harness.rate_limits import _CACHE_TTL
         # Clear any env override so the import-time default is exercised.
         # (If the env var is set in the test shell, just assert it's a
         # positive float — the exact value is env-driven.)
@@ -368,7 +368,7 @@ class RateLimitRegistryTest(unittest.TestCase):
         _FETCHERS.clear()
         register("unused", fetcher)
         try:
-            with patch("quiver.harness.stars.is_starred", return_value=False):
+            with patch("swe.harness.stars.is_starred", return_value=False):
                 result = get_rate_limit("unused", use_cache=False)
         finally:
             _FETCHERS.clear()
@@ -400,7 +400,7 @@ class RateLimitRegistryTest(unittest.TestCase):
         register("unselected", unselected)
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
                 result = get_all_rate_limits(
@@ -442,10 +442,10 @@ class RateLimitRegistryTest(unittest.TestCase):
         }
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
 
                 _save_cached(cached)
                 result = get_all_rate_limits(
@@ -482,10 +482,10 @@ class RateLimitRegistryTest(unittest.TestCase):
                                    "reset_at": 0, "window_seconds": 0}]}
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
 
                 _save_cached({"devin": old, "cursor": new_cursor})
                 result = get_all_rate_limits(use_cache=True, tool_names={"devin", "cursor"})
@@ -511,10 +511,10 @@ class RateLimitRegistryTest(unittest.TestCase):
                       "plan_type": "team", "window_seconds": 0, "window": "auto", "windows": []}
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
 
                 _save_cached({"devin": old, "cursor": new_cursor})
                 result = get_all_rate_limits(use_cache=True, tool_names={"devin", "cursor"})
@@ -540,10 +540,10 @@ class RateLimitRegistryTest(unittest.TestCase):
                       "plan_type": "team", "window_seconds": 0, "window": "auto", "windows": []}
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
 
                 _save_cached({"devin": old, "cursor": new_cursor})
                 get_all_rate_limits(use_cache=True, tool_names={"devin", "cursor"})
@@ -575,7 +575,7 @@ class RateLimitRegistryTest(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 cache_file = Path(tmp) / "rate_limits_cache.json"
-                with patch("quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file):
+                with patch("swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file):
                     result = get_all_rate_limits(use_cache=False)
                     self.assertIn("test-tool", result)
                     self.assertEqual(result["test-tool"].used_percent, 10)
@@ -595,7 +595,7 @@ class RateLimitRegistryTest(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 cache_file = Path(tmp) / "rate_limits_cache.json"
-                with patch("quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file):
+                with patch("swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file):
                     result = get_all_rate_limits(use_cache=False)
                     self.assertNotIn("no-limits-tool", result)
         finally:
@@ -614,7 +614,7 @@ class RateLimitRegistryTest(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 cache_file = Path(tmp) / "rate_limits_cache.json"
-                with patch("quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file):
+                with patch("swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE", cache_file):
                     result = get_all_rate_limits(use_cache=False)
                     self.assertNotIn("boom-tool", result)
         finally:
@@ -650,10 +650,10 @@ class RateLimitRegistryTest(unittest.TestCase):
         began = time.monotonic()
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
+                "swe.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
                 0.05,
                 create=True,
             ):
@@ -685,10 +685,10 @@ class RateLimitRegistryTest(unittest.TestCase):
         }
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
                 _save_cached(stale)
                 result = get_all_rate_limits(use_cache=False)
         finally:
@@ -715,10 +715,10 @@ class RateLimitRegistryTest(unittest.TestCase):
         }
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
                 _save_cached(stale)
                 result = get_all_rate_limits(use_cache=False)
         finally:
@@ -750,7 +750,7 @@ class RateLimitRegistryTest(unittest.TestCase):
                     "updated_at": {"codex": time.time() - 90000},
                 }))
                 with patch(
-                    "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                    "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                     cache_file,
                 ):
                     result = get_all_rate_limits(use_cache=False)
@@ -775,10 +775,10 @@ class RateLimitRegistryTest(unittest.TestCase):
         register("slow-tool", slow_fetch)
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
+                "swe.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
                 0.05,
                 create=True,
             ):
@@ -813,10 +813,10 @@ class RateLimitRegistryTest(unittest.TestCase):
         register("slow-tool", slow_fetch)
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
+                "swe.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
                 0.05,
                 create=True,
             ):
@@ -847,10 +847,10 @@ class RateLimitRegistryTest(unittest.TestCase):
         }
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
                 _save_cached(marker)
                 result = get_all_rate_limits(use_cache=True)
         finally:
@@ -881,10 +881,10 @@ class RateLimitRegistryTest(unittest.TestCase):
         }
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
                 _save_cached(marker)
                 result = get_all_rate_limits(use_cache=True)
         finally:
@@ -915,12 +915,12 @@ class RateLimitRegistryTest(unittest.TestCase):
         }
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits._CACHE_TTL", 300.0,
+                "swe.harness.rate_limits._CACHE_TTL", 300.0,
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
                 _save_cached(raw, updated_at={"codex": seed_ts})
                 result = get_all_rate_limits(use_cache=True)
                 payload = json.loads(
@@ -956,12 +956,12 @@ class RateLimitRegistryTest(unittest.TestCase):
         }
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits._CACHE_TTL", 300.0,
+                "swe.harness.rate_limits._CACHE_TTL", 300.0,
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
                 _save_cached(raw, updated_at={"codex": time.time() - 400})
                 result = get_all_rate_limits(use_cache=True)
         finally:
@@ -994,10 +994,10 @@ class RateLimitRegistryTest(unittest.TestCase):
             },
         }
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+            "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
             Path(tmp) / "rate_limits_cache.json",
         ):
-            from quiver.harness.rate_limits import (
+            from swe.harness.rate_limits import (
                 _load_stale_cached,
                 _save_cached,
             )
@@ -1033,14 +1033,14 @@ class RateLimitRegistryTest(unittest.TestCase):
         }
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
+                "swe.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
                 0.05,
                 create=True,
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
                 _save_cached(stale)
                 result = get_all_rate_limits(use_cache=False)
         finally:
@@ -1139,10 +1139,10 @@ class RefreshFailedTest(unittest.TestCase):
             register(name, fetcher)
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
-                from quiver.harness.rate_limits import _save_cached
+                from swe.harness.rate_limits import _save_cached
 
                 _save_cached(cached)
                 return get_all_rate_limits(
@@ -1225,10 +1225,10 @@ class RefreshFailedTest(unittest.TestCase):
         register("cursor", failing)
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
-                from quiver.harness.rate_limits import (
+                from swe.harness.rate_limits import (
                     RATE_LIMITS_CACHE_FILE, _save_cached)
                 _save_cached({"cursor": unavailable})
 
@@ -1268,10 +1268,10 @@ class RefreshFailedTest(unittest.TestCase):
         register("cursor", fetcher)
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
-                from quiver.harness.rate_limits import RATE_LIMITS_CACHE_FILE
+                from swe.harness.rate_limits import RATE_LIMITS_CACHE_FILE
                 RATE_LIMITS_CACHE_FILE.write_text(_json.dumps({
                     "cached_at": now,
                     "limits": {"cursor": unavailable},
@@ -1317,10 +1317,10 @@ class RefreshFailedTest(unittest.TestCase):
         register("cursor", fetcher)
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ):
-                from quiver.harness.rate_limits import RATE_LIMITS_CACHE_FILE
+                from swe.harness.rate_limits import RATE_LIMITS_CACHE_FILE
                 RATE_LIMITS_CACHE_FILE.write_text(_json.dumps({
                     "cached_at": ago,
                     "limits": {"cursor": previous},
@@ -1361,7 +1361,7 @@ class CodexFetcherTest(unittest.TestCase):
     }
 
     def test_fetch_codex_success(self):
-        from quiver.harness.rate_limits import _fetch_codex
+        from swe.harness.rate_limits import _fetch_codex
 
         auth_data = {
             "auth_mode": "chatgpt",
@@ -1378,9 +1378,9 @@ class CodexFetcherTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             auth_path = Path(tmp) / "auth.json"
             auth_path.write_text(json.dumps(auth_data))
-            with patch("quiver.harness.rate_limits.os.path.expanduser",
+            with patch("swe.harness.rate_limits.os.path.expanduser",
                        side_effect=lambda p: str(auth_path) if p == "~/.codex/auth.json" else p), \
-                 patch("quiver.harness.rate_limits.urllib.request.urlopen",
+                 patch("swe.harness.rate_limits.urllib.request.urlopen",
                        return_value=mock_resp):
                 info = _fetch_codex()
                 self.assertIsNotNone(info)
@@ -1395,7 +1395,7 @@ class CodexFetcherTest(unittest.TestCase):
         """A string percent reached the table renderer as is and raised
         TypeError out of `swe list`; a "false" string read as a reached
         limit. Codex now coerces like every other fetcher."""
-        from quiver.harness.rate_limits import _fetch_codex
+        from swe.harness.rate_limits import _fetch_codex
 
         auth_data = {"tokens": {"access_token": "fake-token"}}
         cases = [
@@ -1418,9 +1418,9 @@ class CodexFetcherTest(unittest.TestCase):
             with self.subTest(rate_limit=rate_limit), tempfile.TemporaryDirectory() as tmp:
                 auth_path = Path(tmp) / "auth.json"
                 auth_path.write_text(json.dumps(auth_data))
-                with patch("quiver.harness.rate_limits.os.path.expanduser",
+                with patch("swe.harness.rate_limits.os.path.expanduser",
                            side_effect=lambda p: str(auth_path) if p == "~/.codex/auth.json" else p), \
-                     patch("quiver.harness.rate_limits.urllib.request.urlopen",
+                     patch("swe.harness.rate_limits.urllib.request.urlopen",
                            return_value=mock_resp):
                     info = _fetch_codex()
                 self.assertEqual((info.used_percent, info.limit_reached, info.window_seconds),
@@ -1431,7 +1431,7 @@ class CodexFetcherTest(unittest.TestCase):
     def test_fetch_codex_reads_the_email_off_the_id_token(self):
         """The sign-in's address is an ``id_token`` claim, as the app
         reads it; a missing or un-JWT id_token just means no email."""
-        from quiver.harness.rate_limits import _fetch_codex
+        from swe.harness.rate_limits import _fetch_codex
 
         def jwt(claims: dict) -> str:
             part = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
@@ -1462,10 +1462,10 @@ class CodexFetcherTest(unittest.TestCase):
                     auth_path = Path(tmp) / "auth.json"
                     auth_path.write_text(json.dumps(auth_data))
                     with patch(
-                        "quiver.harness.rate_limits.os.path.expanduser",
+                        "swe.harness.rate_limits.os.path.expanduser",
                         side_effect=lambda p: str(auth_path) if p == "~/.codex/auth.json" else p,
                     ), patch(
-                        "quiver.harness.rate_limits.urllib.request.urlopen",
+                        "swe.harness.rate_limits.urllib.request.urlopen",
                         return_value=mock_resp,
                     ):
                         info = _fetch_codex()
@@ -1474,27 +1474,27 @@ class CodexFetcherTest(unittest.TestCase):
                         self.assertEqual(info.to_json()["email"], expected)
 
     def test_fetch_codex_no_auth_file(self):
-        from quiver.harness.rate_limits import _fetch_codex
+        from swe.harness.rate_limits import _fetch_codex
 
-        with patch("quiver.harness.rate_limits.os.path.expanduser",
+        with patch("swe.harness.rate_limits.os.path.expanduser",
                    side_effect=lambda p: "/nonexistent/path" if p == "~/.codex/auth.json" else p):
             info = _fetch_codex()
             self.assertIsNone(info)
 
     def test_fetch_codex_no_access_token(self):
-        from quiver.harness.rate_limits import _fetch_codex
+        from swe.harness.rate_limits import _fetch_codex
 
         auth_data = {"auth_mode": "chatgpt", "tokens": {}}
         with tempfile.TemporaryDirectory() as tmp:
             auth_path = Path(tmp) / "auth.json"
             auth_path.write_text(json.dumps(auth_data))
-            with patch("quiver.harness.rate_limits.os.path.expanduser",
+            with patch("swe.harness.rate_limits.os.path.expanduser",
                        side_effect=lambda p: str(auth_path) if p == "~/.codex/auth.json" else p):
                 info = _fetch_codex()
                 self.assertIsNone(info)
 
     def test_fetch_codex_http_error(self):
-        from quiver.harness.rate_limits import _fetch_codex
+        from swe.harness.rate_limits import _fetch_codex
         import urllib.error
 
         auth_data = {
@@ -1504,9 +1504,9 @@ class CodexFetcherTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             auth_path = Path(tmp) / "auth.json"
             auth_path.write_text(json.dumps(auth_data))
-            with patch("quiver.harness.rate_limits.os.path.expanduser",
+            with patch("swe.harness.rate_limits.os.path.expanduser",
                        side_effect=lambda p: str(auth_path) if p == "~/.codex/auth.json" else p), \
-                 patch("quiver.harness.rate_limits.urllib.request.urlopen",
+                 patch("swe.harness.rate_limits.urllib.request.urlopen",
                        side_effect=urllib.error.HTTPError(
                            "url", 401, "Unauthorized", {}, None)):
                 info = _fetch_codex()
@@ -1524,7 +1524,7 @@ class CodexFetcherTest(unittest.TestCase):
         - ``bool`` does NOT silently become 1.0 / 0.0 (explicit guard)
         - ``None`` and other types fall through to 0.0
         """
-        from quiver.harness.rate_limits import _fetch_codex
+        from swe.harness.rate_limits import _fetch_codex
 
         auth_data = {
             "auth_mode": "chatgpt",
@@ -1562,10 +1562,10 @@ class CodexFetcherTest(unittest.TestCase):
                     auth_path = Path(tmp) / "auth.json"
                     auth_path.write_text(json.dumps(auth_data))
                     with patch(
-                        "quiver.harness.rate_limits.os.path.expanduser",
+                        "swe.harness.rate_limits.os.path.expanduser",
                         side_effect=lambda p: str(auth_path) if p == "~/.codex/auth.json" else p,
                     ), patch(
-                        "quiver.harness.rate_limits.urllib.request.urlopen",
+                        "swe.harness.rate_limits.urllib.request.urlopen",
                         return_value=mock_resp,
                     ):
                         info = _fetch_codex()
@@ -1648,18 +1648,18 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
         # Cover the whole `gh auth token` call: the fetcher first asks
         # shutil.which for gh, so a machine (or a nix sandbox) without the
         # CLI would otherwise return None before the mocked run is reached.
-        which = patch("quiver.harness.rate_limits.shutil.which", return_value="/usr/bin/gh")
+        which = patch("swe.harness.rate_limits.shutil.which", return_value="/usr/bin/gh")
         run = patch(
-            "quiver.harness.rate_limits.subprocess.run",
+            "swe.harness.rate_limits.subprocess.run",
             return_value=_CompletedProc(returncode=0, stdout=token + "\n"),
         )
         return _Both(which, run)
 
     def test_fetch_copilot_success(self):
-        from quiver.harness.rate_limits import _fetch_github_copilot
+        from swe.harness.rate_limits import _fetch_github_copilot
 
         with self._patch_token(), patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(self._SAMPLE_RESPONSE),
         ):
             info = _fetch_github_copilot()
@@ -1676,7 +1676,7 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
 
     def test_fetch_copilot_over_quota(self):
         """Negative percent_remaining (over quota) should clamp to 100 and set limit_reached."""
-        from quiver.harness.rate_limits import _fetch_github_copilot
+        from swe.harness.rate_limits import _fetch_github_copilot
 
         body = dict(self._SAMPLE_RESPONSE)
         body["quota_snapshots"] = {
@@ -1687,7 +1687,7 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
             }
         }
         with self._patch_token(), patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_github_copilot()
@@ -1697,7 +1697,7 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
 
     def test_fetch_copilot_unlimited(self):
         """unlimited=true should return 0% usage and not limit_reached."""
-        from quiver.harness.rate_limits import _fetch_github_copilot
+        from swe.harness.rate_limits import _fetch_github_copilot
 
         body = dict(self._SAMPLE_RESPONSE)
         body["quota_snapshots"] = {
@@ -1708,7 +1708,7 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
             }
         }
         with self._patch_token(), patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_github_copilot()
@@ -1718,12 +1718,12 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
 
     def test_fetch_copilot_no_premium_snapshot(self):
         """Missing premium_interactions → still return RateLimitInfo with reset_at."""
-        from quiver.harness.rate_limits import _fetch_github_copilot
+        from swe.harness.rate_limits import _fetch_github_copilot
 
         body = dict(self._SAMPLE_RESPONSE)
         body["quota_snapshots"] = {}
         with self._patch_token(), patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_github_copilot()
@@ -1735,13 +1735,13 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
 
     def test_fetch_copilot_missing_reset_date(self):
         """Missing reset date → reset_at=0 (renders as '—' in UI)."""
-        from quiver.harness.rate_limits import _fetch_github_copilot
+        from swe.harness.rate_limits import _fetch_github_copilot
 
         body = dict(self._SAMPLE_RESPONSE)
         body.pop("quota_reset_date_utc", None)
         body.pop("quota_reset_date", None)
         with self._patch_token(), patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_github_copilot()
@@ -1750,18 +1750,18 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
 
     def test_fetch_copilot_no_gh(self):
         """Missing gh CLI → return None."""
-        from quiver.harness.rate_limits import _fetch_github_copilot
+        from swe.harness.rate_limits import _fetch_github_copilot
 
-        with patch("quiver.harness.rate_limits.shutil.which", return_value=None):
+        with patch("swe.harness.rate_limits.shutil.which", return_value=None):
             info = _fetch_github_copilot()
         self.assertIsNone(info)
 
     def test_fetch_copilot_gh_not_authenticated(self):
         """gh returns non-zero exit (not authenticated) → return None."""
-        from quiver.harness.rate_limits import _fetch_github_copilot
+        from swe.harness.rate_limits import _fetch_github_copilot
 
         with patch(
-            "quiver.harness.rate_limits.subprocess.run",
+            "swe.harness.rate_limits.subprocess.run",
             return_value=_CompletedProc(returncode=1, stdout="", stderr="not logged in"),
         ):
             info = _fetch_github_copilot()
@@ -1769,10 +1769,10 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
 
     def test_fetch_copilot_gh_empty_token(self):
         """gh succeeds but stdout is empty → return None."""
-        from quiver.harness.rate_limits import _fetch_github_copilot
+        from swe.harness.rate_limits import _fetch_github_copilot
 
         with patch(
-            "quiver.harness.rate_limits.subprocess.run",
+            "swe.harness.rate_limits.subprocess.run",
             return_value=_CompletedProc(returncode=0, stdout="  \n"),
         ):
             info = _fetch_github_copilot()
@@ -1780,11 +1780,11 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
 
     def test_fetch_copilot_http_error(self):
         """HTTP 4xx/5xx from GitHub → return None."""
-        from quiver.harness.rate_limits import _fetch_github_copilot
+        from swe.harness.rate_limits import _fetch_github_copilot
         import urllib.error
 
         with self._patch_token(), patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             side_effect=urllib.error.HTTPError("url", 403, "Forbidden", {}, None),
         ):
             info = _fetch_github_copilot()
@@ -1792,14 +1792,14 @@ class GitHubCopilotFetcherTest(unittest.TestCase):
 
     def test_fetch_copilot_malformed_json(self):
         """Invalid JSON response → return None."""
-        from quiver.harness.rate_limits import _fetch_github_copilot
+        from swe.harness.rate_limits import _fetch_github_copilot
 
         mock_resp = MagicMock()
         mock_resp.read.return_value = b"not json"
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
         with self._patch_token(), patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=mock_resp,
         ):
             info = _fetch_github_copilot()
@@ -1810,7 +1810,7 @@ class CopilotDerivationTest(unittest.TestCase):
     """Unit tests for the deterministic mapping helpers."""
 
     def test_unlimited_returns_zero(self):
-        from quiver.harness.rate_limits import _derive_copilot_fields
+        from swe.harness.rate_limits import _derive_copilot_fields
 
         used, reached = _derive_copilot_fields(
             {"unlimited": True, "percent_remaining": 50.0,
@@ -1820,7 +1820,7 @@ class CopilotDerivationTest(unittest.TestCase):
         self.assertFalse(reached)
 
     def test_full_quota_no_limit(self):
-        from quiver.harness.rate_limits import _derive_copilot_fields
+        from swe.harness.rate_limits import _derive_copilot_fields
 
         used, reached = _derive_copilot_fields(
             {"unlimited": False, "percent_remaining": 100.0,
@@ -1830,7 +1830,7 @@ class CopilotDerivationTest(unittest.TestCase):
         self.assertFalse(reached)
 
     def test_half_quota(self):
-        from quiver.harness.rate_limits import _derive_copilot_fields
+        from swe.harness.rate_limits import _derive_copilot_fields
 
         used, reached = _derive_copilot_fields(
             {"unlimited": False, "percent_remaining": 50.0,
@@ -1840,7 +1840,7 @@ class CopilotDerivationTest(unittest.TestCase):
         self.assertFalse(reached)
 
     def test_over_quota_clamps_to_100(self):
-        from quiver.harness.rate_limits import _derive_copilot_fields
+        from swe.harness.rate_limits import _derive_copilot_fields
 
         used, reached = _derive_copilot_fields(
             {"unlimited": False, "percent_remaining": -5.0,
@@ -1850,13 +1850,13 @@ class CopilotDerivationTest(unittest.TestCase):
         self.assertTrue(reached)
 
     def test_decorate_individual_with_educational_sku(self):
-        from quiver.harness.rate_limits import _decorate_copilot_plan_type
+        from swe.harness.rate_limits import _decorate_copilot_plan_type
 
         result = _decorate_copilot_plan_type("individual", "free_educational_quota")
         self.assertEqual(result, "individual/edu")
 
     def test_decorate_individual_with_pro_sku_unchanged(self):
-        from quiver.harness.rate_limits import _decorate_copilot_plan_type
+        from swe.harness.rate_limits import _decorate_copilot_plan_type
 
         self.assertEqual(
             _decorate_copilot_plan_type("individual", "pro_plus"),
@@ -1865,7 +1865,7 @@ class CopilotDerivationTest(unittest.TestCase):
 
     def test_decorate_business_with_educational_sku_unchanged(self):
         """Only ``individual`` gets the /edu suffix, not other plan types."""
-        from quiver.harness.rate_limits import _decorate_copilot_plan_type
+        from swe.harness.rate_limits import _decorate_copilot_plan_type
 
         self.assertEqual(
             _decorate_copilot_plan_type("business", "free_educational_quota"),
@@ -1873,14 +1873,14 @@ class CopilotDerivationTest(unittest.TestCase):
         )
 
     def test_decorate_empty_sku_unchanged(self):
-        from quiver.harness.rate_limits import _decorate_copilot_plan_type
+        from swe.harness.rate_limits import _decorate_copilot_plan_type
 
         self.assertEqual(_decorate_copilot_plan_type("individual", ""), "individual")
         self.assertEqual(_decorate_copilot_plan_type("individual", "—"), "individual")
 
     def test_decorate_dash_plan_unchanged(self):
         """The ``—`` placeholder plan_type should never be decorated."""
-        from quiver.harness.rate_limits import _decorate_copilot_plan_type
+        from swe.harness.rate_limits import _decorate_copilot_plan_type
 
         self.assertEqual(
             _decorate_copilot_plan_type("—", "free_educational_quota"),
@@ -1888,7 +1888,7 @@ class CopilotDerivationTest(unittest.TestCase):
         )
 
     def test_parse_iso8601(self):
-        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+        from swe.harness.rate_limits import _parse_iso8601_to_epoch
 
         # 2026-08-01T00:00:00 UTC = 1785542400 (verify against datetime
         # round-trip; allow ±1 day to absorb DST/leap boundaries).
@@ -1906,7 +1906,7 @@ class CopilotDerivationTest(unittest.TestCase):
         day of slack, so this cannot detect a parsing regression;
         ``Iso8601ParseTest`` pins the exact values instead.
         """
-        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+        from swe.harness.rate_limits import _parse_iso8601_to_epoch
 
         expected = 1785542400.0  # 2026-08-01T00:00:00Z
         for variant in (
@@ -1925,7 +1925,7 @@ class CopilotDerivationTest(unittest.TestCase):
 
     def test_parse_iso8601_defensive(self):
         """Empty / whitespace / non-string inputs should return 0.0."""
-        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+        from swe.harness.rate_limits import _parse_iso8601_to_epoch
 
         self.assertEqual(_parse_iso8601_to_epoch(""), 0.0)
         self.assertEqual(_parse_iso8601_to_epoch(None), 0.0)
@@ -1941,7 +1941,7 @@ class CopilotDerivationTest(unittest.TestCase):
 
     def test_parse_iso8601_naive_is_utc(self):
         """Naïve timestamps must NOT fall back to local-time."""
-        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+        from swe.harness.rate_limits import _parse_iso8601_to_epoch
 
         naive = _parse_iso8601_to_epoch("2026-08-01T00:00:00")          # → UTC
         offset = _parse_iso8601_to_epoch("2026-07-31T20:00:00-04:00")    # -04:00
@@ -1955,7 +1955,7 @@ class CopilotDerivationTest(unittest.TestCase):
         Regression guard: JSON null from GitHub means 'we don't know',
         not 'nothing consumed'. Don't mask it as '100% remaining'.
         """
-        from quiver.harness.rate_limits import _derive_copilot_fields
+        from swe.harness.rate_limits import _derive_copilot_fields
 
         # No unlimited flag → null means unknown, used_percent = 0.
         used, reached = _derive_copilot_fields(
@@ -1967,7 +1967,7 @@ class CopilotDerivationTest(unittest.TestCase):
 
     def test_derive_copilot_fields_malformed_doesnt_crash(self):
         """Non-numeric percent_remaining must not crash the fetcher."""
-        from quiver.harness.rate_limits import _derive_copilot_fields
+        from swe.harness.rate_limits import _derive_copilot_fields
 
         # 100% with a stray percent sign → fallback to 0, no crash
         used, reached = _derive_copilot_fields(
@@ -1995,7 +1995,7 @@ class Iso8601ParseTest(unittest.TestCase):
 
     def test_equivalent_spellings_are_exact(self):
         """Every spelling of the same instant must give the same float."""
-        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+        from swe.harness.rate_limits import _parse_iso8601_to_epoch
 
         cases = [
             ("Z with milliseconds", "2026-08-01T00:00:00.000Z"),
@@ -2014,7 +2014,7 @@ class Iso8601ParseTest(unittest.TestCase):
 
     def test_fractional_seconds_are_preserved(self):
         """Sub-second precision must survive, offset or not."""
-        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+        from swe.harness.rate_limits import _parse_iso8601_to_epoch
 
         cases = [
             ("ms with offset", "2026-08-01T00:00:00.123+00:00", 1785542400.123),
@@ -2038,7 +2038,7 @@ class Iso8601ParseTest(unittest.TestCase):
         it each of these returns 0.0 instead, which reads as "no reset
         time known" and would silently blank a rate-limit countdown.
         """
-        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+        from swe.harness.rate_limits import _parse_iso8601_to_epoch
 
         cases = [
             ("non-digit fraction", "2026-08-01T00:00:00.abc+00:00"),
@@ -2051,7 +2051,7 @@ class Iso8601ParseTest(unittest.TestCase):
 
     def test_malformed_fraction_without_offset_is_rejected(self):
         """No offset means no anchor to retry against, so 0.0."""
-        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+        from swe.harness.rate_limits import _parse_iso8601_to_epoch
 
         self.assertEqual(_parse_iso8601_to_epoch("2026-08-01T00:00:00.abc"), 0.0)
 
@@ -2067,7 +2067,7 @@ class Iso8601ParseTest(unittest.TestCase):
         The floor is now 3.11, so this ran gated on the interpreter
         before the bump and runs unconditionally after it.
         """
-        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+        from swe.harness.rate_limits import _parse_iso8601_to_epoch
 
         for raw in (
             "2026-08-01T00:00:00.123456789+00:00",
@@ -2078,7 +2078,7 @@ class Iso8601ParseTest(unittest.TestCase):
 
     def test_unparseable_and_absent_values_are_zero(self):
         """Anything we cannot read becomes 0.0, never an exception."""
-        from quiver.harness.rate_limits import _parse_iso8601_to_epoch
+        from swe.harness.rate_limits import _parse_iso8601_to_epoch
 
         cases = [
             ("None", None),
@@ -2137,14 +2137,14 @@ class ClaudeFetcherTest(unittest.TestCase):
         creds_path.write_text(json.dumps({"claudeAiOauth": oauth}))
         patches = [
             patch(
-                "quiver.harness.rate_limits.os.path.expanduser",
+                "swe.harness.rate_limits.os.path.expanduser",
                 side_effect=lambda p: (
                     str(creds_path) if "~/.claude/.credentials.json" in str(p)
                     else p
                 ),
             ),
             patch(
-                "quiver.harness.rate_limits._read_claude_keychain_credentials",
+                "swe.harness.rate_limits._read_claude_keychain_credentials",
                 return_value=None,
             ),
         ]
@@ -2152,15 +2152,15 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_creds_present_fetches_most_limiting_window(self):
         """A paid Claude login surfaces the most-used subscription window."""
-        from quiver.harness.rate_limits import _fetch_claude
+        from swe.harness.rate_limits import _fetch_claude
 
         tmp, patches = self._linux_creds_file()
         try:
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp.name) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits.urllib.request.urlopen",
+                "swe.harness.rate_limits.urllib.request.urlopen",
                 return_value=self._mock_response(self._SAMPLE_RESPONSE),
             ) as mock_open:
                 info = _fetch_claude()
@@ -2176,7 +2176,7 @@ class ClaudeFetcherTest(unittest.TestCase):
     def test_email_comes_from_the_global_config(self):
         """``~/.claude.json``'s ``oauthAccount.emailAddress`` rides the
         reading; an absent file or field just means no email."""
-        from quiver.harness.rate_limits import _fetch_claude, _read_claude_email
+        from swe.harness.rate_limits import _fetch_claude, _read_claude_email
 
         tmp = tempfile.TemporaryDirectory()
         try:
@@ -2195,16 +2195,16 @@ class ClaudeFetcherTest(unittest.TestCase):
                 "~/.claude.json": str(config_path),
             }.get(p, p)
             with patch(
-                "quiver.harness.rate_limits.os.path.expanduser",
+                "swe.harness.rate_limits.os.path.expanduser",
                 side_effect=redirect,
             ), patch(
-                "quiver.harness.rate_limits._read_claude_keychain_credentials",
+                "swe.harness.rate_limits._read_claude_keychain_credentials",
                 return_value=None,
             ), patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp.name) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits.urllib.request.urlopen",
+                "swe.harness.rate_limits.urllib.request.urlopen",
                 return_value=self._mock_response(self._SAMPLE_RESPONSE),
             ):
                 self.assertEqual(_read_claude_email(), "work@example.com")
@@ -2214,7 +2214,7 @@ class ClaudeFetcherTest(unittest.TestCase):
 
             config_path.write_text(json.dumps({"oauthAccount": {}}))
             with patch(
-                "quiver.harness.rate_limits.os.path.expanduser",
+                "swe.harness.rate_limits.os.path.expanduser",
                 side_effect=redirect,
             ):
                 self.assertIsNone(_read_claude_email())
@@ -2223,25 +2223,25 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_no_credentials_returns_none(self):
         """Neither file nor keychain available → return None, no crash."""
-        from quiver.harness.rate_limits import _fetch_claude
+        from swe.harness.rate_limits import _fetch_claude
 
-        with patch("quiver.harness.rate_limits.os.path.expanduser",
+        with patch("swe.harness.rate_limits.os.path.expanduser",
                    side_effect=lambda p: "/no/such/path/x" if "~/.claude" in str(p) else p), \
-             patch("quiver.harness.rate_limits.shutil.which", return_value=None):
+             patch("swe.harness.rate_limits.shutil.which", return_value=None):
             info = _fetch_claude()
         self.assertIsNone(info)
 
     def test_expired_credentials_request_relogin(self):
         """Expired token with no refreshToken is re-login, never fetched."""
-        from quiver.harness.rate_limits import _fetch_claude
+        from swe.harness.rate_limits import _fetch_claude
 
         tmp, patches = self._linux_creds_file(expiresAt=1, refreshToken=None)
         try:
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp.name) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits.urllib.request.urlopen",
+                "swe.harness.rate_limits.urllib.request.urlopen",
             ) as request:
                 info = _fetch_claude()
         finally:
@@ -2258,15 +2258,15 @@ class ClaudeFetcherTest(unittest.TestCase):
         fetcher reports nothing and the aggregator can serve the last
         good figure instead of crying re-login.
         """
-        from quiver.harness.rate_limits import _fetch_claude
+        from swe.harness.rate_limits import _fetch_claude
 
         tmp, patches = self._linux_creds_file(expiresAt=1)
         try:
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp.name) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits.urllib.request.urlopen",
+                "swe.harness.rate_limits.urllib.request.urlopen",
             ) as request:
                 info = _fetch_claude()
         finally:
@@ -2277,15 +2277,15 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_expired_token_with_refresh_token_serves_own_cache(self):
         """A fresh claude-side reading shows through the self-heal window."""
-        from quiver.harness.rate_limits import _fetch_claude, _save_claude_state
+        from swe.harness.rate_limits import _fetch_claude, _save_claude_state
 
         tmp, patches = self._linux_creds_file(expiresAt=1)
         try:
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp.name) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits.urllib.request.urlopen",
+                "swe.harness.rate_limits.urllib.request.urlopen",
             ) as request:
                 _save_claude_state(RateLimitInfo(
                     tool_name="claude", used_percent=61,
@@ -2305,7 +2305,7 @@ class ClaudeFetcherTest(unittest.TestCase):
         The aggregator writes ``updated_at`` into the shared cache; a
         stale reading stamped now would stay visible past its 24h bound.
         """
-        from quiver.harness.rate_limits import _fetch_claude, _save_claude_state
+        from swe.harness.rate_limits import _fetch_claude, _save_claude_state
 
         tmp, patches = self._linux_creds_file(expiresAt=1)
         two_hours_ago = time.time() - 7200
@@ -2314,7 +2314,7 @@ class ClaudeFetcherTest(unittest.TestCase):
         register("claude", _fetch_claude)
         try:
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp.name) / "rate_limits_cache.json",
             ):
                 _save_claude_state(
@@ -2338,12 +2338,12 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_fresher_keychain_beats_expired_file(self):
         """A fresh Keychain login wins over a stale credentials file."""
-        from quiver.harness.rate_limits import _get_claude_oauth_credentials
+        from swe.harness.rate_limits import _get_claude_oauth_credentials
 
         tmp, patches = self._linux_creds_file(token="file-token", expiresAt=1)
         try:
             with patches[0], patch(
-                "quiver.harness.rate_limits._read_claude_keychain_credentials",
+                "swe.harness.rate_limits._read_claude_keychain_credentials",
                 return_value={
                     "accessToken": "kc-token",
                     "refreshToken": "y",
@@ -2357,12 +2357,12 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_fresher_keychain_beats_valid_file(self):
         """A newer Keychain login wins even over an unexpired file token."""
-        from quiver.harness.rate_limits import _get_claude_oauth_credentials
+        from swe.harness.rate_limits import _get_claude_oauth_credentials
 
         tmp, patches = self._linux_creds_file()
         try:
             with patches[0], patch(
-                "quiver.harness.rate_limits._read_claude_keychain_credentials",
+                "swe.harness.rate_limits._read_claude_keychain_credentials",
                 return_value={
                     "accessToken": "kc-token",
                     "expiresAt": 9_999_999_999_999 + 1_000,
@@ -2375,12 +2375,12 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_valid_file_beats_older_keychain(self):
         """An older Keychain entry never shadows a fresher file token."""
-        from quiver.harness.rate_limits import _get_claude_oauth_credentials
+        from swe.harness.rate_limits import _get_claude_oauth_credentials
 
         tmp, patches = self._linux_creds_file()
         try:
             with patches[0], patch(
-                "quiver.harness.rate_limits._read_claude_keychain_credentials",
+                "swe.harness.rate_limits._read_claude_keychain_credentials",
                 return_value={
                     "accessToken": "kc-token",
                     "expiresAt": 9_999_999_999_998,
@@ -2393,16 +2393,16 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_keychain_lookup_timeout_is_inside_aggregator_deadline(self):
         """A hanging Keychain prompt must not eat the 2s fetch budget."""
-        from quiver.harness.rate_limits import (
+        from swe.harness.rate_limits import (
             _CLAUDE_KEYCHAIN_TIMEOUT,
             _RATE_LIMIT_FETCH_DEADLINE,
             _read_claude_keychain_credentials,
         )
 
         creds_json = json.dumps({"claudeAiOauth": {"accessToken": "kc-token"}})
-        with patch("quiver.harness.rate_limits.shutil.which",
+        with patch("swe.harness.rate_limits.shutil.which",
                    return_value="/usr/bin/security"), \
-             patch("quiver.harness.rate_limits.subprocess.run",
+             patch("swe.harness.rate_limits.subprocess.run",
                    return_value=_CompletedProc(returncode=0, stdout=creds_json)
                    ) as run:
             oauth = _read_claude_keychain_credentials()
@@ -2413,24 +2413,24 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_keychain_timeout_does_not_promote_stale_file(self):
         """A timed-out Keychain lookup is unknown, not absent."""
-        from quiver.harness.rate_limits import (
+        from swe.harness.rate_limits import (
             _fetch_claude, _get_claude_oauth_credentials,
         )
 
         tmp, patches = self._linux_creds_file(expiresAt=1)
         try:
             with patches[0], patch(
-                "quiver.harness.rate_limits.shutil.which",
+                "swe.harness.rate_limits.shutil.which",
                 return_value="/usr/bin/security",
             ), patch(
-                "quiver.harness.rate_limits.subprocess.run",
+                "swe.harness.rate_limits.subprocess.run",
                 side_effect=subprocess.TimeoutExpired(
                     cmd="security", timeout=1.0),
             ), patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp.name) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits.urllib.request.urlopen",
+                "swe.harness.rate_limits.urllib.request.urlopen",
             ) as request:
                 self.assertIsNone(_get_claude_oauth_credentials())
                 self.assertIsNone(_fetch_claude())
@@ -2440,15 +2440,15 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_keychain_os_error_still_falls_back_to_file(self):
         """A Keychain that errors outright still lets the file win."""
-        from quiver.harness.rate_limits import _get_claude_oauth_credentials
+        from swe.harness.rate_limits import _get_claude_oauth_credentials
 
         tmp, patches = self._linux_creds_file()
         try:
             with patches[0], patch(
-                "quiver.harness.rate_limits.shutil.which",
+                "swe.harness.rate_limits.shutil.which",
                 return_value="/usr/bin/security",
             ), patch(
-                "quiver.harness.rate_limits.subprocess.run",
+                "swe.harness.rate_limits.subprocess.run",
                 side_effect=OSError(),
             ):
                 oauth = _get_claude_oauth_credentials()
@@ -2458,17 +2458,17 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_expired_file_without_keychain_is_kept(self):
         """The only known credential is still returned so it can age out."""
-        from quiver.harness.rate_limits import (
+        from swe.harness.rate_limits import (
             _fetch_claude, _get_claude_oauth_credentials,
         )
 
         tmp, patches = self._linux_creds_file(expiresAt=1, refreshToken=None)
         try:
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp.name) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits.urllib.request.urlopen",
+                "swe.harness.rate_limits.urllib.request.urlopen",
             ) as request:
                 oauth = _get_claude_oauth_credentials()
                 self.assertEqual(oauth["accessToken"], "fake-claude-token")
@@ -2480,13 +2480,13 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_expired_keychain_and_fresher_file_prefers_file(self):
         """Between two expired sources the later expiresAt wins."""
-        from quiver.harness.rate_limits import _get_claude_oauth_credentials
+        from swe.harness.rate_limits import _get_claude_oauth_credentials
 
         tmp, patches = self._linux_creds_file(
             token="file-token", expiresAt=1_000)
         try:
             with patches[0], patch(
-                "quiver.harness.rate_limits._read_claude_keychain_credentials",
+                "swe.harness.rate_limits._read_claude_keychain_credentials",
                 return_value={"accessToken": "kc-token", "expiresAt": 1},
             ):
                 oauth = _get_claude_oauth_credentials()
@@ -2496,7 +2496,7 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_claude_expires_at_seconds_accepts_ms_and_seconds(self):
         """expiresAt normalises milliseconds and seconds, 0.0 on junk."""
-        from quiver.harness.rate_limits import _claude_expires_at_seconds
+        from swe.harness.rate_limits import _claude_expires_at_seconds
 
         self.assertEqual(
             _claude_expires_at_seconds({"expiresAt": 1_700_000_000_000}),
@@ -2511,16 +2511,16 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_rate_limit_reuses_last_reading_during_retry_after(self):
         """A 429 keeps Claude visible and suppresses calls during cooldown."""
-        from quiver.harness.rate_limits import _fetch_claude
+        from swe.harness.rate_limits import _fetch_claude
 
         tmp, patches = self._linux_creds_file()
         cache_file = Path(tmp.name) / "rate_limits_cache.json"
         try:
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
-                "quiver.harness.rate_limits._fetch_claude_url",
+                "swe.harness.rate_limits._fetch_claude_url",
                 return_value=self._SAMPLE_RESPONSE,
             ):
                 first = _fetch_claude()
@@ -2530,19 +2530,19 @@ class ClaudeFetcherTest(unittest.TestCase):
                 return None
 
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
-                "quiver.harness.rate_limits._fetch_claude_url",
+                "swe.harness.rate_limits._fetch_claude_url",
                 side_effect=rate_limited,
             ):
                 stale = _fetch_claude()
 
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
-                "quiver.harness.rate_limits._fetch_claude_url",
+                "swe.harness.rate_limits._fetch_claude_url",
             ) as fetch:
                 during_cooldown = _fetch_claude()
 
@@ -2555,7 +2555,7 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_new_credentials_bypass_existing_retry_after(self):
         """Logging in again invalidates a cooldown tied to the old token."""
-        from quiver.harness.rate_limits import _fetch_claude
+        from swe.harness.rate_limits import _fetch_claude
 
         tmp, patches = self._linux_creds_file(token="new-token")
         cache_file = Path(tmp.name) / "rate_limits_cache.json"
@@ -2567,10 +2567,10 @@ class ClaudeFetcherTest(unittest.TestCase):
         }))
         try:
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
-                "quiver.harness.rate_limits._fetch_claude_url",
+                "swe.harness.rate_limits._fetch_claude_url",
                 return_value=self._SAMPLE_RESPONSE,
             ) as fetch:
                 info = _fetch_claude()
@@ -2588,7 +2588,7 @@ class ClaudeFetcherTest(unittest.TestCase):
         figure display as current for as long as the failure lasted. The
         aggregator's own 24h fallback shows the last value with its real age.
         """
-        from quiver.harness.rate_limits import (
+        from swe.harness.rate_limits import (
             _claude_credential_fingerprint, _fetch_claude,
         )
 
@@ -2608,10 +2608,10 @@ class ClaudeFetcherTest(unittest.TestCase):
         }))
         try:
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
-                "quiver.harness.rate_limits._fetch_claude_url",
+                "swe.harness.rate_limits._fetch_claude_url",
                 return_value=None,
             ) as fetch:
                 info = _fetch_claude()
@@ -2622,7 +2622,7 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_cooldown_drops_reading_older_than_a_day(self):
         """A 429 cooldown never shows a figure the aggregator would refuse."""
-        from quiver.harness.rate_limits import (
+        from swe.harness.rate_limits import (
             _claude_credential_fingerprint, _fetch_claude,
         )
 
@@ -2642,10 +2642,10 @@ class ClaudeFetcherTest(unittest.TestCase):
         }))
         try:
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
-                "quiver.harness.rate_limits._fetch_claude_url",
+                "swe.harness.rate_limits._fetch_claude_url",
             ) as fetch:
                 info = _fetch_claude()
             self.assertIsNone(info)
@@ -2655,7 +2655,7 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_state_saved_before_fetched_at_existed_is_not_reused(self):
         """A state file from before readings were dated cannot be aged."""
-        from quiver.harness.rate_limits import _fetch_claude
+        from swe.harness.rate_limits import _fetch_claude
 
         tmp, patches = self._linux_creds_file()
         cache_file = Path(tmp.name) / "rate_limits_cache.json"
@@ -2676,10 +2676,10 @@ class ClaudeFetcherTest(unittest.TestCase):
 
         try:
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
-                "quiver.harness.rate_limits._fetch_claude_url",
+                "swe.harness.rate_limits._fetch_claude_url",
                 side_effect=rate_limited,
             ):
                 info = _fetch_claude()
@@ -2692,7 +2692,7 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_cooldown_keeps_the_reading_its_original_date(self):
         """Re-saving the last reading on a 429 must not make it younger."""
-        from quiver.harness.rate_limits import _fetch_claude
+        from swe.harness.rate_limits import _fetch_claude
 
         tmp, patches = self._linux_creds_file()
         cache_file = Path(tmp.name) / "rate_limits_cache.json"
@@ -2704,10 +2704,10 @@ class ClaudeFetcherTest(unittest.TestCase):
 
         try:
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
-                "quiver.harness.rate_limits._fetch_claude_url",
+                "swe.harness.rate_limits._fetch_claude_url",
                 return_value=self._SAMPLE_RESPONSE,
             ):
                 _fetch_claude()
@@ -2715,13 +2715,13 @@ class ClaudeFetcherTest(unittest.TestCase):
             self.assertGreater(first_fetched_at, 0)
 
             with patches[0], patches[1], patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 cache_file,
             ), patch(
-                "quiver.harness.rate_limits._fetch_claude_url",
+                "swe.harness.rate_limits._fetch_claude_url",
                 side_effect=rate_limited,
             ), patch(
-                "quiver.harness.rate_limits.time.time",
+                "swe.harness.rate_limits.time.time",
                 return_value=first_fetched_at + 600,
             ):
                 stale = _fetch_claude()
@@ -2733,21 +2733,21 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_macos_keychain_path(self):
         """macOS keychain credentials can fetch Claude subscription usage."""
-        from quiver.harness.rate_limits import _fetch_claude
+        from swe.harness.rate_limits import _fetch_claude
 
         tmp = tempfile.TemporaryDirectory()
         creds_json = json.dumps({"claudeAiOauth": {"accessToken": "kc-token"}})
         completed = _CompletedProc(returncode=0, stdout=creds_json)
         try:
-            with patch("quiver.harness.rate_limits.os.path.expanduser",
+            with patch("swe.harness.rate_limits.os.path.expanduser",
                        side_effect=lambda p: "/no/such/path/x" if "~/.claude" in str(p) else p), \
-                 patch("quiver.harness.rate_limits.shutil.which",
+                 patch("swe.harness.rate_limits.shutil.which",
                        return_value="/usr/bin/security"), \
-                 patch("quiver.harness.rate_limits.subprocess.run",
+                 patch("swe.harness.rate_limits.subprocess.run",
                        return_value=completed), \
-                 patch("quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                 patch("swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                        Path(tmp.name) / "rate_limits_cache.json"), \
-                 patch("quiver.harness.rate_limits.urllib.request.urlopen",
+                 patch("swe.harness.rate_limits.urllib.request.urlopen",
                        return_value=self._mock_response(self._SAMPLE_RESPONSE)):
                 info = _fetch_claude()
             self.assertIsNotNone(info)
@@ -2758,29 +2758,29 @@ class ClaudeFetcherTest(unittest.TestCase):
 
     def test_keychain_bad_json_returns_none(self):
         """Non-JSON keychain password field → return None (defensive parse)."""
-        from quiver.harness.rate_limits import _fetch_claude
+        from swe.harness.rate_limits import _fetch_claude
 
         completed = _CompletedProc(returncode=0, stdout="not-json")
-        with patch("quiver.harness.rate_limits.os.path.expanduser",
+        with patch("swe.harness.rate_limits.os.path.expanduser",
                    side_effect=lambda p: "/no/such/path/x" if "~/.claude" in str(p) else p), \
-             patch("quiver.harness.rate_limits.shutil.which",
+             patch("swe.harness.rate_limits.shutil.which",
                    return_value="/usr/bin/security"), \
-             patch("quiver.harness.rate_limits.subprocess.run",
+             patch("swe.harness.rate_limits.subprocess.run",
                    return_value=completed):
             info = _fetch_claude()
         self.assertIsNone(info)
 
     def test_keychain_missing_token_field_returns_none(self):
         """JSON parses but lacks claudeAiOauth.accessToken → return None."""
-        from quiver.harness.rate_limits import _fetch_claude
+        from swe.harness.rate_limits import _fetch_claude
 
         creds_json = json.dumps({"other_field": "x"})  # no claudeAiOauth
         completed = _CompletedProc(returncode=0, stdout=creds_json)
-        with patch("quiver.harness.rate_limits.os.path.expanduser",
+        with patch("swe.harness.rate_limits.os.path.expanduser",
                    side_effect=lambda p: "/no/such/path/x" if "~/.claude" in str(p) else p), \
-             patch("quiver.harness.rate_limits.shutil.which",
+             patch("swe.harness.rate_limits.shutil.which",
                    return_value="/usr/bin/security"), \
-             patch("quiver.harness.rate_limits.subprocess.run",
+             patch("swe.harness.rate_limits.subprocess.run",
                    return_value=completed):
             info = _fetch_claude()
         self.assertIsNone(info)
@@ -2801,7 +2801,7 @@ class ClaudeFetcherTest(unittest.TestCase):
             window_seconds=0,
             window="7ds",
         )
-        with patch("quiver.harness.rate_limits.time.time",
+        with patch("swe.harness.rate_limits.time.time",
                    return_value=RateLimitInfoTest._NOW):
             col = info.format_column()
         # Window label MUST appear; reset countdown MUST appear.
@@ -2821,7 +2821,7 @@ class ClaudeFetcherTest(unittest.TestCase):
             window_seconds=604800,
             window="",  # legacy default
         )
-        with patch("quiver.harness.rate_limits.time.time",
+        with patch("swe.harness.rate_limits.time.time",
                    return_value=RateLimitInfoTest._NOW):
             col = info.format_column()
         # No window marker; the colons that mark the window prefix must not appear.
@@ -2844,7 +2844,7 @@ class FreebuffFetcherTest(unittest.TestCase):
     }
 
     def test_parser_returns_remaining_and_total_session_counts(self):
-        from quiver.harness.rate_limits import _parse_freebuff_quota
+        from swe.harness.rate_limits import _parse_freebuff_quota
 
         info = _parse_freebuff_quota(self._SAMPLE_RESPONSE)
 
@@ -2857,7 +2857,7 @@ class FreebuffFetcherTest(unittest.TestCase):
         self.assertEqual(info.reset_at, 1785567600.0)
 
     def test_parser_marks_exhausted_allowance(self):
-        from quiver.harness.rate_limits import _parse_freebuff_quota
+        from swe.harness.rate_limits import _parse_freebuff_quota
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         data["referral"]["weeklySessionsRemaining"] = 0
@@ -2868,7 +2868,7 @@ class FreebuffFetcherTest(unittest.TestCase):
         self.assertTrue(info.limit_reached)
 
     def test_parser_prefers_exact_glm_model_quota(self):
-        from quiver.harness.rate_limits import _parse_freebuff_quota
+        from swe.harness.rate_limits import _parse_freebuff_quota
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         data["rateLimitsByModel"] = {
@@ -2888,7 +2888,7 @@ class FreebuffFetcherTest(unittest.TestCase):
         self.assertEqual(info.reset_at, 1785654000.0)
 
     def test_parser_uses_active_glm_quota_without_referral_block(self):
-        from quiver.harness.rate_limits import _parse_freebuff_quota
+        from swe.harness.rate_limits import _parse_freebuff_quota
 
         info = _parse_freebuff_quota({
             "status": "active",
@@ -2904,7 +2904,7 @@ class FreebuffFetcherTest(unittest.TestCase):
         self.assertEqual(info.total_units, 4)
 
     def test_parser_rejects_missing_or_inconsistent_quota(self):
-        from quiver.harness.rate_limits import _parse_freebuff_quota
+        from swe.harness.rate_limits import _parse_freebuff_quota
 
         self.assertIsNone(_parse_freebuff_quota({"status": "none"}))
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
@@ -2912,13 +2912,13 @@ class FreebuffFetcherTest(unittest.TestCase):
         self.assertIsNone(_parse_freebuff_quota(data))
 
     def test_fetch_uses_bearer_token_without_starting_session(self):
-        from quiver.harness.rate_limits import _fetch_freebuff
+        from swe.harness.rate_limits import _fetch_freebuff
 
         with patch(
-            "quiver.harness.rate_limits._get_freebuff_access_token",
+            "swe.harness.rate_limits._get_freebuff_access_token",
             return_value="freebuff-token",
         ), patch(
-            "quiver.harness.rate_limits._fetch_json",
+            "swe.harness.rate_limits._fetch_json",
             return_value=self._SAMPLE_RESPONSE,
         ) as fetch_json:
             info = _fetch_freebuff()
@@ -2933,19 +2933,19 @@ class FreebuffFetcherTest(unittest.TestCase):
         self.assertEqual(info.remaining_units, 3)
 
     def test_fetch_without_credentials_does_not_call_endpoint(self):
-        from quiver.harness.rate_limits import _fetch_freebuff
+        from swe.harness.rate_limits import _fetch_freebuff
 
         with patch(
-            "quiver.harness.rate_limits._get_freebuff_access_token",
+            "swe.harness.rate_limits._get_freebuff_access_token",
             return_value=None,
-        ), patch("quiver.harness.rate_limits._fetch_json") as fetch_json:
+        ), patch("swe.harness.rate_limits._fetch_json") as fetch_json:
             info = _fetch_freebuff()
 
         self.assertIsNone(info)
         fetch_json.assert_not_called()
 
     def test_reads_token_from_freebuff_credentials(self):
-        from quiver.harness.rate_limits import _get_freebuff_access_token
+        from swe.harness.rate_limits import _get_freebuff_access_token
 
         with tempfile.TemporaryDirectory() as tmp:
             credentials = Path(tmp) / "credentials.json"
@@ -2954,7 +2954,7 @@ class FreebuffFetcherTest(unittest.TestCase):
                 "chatgptOAuth": {"accessToken": "not-this-token"},
             }))
             with patch(
-                "quiver.harness.rate_limits.os.path.expanduser",
+                "swe.harness.rate_limits.os.path.expanduser",
                 return_value=str(credentials),
             ):
                 token = _get_freebuff_access_token()
@@ -3044,7 +3044,7 @@ class DroidFetcherTest(unittest.TestCase):
 
     def _now_patch(self):
         return patch(
-            "quiver.harness.rate_limits.time.time",
+            "swe.harness.rate_limits.time.time",
             return_value=self._NOW,
         )
 
@@ -3056,7 +3056,7 @@ class DroidFetcherTest(unittest.TestCase):
         decrypt a real token, and bypass the keychain rung under test.
         """
         return patch(
-            "quiver.harness.rate_limits._decrypt_droid_auth_file",
+            "swe.harness.rate_limits._decrypt_droid_auth_file",
             return_value=None,
         )
 
@@ -3072,7 +3072,7 @@ class DroidFetcherTest(unittest.TestCase):
         """
         return (
             patch.dict(os.environ, {"FACTORY_API_KEY": value}, clear=True),
-            patch("quiver.harness.rate_limits.shutil.which", return_value=None),
+            patch("swe.harness.rate_limits.shutil.which", return_value=None),
             self._decrypt_none(),
             self._now_patch(),
         )
@@ -3081,7 +3081,7 @@ class DroidFetcherTest(unittest.TestCase):
         """Wipe env vars + neutralize decryption + keychain + now → None."""
         return (
             patch.dict(os.environ, {}, clear=True),
-            patch("quiver.harness.rate_limits.shutil.which", return_value=None),
+            patch("swe.harness.rate_limits.shutil.which", return_value=None),
             self._decrypt_none(),
             self._now_patch(),
         )
@@ -3089,7 +3089,7 @@ class DroidFetcherTest(unittest.TestCase):
     def test_droid_fetch_has_wall_clock_deadline(self):
         """A stalled DNS/HTTP call must not block ``swe list`` indefinitely."""
         import threading
-        from quiver.harness.rate_limits import _droid_fetch
+        from swe.harness.rate_limits import _droid_fetch
 
         started = threading.Event()
         release = threading.Event()
@@ -3103,11 +3103,11 @@ class DroidFetcherTest(unittest.TestCase):
         began = time.monotonic()
         try:
             with patch(
-                "quiver.harness.rate_limits._DROID_FETCH_TIMEOUT",
+                "swe.harness.rate_limits._DROID_FETCH_TIMEOUT",
                 0.05,
                 create=True,
             ), patch(
-                "quiver.harness.rate_limits._fetch_json",
+                "swe.harness.rate_limits._fetch_json",
                 side_effect=stalled_fetch,
             ):
                 info = _droid_fetch(req)
@@ -3120,11 +3120,11 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 1. Env var priority — bypasses decryption + keychain entirely.
     def test_factory_key_env_var_takes_priority(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(self._SAMPLE_RESPONSE),
         ):
             info = _fetch_droid()
@@ -3138,10 +3138,10 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 2. Empty / whitespace env var must NOT be treated as a real token.
     def test_factory_key_env_var_whitespace_is_ignored(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         with patch.dict(os.environ, {"FACTORY_API_KEY": "   "}, clear=True), \
-             patch("quiver.harness.rate_limits.shutil.which",
+             patch("swe.harness.rate_limits.shutil.which",
                    return_value=None), \
              self._decrypt_none():
             info = _fetch_droid()
@@ -3149,15 +3149,15 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 3. Decrypted auth.v2.file is the primary browser-auth rung (step 2).
     def test_auth_v2_file_decryption_path(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         with patch.dict(os.environ, {}, clear=True), \
-             patch("quiver.harness.rate_limits._decrypt_droid_auth_file",
+             patch("swe.harness.rate_limits._decrypt_droid_auth_file",
                    return_value="decrypted-factory-token"), \
-             patch("quiver.harness.rate_limits.shutil.which",
+             patch("swe.harness.rate_limits.shutil.which",
                    return_value=None), \
              self._now_patch(), \
-             patch("quiver.harness.rate_limits.urllib.request.urlopen",
+             patch("swe.harness.rate_limits.urllib.request.urlopen",
                    return_value=self._mock_response(self._SAMPLE_RESPONSE)):
             info = _fetch_droid()
         self.assertIsNotNone(info)
@@ -3168,17 +3168,17 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 4. Keychain `Factory Safe Storage` label is the fallback rung (step 3).
     def test_keychain_factory_safe_storage(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         with patch.dict(os.environ, {}, clear=True), \
              self._decrypt_none(), \
-             patch("quiver.harness.rate_limits.shutil.which",
+             patch("swe.harness.rate_limits.shutil.which",
                    return_value="/usr/bin/security"), \
-             patch("quiver.harness.rate_limits.subprocess.run",
+             patch("swe.harness.rate_limits.subprocess.run",
                    return_value=_CompletedProc(returncode=0,
                                                 stdout="kc-factory-token\n")), \
              self._now_patch(), \
-             patch("quiver.harness.rate_limits.urllib.request.urlopen",
+             patch("swe.harness.rate_limits.urllib.request.urlopen",
                    return_value=self._mock_response(self._SAMPLE_RESPONSE)):
             info = _fetch_droid()
         self.assertIsNotNone(info)
@@ -3188,7 +3188,7 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 5. Keychain fallback ladder: Safe Storage fails, Factory Key succeeds.
     def test_keychain_alt_label_falls_back(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         # First subprocess call fails (label 1), second succeeds (label 2).
         side_effects = [
@@ -3197,12 +3197,12 @@ class DroidFetcherTest(unittest.TestCase):
         ]
         with patch.dict(os.environ, {}, clear=True), \
              self._decrypt_none(), \
-             patch("quiver.harness.rate_limits.shutil.which",
+             patch("swe.harness.rate_limits.shutil.which",
                    return_value="/usr/bin/security"), \
-             patch("quiver.harness.rate_limits.subprocess.run",
+             patch("swe.harness.rate_limits.subprocess.run",
                    side_effect=side_effects) as mock_run, \
              self._now_patch(), \
-             patch("quiver.harness.rate_limits.urllib.request.urlopen",
+             patch("swe.harness.rate_limits.urllib.request.urlopen",
                    return_value=self._mock_response(self._SAMPLE_RESPONSE)):
             info = _fetch_droid()
         self.assertIsNotNone(info)
@@ -3215,7 +3215,7 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 6. All auth rungs missing → return None, no crash.
     def test_no_credentials_returns_none(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         env_patch, what_patch, dec_patch, now_patch = self._no_creds()
         with env_patch, what_patch, dec_patch, now_patch:
@@ -3224,12 +3224,12 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 7. HTTP 4xx/5xx → return None silently (no on_401 callback for 503).
     def test_http_error_returns_none(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
         import urllib.error
 
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             side_effect=urllib.error.HTTPError(
                 "url", 503, "Service Unavailable", {}, None),
         ):
@@ -3239,7 +3239,7 @@ class DroidFetcherTest(unittest.TestCase):
     # 8. Malformed fiveHour in one category → skipped; the other
     #    category's fiveHour still feeds the average.
     def test_malformed_window_skipped_then_other_window_wins(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
@@ -3255,7 +3255,7 @@ class DroidFetcherTest(unittest.TestCase):
         }
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_droid()
@@ -3266,7 +3266,7 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 8b. All windows malformed → return None.
     def test_all_windows_malformed_returns_none(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
@@ -3276,7 +3276,7 @@ class DroidFetcherTest(unittest.TestCase):
         }
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_droid()
@@ -3284,12 +3284,12 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 9. Response without ``limits`` → return None (defensive).
     def test_no_limits_key_returns_none(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         body = {"usesTokenRateLimitsBilling": False}
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_droid()
@@ -3297,7 +3297,7 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 10. usedPercent=0 means no usage and must not mark the limit reached.
     def test_zero_used_is_available(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
@@ -3309,7 +3309,7 @@ class DroidFetcherTest(unittest.TestCase):
         }
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_droid()
@@ -3319,7 +3319,7 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 11. Percentage is the average of core/5h and standard/5h.
     def test_averages_core_and_standard_five_hour(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
@@ -3335,7 +3335,7 @@ class DroidFetcherTest(unittest.TestCase):
         }
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_droid()
@@ -3349,7 +3349,7 @@ class DroidFetcherTest(unittest.TestCase):
     #     though the average is below 100 — the average must not mask a
     #     per-budget cutoff.
     def test_one_budget_at_100_used_marks_reached(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
@@ -3365,7 +3365,7 @@ class DroidFetcherTest(unittest.TestCase):
         }
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_droid()
@@ -3377,7 +3377,7 @@ class DroidFetcherTest(unittest.TestCase):
 
     def test_exhausted_weekly_window_overrides_available_five_hour(self):
         """Show the weekly gate when it blocks use despite 5h capacity."""
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
@@ -3401,7 +3401,7 @@ class DroidFetcherTest(unittest.TestCase):
         }
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_droid()
@@ -3415,7 +3415,7 @@ class DroidFetcherTest(unittest.TestCase):
 
     def test_exhausted_monthly_window_overrides_exhausted_weekly(self):
         """When multiple windows block use, show the longest-lived gate."""
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
@@ -3431,7 +3431,7 @@ class DroidFetcherTest(unittest.TestCase):
         }
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_droid()
@@ -3443,7 +3443,7 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 13. Overage values above 100 clamp to fully used before averaging.
     def test_over_100_used_clamps_to_fully_used(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
@@ -3459,7 +3459,7 @@ class DroidFetcherTest(unittest.TestCase):
         }
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_droid()
@@ -3470,7 +3470,7 @@ class DroidFetcherTest(unittest.TestCase):
 
     # 14. reset_at is parsed from windowEnd (ISO 8601).
     def test_reset_at_parsed_from_window_end(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
@@ -3482,7 +3482,7 @@ class DroidFetcherTest(unittest.TestCase):
         }
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_droid()
@@ -3493,7 +3493,7 @@ class DroidFetcherTest(unittest.TestCase):
     # 14b. reset_at belongs to the selected fiveHour window, not an
     #      unrelated weekly/monthly window.
     def test_reset_at_matches_selected_window(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         body = {
             "limits": {
@@ -3513,7 +3513,7 @@ class DroidFetcherTest(unittest.TestCase):
         }
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_droid()
@@ -3528,7 +3528,7 @@ class DroidFetcherTest(unittest.TestCase):
     #     windowEnd. It still feeds the average, while reset selection skips
     #     the stale timestamp and uses the next future reset.
     def test_rolled_over_zero_used_window_is_included(self):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
 
         # _NOW = 2026-07-25T10:00:00Z. core/fiveHour windowEnd 08:00 is
         # in the past (rolled over) and reports 0% used; standard/fiveHour
@@ -3550,7 +3550,7 @@ class DroidFetcherTest(unittest.TestCase):
         }
         env_patch, what_patch, dec_patch, now_patch = self._env_only()
         with env_patch, what_patch, dec_patch, now_patch, patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             return_value=self._mock_response(body),
         ):
             info = _fetch_droid()
@@ -3570,7 +3570,7 @@ class DroidFetcherTest(unittest.TestCase):
     #     ``req.headers`` and normalizes keys via ``capitalize()`` — so
     #     ``"x-factory-client"`` is stored as ``"X-factory-client"``.
     def test_origin_header_is_app_factory_not_api(self):
-        from quiver.harness.rate_limits import (
+        from swe.harness.rate_limits import (
             _droid_request, _DROID_APP_ORIGIN, _DROID_APP_REFERER,
         )
 
@@ -3584,7 +3584,7 @@ class DroidFetcherTest(unittest.TestCase):
 
 
 class BundledLibcryptoLoadTest(unittest.TestCase):
-    """QUIVER_BUNDLED_PYTHON loads OpenSSL only from the bundle's lib dir.
+    """SWE_BUNDLED_PYTHON loads OpenSSL only from the bundle's lib dir.
 
     An external dylib under the bundled interpreter's signature aborts
     the process instead of raising, so nothing outside
@@ -3592,7 +3592,7 @@ class BundledLibcryptoLoadTest(unittest.TestCase):
     """
 
     def setUp(self):
-        import quiver.harness.rate_limits as rl
+        import swe.harness.rate_limits as rl
         self.rl = rl
         self._saved = (rl._LIBCRYPTO, rl._LIBCRYPTO_TRIED)
         rl._LIBCRYPTO_TRIED = False
@@ -3622,7 +3622,7 @@ class BundledLibcryptoLoadTest(unittest.TestCase):
 
             import ctypes
             import ctypes.util  # noqa: F401 — it uses CDLL at import time
-            with patch.dict(os.environ, {"QUIVER_BUNDLED_PYTHON": "1"}), \
+            with patch.dict(os.environ, {"SWE_BUNDLED_PYTHON": "1"}), \
                     patch.object(sys, "executable", str(exe)), \
                     patch.object(ctypes, "CDLL", fake_cdll):
                 lib = self.rl._load_libcrypto()
@@ -3643,7 +3643,7 @@ class BundledLibcryptoLoadTest(unittest.TestCase):
 
             import ctypes
             import ctypes.util  # noqa: F401
-            with patch.dict(os.environ, {"QUIVER_BUNDLED_PYTHON": "1"}), \
+            with patch.dict(os.environ, {"SWE_BUNDLED_PYTHON": "1"}), \
                     patch.object(sys, "executable", str(exe)), \
                     patch.object(ctypes, "CDLL",
                                  lambda name: calls.append(name)):
@@ -3659,7 +3659,7 @@ class DarwinSystemLibcryptoTest(unittest.TestCase):
     """
 
     def setUp(self):
-        import quiver.harness.rate_limits as rl
+        import swe.harness.rate_limits as rl
         self.rl = rl
         self._saved = (rl._LIBCRYPTO, rl._LIBCRYPTO_TRIED)
         rl._LIBCRYPTO_TRIED = False
@@ -3682,7 +3682,7 @@ class DarwinSystemLibcryptoTest(unittest.TestCase):
                 patch.object(ctypes.util, "find_library",
                              lambda name: "/usr/lib/libcrypto.dylib"), \
                 patch("glob.glob", return_value=[]):
-            os.environ.pop("QUIVER_BUNDLED_PYTHON", None)
+            os.environ.pop("SWE_BUNDLED_PYTHON", None)
             self.assertIsNone(self.rl._load_libcrypto())
         return calls
 
@@ -3712,18 +3712,18 @@ class DroidAuthFileDecryptTest(unittest.TestCase):
     """
 
     def test_no_libcrypto_returns_none(self):
-        from quiver.harness.rate_limits import _decrypt_droid_auth_file
-        with patch("quiver.harness.rate_limits._load_libcrypto",
+        from swe.harness.rate_limits import _decrypt_droid_auth_file
+        with patch("swe.harness.rate_limits._load_libcrypto",
                    return_value=None):
             self.assertIsNone(_decrypt_droid_auth_file())
 
     def test_missing_files_returns_none(self):
-        from quiver.harness.rate_limits import _decrypt_droid_auth_file
+        from swe.harness.rate_limits import _decrypt_droid_auth_file
         # _load_libcrypto is allowed to succeed (real system), but the
         # credential files must be absent for this test. Redirect both
         # ``~/.factory/auth.v2.*`` paths to a non-existent temp dir.
         with tempfile.TemporaryDirectory() as tmp:
-            with patch("quiver.harness.rate_limits.os.path.expanduser",
+            with patch("swe.harness.rate_limits.os.path.expanduser",
                        side_effect=lambda p: (
                            str(Path(tmp) / "missing.key")
                            if p == "~/.factory/auth.v2.key"
@@ -3739,7 +3739,7 @@ class RetryAfterParserTest(unittest.TestCase):
     on_http_error diagnostic callbacks."""
 
     def test_numeric_seconds(self):
-        from quiver.harness.rate_limits import _parse_retry_after_to_seconds
+        from swe.harness.rate_limits import _parse_retry_after_to_seconds
         self.assertEqual(_parse_retry_after_to_seconds("120"), 120.0)
         self.assertEqual(_parse_retry_after_to_seconds("0"), 0.0)
         self.assertEqual(_parse_retry_after_to_seconds("235"), 235.0)
@@ -3747,7 +3747,7 @@ class RetryAfterParserTest(unittest.TestCase):
         self.assertEqual(_parse_retry_after_to_seconds("  60  "), 60.0)
 
     def test_http_date_returns_seconds_until(self):
-        from quiver.harness.rate_limits import _parse_retry_after_to_seconds
+        from swe.harness.rate_limits import _parse_retry_after_to_seconds
         # Future date — should return a positive number of seconds.
         import datetime
         future = datetime.datetime.now(datetime.timezone.utc)
@@ -3758,7 +3758,7 @@ class RetryAfterParserTest(unittest.TestCase):
         self.assertLess(seconds, 60.0)  # roughly "now", not years away
 
     def test_past_http_date_clamps_to_zero(self):
-        from quiver.harness.rate_limits import _parse_retry_after_to_seconds
+        from swe.harness.rate_limits import _parse_retry_after_to_seconds
         # A date in the past — clamped to 0.0 so a stale server
         # header doesn't tell the user to wait centuries.
         self.assertEqual(
@@ -3767,13 +3767,13 @@ class RetryAfterParserTest(unittest.TestCase):
         )
 
     def test_missing_or_empty_returns_none(self):
-        from quiver.harness.rate_limits import _parse_retry_after_to_seconds
+        from swe.harness.rate_limits import _parse_retry_after_to_seconds
         self.assertIsNone(_parse_retry_after_to_seconds(None))
         self.assertIsNone(_parse_retry_after_to_seconds(""))
         self.assertIsNone(_parse_retry_after_to_seconds("   "))
 
     def test_malformed_returns_none(self):
-        from quiver.harness.rate_limits import _parse_retry_after_to_seconds
+        from swe.harness.rate_limits import _parse_retry_after_to_seconds
         self.assertIsNone(_parse_retry_after_to_seconds("not-a-date"))
         # RFC 850 variant is not RFC 7231 IMF-fixdate — we don't
         # accept it, so parser degrades to None silently.
@@ -3784,7 +3784,7 @@ class RetryAfterParserTest(unittest.TestCase):
         self.assertIsNone(_parse_retry_after_to_seconds("forever"))
 
     def test_non_string_returns_none(self):
-        from quiver.harness.rate_limits import _parse_retry_after_to_seconds
+        from swe.harness.rate_limits import _parse_retry_after_to_seconds
         self.assertIsNone(_parse_retry_after_to_seconds(120))
         self.assertIsNone(_parse_retry_after_to_seconds(120.5))
         self.assertIsNone(_parse_retry_after_to_seconds(b"120"))
@@ -3800,7 +3800,7 @@ class ClaudeHTTPDiagnosticTest(unittest.TestCase):
 
     def test_http_429_emits_retry_after_hint(self):
         """429 with retry-after: 120 → 'Anthropic ... 2m0s' surfaces."""
-        from quiver.harness.rate_limits import _fetch_claude_url
+        from swe.harness.rate_limits import _fetch_claude_url
         import urllib.error
         import io
         import sys
@@ -3815,7 +3815,7 @@ class ClaudeHTTPDiagnosticTest(unittest.TestCase):
         sys.stderr = buf
         try:
             with patch(
-                "quiver.harness.rate_limits.urllib.request.urlopen",
+                "swe.harness.rate_limits.urllib.request.urlopen",
                 side_effect=http_err,
             ):
                 info = _fetch_claude_url(req)
@@ -3828,7 +3828,7 @@ class ClaudeHTTPDiagnosticTest(unittest.TestCase):
 
     def test_http_429_without_retry_after_still_hints(self):
         """429 without Retry-After → 'a few minutes' fallback."""
-        from quiver.harness.rate_limits import _fetch_claude_url
+        from swe.harness.rate_limits import _fetch_claude_url
         import urllib.error
         import io
         import sys
@@ -3842,7 +3842,7 @@ class ClaudeHTTPDiagnosticTest(unittest.TestCase):
         sys.stderr = buf
         try:
             with patch(
-                "quiver.harness.rate_limits.urllib.request.urlopen",
+                "swe.harness.rate_limits.urllib.request.urlopen",
                 side_effect=http_err,
             ):
                 info = _fetch_claude_url(req)
@@ -3853,7 +3853,7 @@ class ClaudeHTTPDiagnosticTest(unittest.TestCase):
 
     def test_ssl_fallback_preserves_retry_after_callback(self):
         """A 429 after the macOS SSL retry still reports its cooldown."""
-        from quiver.harness.rate_limits import _fetch_json
+        from swe.harness.rate_limits import _fetch_json
         import ssl
         import urllib.error
 
@@ -3869,10 +3869,10 @@ class ClaudeHTTPDiagnosticTest(unittest.TestCase):
         # is not a dependency of this package, so pin it here rather than
         # letting the assertion depend on what happens to be installed.
         with patch(
-            "quiver.harness.rate_limits._verified_context",
+            "swe.harness.rate_limits._verified_context",
             return_value=ssl.create_default_context(),
         ), patch(
-            "quiver.harness.rate_limits.urllib.request.urlopen",
+            "swe.harness.rate_limits.urllib.request.urlopen",
             side_effect=[ssl_error, http_error],
         ):
             result = _fetch_json(
@@ -3940,7 +3940,7 @@ class CursorFetcherTest(unittest.TestCase):
         return path
 
     def test_parser_surfaces_the_more_exhausted_bucket(self):
-        from quiver.harness.rate_limits import _parse_cursor_usage
+        from swe.harness.rate_limits import _parse_cursor_usage
 
         info = _parse_cursor_usage(self._SAMPLE_RESPONSE)
 
@@ -3954,7 +3954,7 @@ class CursorFetcherTest(unittest.TestCase):
 
     def test_parser_labels_auto_with_autoPercentUsed(self):
         """totalPercentUsed is the Included figure; Auto is its own field."""
-        from quiver.harness.rate_limits import _parse_cursor_usage
+        from swe.harness.rate_limits import _parse_cursor_usage
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         data["planUsage"]["apiPercentUsed"] = 10
@@ -3968,7 +3968,7 @@ class CursorFetcherTest(unittest.TestCase):
 
     def test_parser_reports_every_bucket_like_the_cli(self):
         """Included, Auto and API, as `cursor-agent usage` lists them."""
-        from quiver.harness.rate_limits import _parse_cursor_usage
+        from swe.harness.rate_limits import _parse_cursor_usage
 
         info = _parse_cursor_usage(self._SAMPLE_RESPONSE)
 
@@ -3984,7 +3984,7 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(json_windows[0]["remaining_percent"], 50)
 
     def test_parser_reads_the_team_plan(self):
-        from quiver.harness.rate_limits import _parse_cursor_usage
+        from swe.harness.rate_limits import _parse_cursor_usage
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         self.assertIsNone(_parse_cursor_usage(data).to_json()["plan_type"])
@@ -3992,7 +3992,7 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(_parse_cursor_usage(data).plan_type, "team")
 
     def test_parser_skips_unusable_buckets(self):
-        from quiver.harness.rate_limits import _parse_cursor_usage
+        from swe.harness.rate_limits import _parse_cursor_usage
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         data["planUsage"]["apiPercentUsed"] = "n/a"
@@ -4009,7 +4009,7 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertIsNone(_parse_cursor_usage({}))
 
     def test_parser_tolerates_missing_cycle_bounds(self):
-        from quiver.harness.rate_limits import _parse_cursor_usage
+        from swe.harness.rate_limits import _parse_cursor_usage
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         del data["billingCycleStart"]
@@ -4022,7 +4022,7 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(info.reset_in_human, "—")
 
     def test_millisecond_epoch_parsing(self):
-        from quiver.harness.rate_limits import _cursor_ms_to_epoch
+        from swe.harness.rate_limits import _cursor_ms_to_epoch
 
         self.assertEqual(_cursor_ms_to_epoch("1789190193000"), 1789190193.0)
         self.assertEqual(_cursor_ms_to_epoch(1789190193000), 1789190193.0)
@@ -4034,7 +4034,7 @@ class CursorFetcherTest(unittest.TestCase):
 
     def test_an_absurd_millisecond_epoch_reads_as_unknown(self):
         # The Mac app turns these into Int64 milliseconds, which traps.
-        from quiver.harness.rate_limits import _cursor_ms_to_epoch
+        from swe.harness.rate_limits import _cursor_ms_to_epoch
 
         self.assertEqual(_cursor_ms_to_epoch(str(10 ** 30)), 0.0)
         self.assertEqual(_cursor_ms_to_epoch(1e300), 0.0)
@@ -4042,7 +4042,7 @@ class CursorFetcherTest(unittest.TestCase):
 
     def test_a_usage_event_from_the_far_future_is_dropped(self):
         # Its time would become where the Mac feed's next poll starts.
-        from quiver.harness.rate_limits import _usage_event_fields
+        from swe.harness.rate_limits import _usage_event_fields
 
         now = 1_789_190_193.0
         ahead = {"timestamp": str(int((now + 2 * 86400) * 1000))}
@@ -4052,7 +4052,7 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertIsNotNone(_usage_event_fields(ahead))
 
     def test_session_cookie_is_sub_and_token_url_encoded(self):
-        from quiver.harness.rate_limits import (
+        from swe.harness.rate_limits import (
             _cursor_session_cookie, _cursor_token_claims,
         )
 
@@ -4069,32 +4069,32 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertIsNone(_cursor_token_claims("a.!!!.c"))
 
     def test_state_db_token_is_read_read_only(self):
-        from quiver.harness.rate_limits import _read_cursor_state_token
+        from swe.harness.rate_limits import _read_cursor_state_token
 
         token = self._token()
         with tempfile.TemporaryDirectory() as tmp:
             path = self._state_db(tmp, token)
             missing = os.path.join(tmp, "absent", "state.vscdb")
             with patch(
-                "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+                "swe.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
                 (missing, path),
             ):
                 self.assertEqual(_read_cursor_state_token(), token)
 
     def test_state_db_without_token_falls_back_to_keychain(self):
-        from quiver.harness.rate_limits import _get_cursor_access_token
+        from swe.harness.rate_limits import _get_cursor_access_token
 
         token = self._token()
         with tempfile.TemporaryDirectory() as tmp:
             path = self._state_db(tmp, None)
             with patch(
-                "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+                "swe.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
                 (path,),
             ), patch(
-                "quiver.harness.rate_limits.shutil.which",
+                "swe.harness.rate_limits.shutil.which",
                 return_value="/usr/bin/security",
             ), patch(
-                "quiver.harness.rate_limits.subprocess.run",
+                "swe.harness.rate_limits.subprocess.run",
                 return_value=MagicMock(returncode=0, stdout=token + "\n"),
             ) as run:
                 self.assertEqual(_get_cursor_access_token(), token)
@@ -4105,19 +4105,19 @@ class CursorFetcherTest(unittest.TestCase):
     def test_encrypted_state_token_falls_through_to_the_keychain(self):
         """The editor's safeStorage blob is skipped, not trusted: the
         keychain's real JWT wins."""
-        from quiver.harness.rate_limits import _get_cursor_access_token
+        from swe.harness.rate_limits import _get_cursor_access_token
 
         keychain_token = self._token()
         with tempfile.TemporaryDirectory() as tmp:
             path = self._state_db(tmp, "cursor-safe-storage:AAAA")
             with patch(
-                "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+                "swe.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
                 (path,),
             ), patch(
-                "quiver.harness.rate_limits._read_cursor_cli_token",
+                "swe.harness.rate_limits._read_cursor_cli_token",
                 return_value=None,
             ), patch(
-                "quiver.harness.rate_limits._read_cursor_keychain_token",
+                "swe.harness.rate_limits._read_cursor_keychain_token",
                 return_value=keychain_token,
             ) as keychain:
                 self.assertEqual(_get_cursor_access_token(), keychain_token)
@@ -4126,25 +4126,25 @@ class CursorFetcherTest(unittest.TestCase):
     def test_undecodable_tokens_everywhere_read_as_signed_out(self):
         """Opaque values in every source: no crash, no request, and the
         signed-in probe agrees there is no credential."""
-        from quiver.harness import rate_limits
-        from quiver.harness.rate_limits import (
+        from swe.harness import rate_limits
+        from swe.harness.rate_limits import (
             _fetch_cursor, fetch_cursor_usage_events,
         )
 
         blob = "cursor-safe-storage:AAAA"
         with patch(
-            "quiver.harness.rate_limits._read_cursor_state_token",
+            "swe.harness.rate_limits._read_cursor_state_token",
             return_value=blob,
         ), patch(
-            "quiver.harness.rate_limits._read_cursor_cli_token",
+            "swe.harness.rate_limits._read_cursor_cli_token",
             return_value=blob,
         ), patch(
-            "quiver.harness.rate_limits._read_cursor_keychain_token",
+            "swe.harness.rate_limits._read_cursor_keychain_token",
             return_value=blob,
         ), patch(
-            "quiver.harness.rate_limits._keychain_item_exists",
+            "swe.harness.rate_limits._keychain_item_exists",
             return_value=False,
-        ), patch("quiver.harness.rate_limits._fetch_json") as fetch:
+        ), patch("swe.harness.rate_limits._fetch_json") as fetch:
             self.assertIsNone(_fetch_cursor())
             status, events, account_id = fetch_cursor_usage_events()
             self.assertFalse(rate_limits._SIGNED_IN["cursor"][1]())
@@ -4156,7 +4156,7 @@ class CursorFetcherTest(unittest.TestCase):
     def test_signed_in_probe_skips_undecodable_file_tokens(self):
         """The probe mirrors the fetcher's ladder for the two file
         sources, and keeps its existence-only keychain check."""
-        from quiver.harness import rate_limits
+        from swe.harness import rate_limits
 
         probe = rate_limits._SIGNED_IN["cursor"][1]
         blob = "cursor-safe-storage:AAAA"
@@ -4187,38 +4187,38 @@ class CursorFetcherTest(unittest.TestCase):
     def test_fetch_with_an_account_state_db_stays_strict(self):
         """An extra account's ``state_db`` is read alone: an opaque token
         reports nothing and the default sources are never asked."""
-        from quiver.harness.rate_limits import _fetch_cursor
+        from swe.harness.rate_limits import _fetch_cursor
 
         with tempfile.TemporaryDirectory() as tmp:
             db = self._state_db(tmp, "cursor-safe-storage:AAAA")
             with patch(
-                "quiver.harness.rate_limits._get_cursor_access_token",
+                "swe.harness.rate_limits._get_cursor_access_token",
             ) as default_token, patch(
-                "quiver.harness.rate_limits._read_cursor_keychain_token",
+                "swe.harness.rate_limits._read_cursor_keychain_token",
             ) as keychain:
                 self.assertIsNone(_fetch_cursor(db))
         default_token.assert_not_called()
         keychain.assert_not_called()
 
     def test_no_token_anywhere_returns_none(self):
-        from quiver.harness.rate_limits import _fetch_cursor
+        from swe.harness.rate_limits import _fetch_cursor
 
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+            "swe.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
             (os.path.join(tmp, "state.vscdb"),),
         ), patch(
-            "quiver.harness.rate_limits.shutil.which", return_value=None,
-        ), patch("quiver.harness.rate_limits._fetch_json") as fetch:
+            "swe.harness.rate_limits.shutil.which", return_value=None,
+        ), patch("swe.harness.rate_limits._fetch_json") as fetch:
             self.assertIsNone(_fetch_cursor())
         fetch.assert_not_called()
 
     def test_expired_token_reports_auth_required_without_a_request(self):
-        from quiver.harness.rate_limits import _fetch_cursor
+        from swe.harness.rate_limits import _fetch_cursor
 
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token",
+            "swe.harness.rate_limits._get_cursor_access_token",
             return_value=self._token(exp=1_000_000_000),
-        ), patch("quiver.harness.rate_limits._fetch_json") as fetch:
+        ), patch("swe.harness.rate_limits._fetch_json") as fetch:
             info = _fetch_cursor()
 
         self.assertEqual(info.plan_type, "auth-required")
@@ -4228,15 +4228,15 @@ class CursorFetcherTest(unittest.TestCase):
     def test_email_comes_from_the_state_db_cached_email(self):
         """The editor records the sign-in next to the token; the JWT
         itself has no email claim."""
-        from quiver.harness.rate_limits import _fetch_cursor
+        from swe.harness.rate_limits import _fetch_cursor
 
         with tempfile.TemporaryDirectory() as tmp:
             path = self._state_db(tmp, self._token(), email="me@work.com")
             with patch(
-                "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+                "swe.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
                 (path,),
             ), patch(
-                "quiver.harness.rate_limits._fetch_json",
+                "swe.harness.rate_limits._fetch_json",
                 return_value=self._SAMPLE_RESPONSE,
             ):
                 info = _fetch_cursor()
@@ -4247,16 +4247,16 @@ class CursorFetcherTest(unittest.TestCase):
 
     def test_email_survives_an_expired_token(self):
         """A re-login card still names the account it is about."""
-        from quiver.harness.rate_limits import _fetch_cursor
+        from swe.harness.rate_limits import _fetch_cursor
 
         with tempfile.TemporaryDirectory() as tmp:
             path = self._state_db(
                 tmp, self._token(exp=1_000_000_000), email="me@work.com")
             with patch(
-                "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+                "swe.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
                 (path,),
             ), patch(
-                "quiver.harness.rate_limits._fetch_json",
+                "swe.harness.rate_limits._fetch_json",
             ) as fetch:
                 info = _fetch_cursor()
 
@@ -4266,15 +4266,15 @@ class CursorFetcherTest(unittest.TestCase):
 
     def test_account_dir_email_is_read_from_its_own_db(self):
         """An extra account's email never falls through to the default db."""
-        from quiver.harness.rate_limits import _fetch_cursor
+        from swe.harness.rate_limits import _fetch_cursor
 
         with tempfile.TemporaryDirectory() as tmp:
             path = self._state_db(tmp, self._token(), email="extra@work.com")
             with patch(
-                "quiver.harness.rate_limits._fetch_json",
+                "swe.harness.rate_limits._fetch_json",
                 return_value=self._SAMPLE_RESPONSE,
             ), patch(
-                "quiver.harness.rate_limits._read_cursor_keychain_token",
+                "swe.harness.rate_limits._read_cursor_keychain_token",
             ) as keychain:
                 info = _fetch_cursor(path)
 
@@ -4285,21 +4285,21 @@ class CursorFetcherTest(unittest.TestCase):
     def _fetch_with_cli_token(self, tmp: str, **db_rows):
         """``_fetch_cursor`` where the editor's db token is unreadable
         and the keychain's JWT wins, as on this Mac."""
-        from quiver.harness.rate_limits import _fetch_cursor
+        from swe.harness.rate_limits import _fetch_cursor
 
         self._state_db(tmp, "cursor-safe-storage:v1:blob", **db_rows)
         db = os.path.join(tmp, "state.vscdb")
         with patch(
-            "quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
+            "swe.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES",
             (db,),
         ), patch(
-            "quiver.harness.rate_limits._read_cursor_cli_token",
+            "swe.harness.rate_limits._read_cursor_cli_token",
             return_value=None,
         ), patch(
-            "quiver.harness.rate_limits._read_cursor_keychain_token",
+            "swe.harness.rate_limits._read_cursor_keychain_token",
             return_value=self._token(),
         ), patch(
-            "quiver.harness.rate_limits._fetch_json",
+            "swe.harness.rate_limits._fetch_json",
             return_value=self._SAMPLE_RESPONSE,
         ):
             return _fetch_cursor()
@@ -4328,7 +4328,7 @@ class CursorFetcherTest(unittest.TestCase):
     def test_a_profile_row_that_is_not_an_object_costs_only_the_email(self):
         """json.loads(profile).get raised AttributeError for a list or a
         string, and the fetcher's exception dropped the whole reading."""
-        from quiver.harness.rate_limits import _fetch_cursor
+        from swe.harness.rate_limits import _fetch_cursor
 
         for profile in ('["google-oauth2|user_01TEST"]', '"x"', "7", "{not json"):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory() as tmp:
@@ -4338,25 +4338,25 @@ class CursorFetcherTest(unittest.TestCase):
                                    ("cursorAuth/cachedScopedProfile", profile))
                 connection.commit()
                 connection.close()
-                with patch("quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES", (db,)), \
-                     patch("quiver.harness.rate_limits._read_cursor_cli_token", return_value=None), \
-                     patch("quiver.harness.rate_limits._read_cursor_keychain_token",
+                with patch("swe.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES", (db,)), \
+                     patch("swe.harness.rate_limits._read_cursor_cli_token", return_value=None), \
+                     patch("swe.harness.rate_limits._read_cursor_keychain_token",
                            return_value=self._token()), \
-                     patch("quiver.harness.rate_limits._fetch_json",
+                     patch("swe.harness.rate_limits._fetch_json",
                            return_value=self._SAMPLE_RESPONSE):
                     info = _fetch_cursor()
                 self.assertIsNotNone(info)
                 self.assertIsNone(info.email)
 
     def test_fetch_posts_with_cookie_and_first_party_origin(self):
-        from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
+        from swe.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
 
         token = self._token()
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token",
+            "swe.harness.rate_limits._get_cursor_access_token",
             return_value=token,
         ), patch(
-            "quiver.harness.rate_limits._fetch_json",
+            "swe.harness.rate_limits._fetch_json",
             return_value=self._SAMPLE_RESPONSE,
         ) as fetch:
             info = _fetch_cursor()
@@ -4375,7 +4375,7 @@ class CursorFetcherTest(unittest.TestCase):
 
     def test_on_demand_follows_the_cli(self):
         """`cursor-agent usage`'s On-Demand row, case by case."""
-        from quiver.harness.rate_limits import _cursor_on_demand as od
+        from swe.harness.rate_limits import _cursor_on_demand as od
 
         team = {"limitType": "team", "pooledLimit": "500000"}
         # A team seat with no personal cap: "No personal limit".
@@ -4400,7 +4400,7 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(od(None, None)["state"], "unavailable")
 
     def test_fetch_reads_the_plan_and_on_demand_like_the_cli(self):
-        from quiver.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
+        from swe.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
 
         usage = copy.deepcopy(self._SAMPLE_RESPONSE)
         usage["spendLimitUsage"] = {"totalSpend": 14032, "pooledLimit": "500000", "limitType": "team"}
@@ -4412,9 +4412,9 @@ class CursorFetcherTest(unittest.TestCase):
             _CURSOR_GROK_BOT_URL: {},
         }
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+            "swe.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
         ), patch(
-            "quiver.harness.rate_limits._fetch_json",
+            "swe.harness.rate_limits._fetch_json",
             side_effect=lambda request, **_: replies[request.full_url],
         ) as fetch:
             info = _fetch_cursor()
@@ -4425,7 +4425,7 @@ class CursorFetcherTest(unittest.TestCase):
                          {"state": "unlimited", "scope": "team-member", "used_usd": 0.0, "limit_usd": None})
 
     def test_grok_bot_is_its_own_weekly_window(self):
-        from quiver.harness.rate_limits import _cursor_grok_bot_window as grok
+        from swe.harness.rate_limits import _cursor_grok_bot_window as grok
 
         window = grok({
             "usagePercent": 37.5,
@@ -4444,7 +4444,7 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(grok({"usagePercent": 0})["used_percent"], 0)
 
     def test_grok_bot_without_a_personal_meter_has_no_window(self):
-        from quiver.harness.rate_limits import _cursor_grok_bot_window as grok
+        from swe.harness.rate_limits import _cursor_grok_bot_window as grok
 
         for reply in (
             None, {}, {"usagePercent": 42, "usesPooledEnterpriseAllowance": True},
@@ -4456,7 +4456,7 @@ class CursorFetcherTest(unittest.TestCase):
             self.assertIsNone(grok(reply), reply)
 
     def test_fetch_adds_grok_bot_with_the_bearer_token(self):
-        from quiver.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
+        from swe.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
 
         token = self._token()
         replies = {
@@ -4464,9 +4464,9 @@ class CursorFetcherTest(unittest.TestCase):
             _CURSOR_GROK_BOT_URL: {"usagePercent": 12, "nextResetTimestampUtc": "2026-08-27T00:00:00Z"},
         }
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token", return_value=token,
+            "swe.harness.rate_limits._get_cursor_access_token", return_value=token,
         ), patch(
-            "quiver.harness.rate_limits._fetch_json",
+            "swe.harness.rate_limits._fetch_json",
             side_effect=lambda request, **_: replies.get(request.full_url),
         ) as fetch:
             info = _fetch_cursor()
@@ -4484,7 +4484,7 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(info.window, "api")
 
     def test_a_failed_grok_bot_call_marks_the_window_unavailable(self):
-        from quiver.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
+        from swe.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
 
         def reply(request, **_):
             if request.full_url == _CURSOR_GROK_BOT_URL:
@@ -4492,8 +4492,8 @@ class CursorFetcherTest(unittest.TestCase):
             return copy.deepcopy(self._SAMPLE_RESPONSE) if request.full_url == _CURSOR_USAGE_URL else None
 
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
-        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply):
+            "swe.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+        ), patch("swe.harness.rate_limits._fetch_json", side_effect=reply):
             info = _fetch_cursor()
 
         self.assertEqual(info.used_percent, 100)
@@ -4502,7 +4502,7 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(grok["used_percent"], 0)
 
     def test_a_grok_bot_call_past_its_budget_marks_the_window_unavailable(self):
-        from quiver.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
+        from swe.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
 
         def reply(request, **_):
             if request.full_url == _CURSOR_GROK_BOT_URL:
@@ -4511,10 +4511,10 @@ class CursorFetcherTest(unittest.TestCase):
             return copy.deepcopy(self._SAMPLE_RESPONSE) if request.full_url == _CURSOR_USAGE_URL else None
 
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+            "swe.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
         ), patch(
-            "quiver.harness.rate_limits._CURSOR_EXTRAS_BUDGET", 0.01,
-        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply):
+            "swe.harness.rate_limits._CURSOR_EXTRAS_BUDGET", 0.01,
+        ), patch("swe.harness.rate_limits._fetch_json", side_effect=reply):
             info = _fetch_cursor()
 
         grok = next(w for w in info.windows if w["window"] == "grok_bot")
@@ -4522,16 +4522,16 @@ class CursorFetcherTest(unittest.TestCase):
 
     def test_a_grok_bot_reply_with_no_meter_adds_no_window(self):
         """A dict reply that means "no personal meter" stays absent."""
-        from quiver.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
+        from swe.harness.rate_limits import _CURSOR_GROK_BOT_URL, _CURSOR_USAGE_URL, _fetch_cursor
 
         replies = {
             _CURSOR_USAGE_URL: copy.deepcopy(self._SAMPLE_RESPONSE),
             _CURSOR_GROK_BOT_URL: {"usesPooledEnterpriseAllowance": True},
         }
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+            "swe.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
         ), patch(
-            "quiver.harness.rate_limits._fetch_json",
+            "swe.harness.rate_limits._fetch_json",
             side_effect=lambda request, **_: replies.get(request.full_url),
         ):
             info = _fetch_cursor()
@@ -4539,14 +4539,14 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertNotIn("grok_bot", [w["window"] for w in info.windows])
 
     def test_on_demand_and_plan_calls_are_optional(self):
-        from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
+        from swe.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
 
         usage = copy.deepcopy(self._SAMPLE_RESPONSE)
         usage["spendLimitUsage"] = {"limitType": "team", "pooledLimit": "500000"}
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+            "swe.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
         ), patch(
-            "quiver.harness.rate_limits._fetch_json",
+            "swe.harness.rate_limits._fetch_json",
             side_effect=lambda request, **_: usage if request.full_url == _CURSOR_USAGE_URL else None,
         ):
             info = _fetch_cursor()
@@ -4556,7 +4556,7 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(info.on_demand["state"], "unlimited")
 
     def test_slow_extras_do_not_hold_up_the_usage_reading(self):
-        from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
+        from swe.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
 
         usage = copy.deepcopy(self._SAMPLE_RESPONSE)
         usage["spendLimitUsage"] = {"limitType": "team", "pooledLimit": "500000"}
@@ -4568,9 +4568,9 @@ class CursorFetcherTest(unittest.TestCase):
             return {"hardLimit": 0}
 
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
-        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply), patch(
-            "quiver.harness.rate_limits._CURSOR_EXTRAS_BUDGET", 0.1,
+            "swe.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+        ), patch("swe.harness.rate_limits._fetch_json", side_effect=reply), patch(
+            "swe.harness.rate_limits._CURSOR_EXTRAS_BUDGET", 0.1,
         ):
             started = time.monotonic()
             info = _fetch_cursor()
@@ -4583,8 +4583,8 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(info.plan_type, "team")
 
     def test_slow_extras_end_before_the_callers_deadline(self):
-        from quiver.harness import rate_limits
-        from quiver.harness.rate_limits import _CURSOR_USAGE_URL
+        from swe.harness import rate_limits
+        from swe.harness.rate_limits import _CURSOR_USAGE_URL
 
         usage = copy.deepcopy(self._SAMPLE_RESPONSE)
 
@@ -4595,11 +4595,11 @@ class CursorFetcherTest(unittest.TestCase):
             return None
 
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE", Path(tmp) / "rate_limits_cache.json",
+            "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE", Path(tmp) / "rate_limits_cache.json",
         ), patch(
-            "quiver.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
-        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply), patch.dict(
-            "quiver.harness.rate_limits._FETCHERS", {"cursor": rate_limits._fetch_cursor}, clear=True,
+            "swe.harness.rate_limits._get_cursor_access_token", return_value=self._token(),
+        ), patch("swe.harness.rate_limits._fetch_json", side_effect=reply), patch.dict(
+            "swe.harness.rate_limits._FETCHERS", {"cursor": rate_limits._fetch_cursor}, clear=True,
         ):
             # The 3s extras budget is longer than this caller waits.
             started = time.monotonic()
@@ -4610,25 +4610,25 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(result["cursor"].used_percent, 100)
 
     def test_fetch_failure_reports_no_reading(self):
-        from quiver.harness.rate_limits import _fetch_cursor
+        from swe.harness.rate_limits import _fetch_cursor
 
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token",
+            "swe.harness.rate_limits._get_cursor_access_token",
             return_value=self._token(),
         ), patch(
-            "quiver.harness.rate_limits._fetch_json", return_value=None,
+            "swe.harness.rate_limits._fetch_json", return_value=None,
         ):
             self.assertIsNone(_fetch_cursor())
 
     def test_column_labels_the_bucket(self):
-        from quiver.harness.rate_limits import _parse_cursor_usage
-        from quiver.console import strip_ansi
+        from swe.harness.rate_limits import _parse_cursor_usage
+        from swe.console import strip_ansi
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         data["planUsage"]["apiPercentUsed"] = 30
         info = _parse_cursor_usage(data)
         with patch(
-            "quiver.harness.rate_limits.time.time",
+            "swe.harness.rate_limits.time.time",
             return_value=1789190193.0 - 3 * 3600,
         ):
             self.assertEqual(strip_ansi(info.format_column()), "◑ included:3h0m")
@@ -4670,7 +4670,7 @@ class CursorUsageEventsTest(unittest.TestCase):
 
     def _fetch(self, pages, **kwargs):
         """Run the fetch with ``pages`` (a list of row lists) as replies."""
-        from quiver.harness.rate_limits import fetch_cursor_usage_events
+        from swe.harness.rate_limits import fetch_cursor_usage_events
 
         replies = [
             {"totalUsageEventsCount": sum(len(p) for p in pages),
@@ -4685,9 +4685,9 @@ class CursorUsageEventsTest(unittest.TestCase):
                 "totalUsageEventsCount": 0, "usageEventsDisplay": []}
 
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token",
+            "swe.harness.rate_limits._get_cursor_access_token",
             return_value=self._token(),
-        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply):
+        ), patch("swe.harness.rate_limits._fetch_json", side_effect=reply):
             status, events, account_id = fetch_cursor_usage_events(**kwargs)
         return status, events, account_id, calls
 
@@ -4741,7 +4741,7 @@ class CursorUsageEventsTest(unittest.TestCase):
         self.assertGreater(int(third["startDate"]), int(first["startDate"]))
 
     def test_since_is_clamped_to_180_days(self):
-        from quiver.harness.rate_limits import _CURSOR_USAGE_EVENTS_MAX_AGE
+        from swe.harness.rate_limits import _CURSOR_USAGE_EVENTS_MAX_AGE
 
         status, _, _, calls = self._fetch([[]], since=1.0, now=1_800_000_000.0)
         self.assertEqual(status, "ok")
@@ -4754,24 +4754,24 @@ class CursorUsageEventsTest(unittest.TestCase):
         self.assertEqual(json.loads(calls[0].data)["startDate"], "1799000000000")
 
     def test_signed_out_when_no_token(self):
-        from quiver.harness.rate_limits import fetch_cursor_usage_events
+        from swe.harness.rate_limits import fetch_cursor_usage_events
 
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token",
+            "swe.harness.rate_limits._get_cursor_access_token",
             return_value=None,
-        ), patch("quiver.harness.rate_limits._fetch_json") as fetch:
+        ), patch("swe.harness.rate_limits._fetch_json") as fetch:
             status, events, account_id = fetch_cursor_usage_events()
         self.assertEqual(status, "signed-out")
         self.assertEqual(events, [])
         fetch.assert_not_called()
 
     def test_auth_required_when_expired_or_401(self):
-        from quiver.harness.rate_limits import fetch_cursor_usage_events
+        from swe.harness.rate_limits import fetch_cursor_usage_events
 
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token",
+            "swe.harness.rate_limits._get_cursor_access_token",
             return_value=self._token(exp=1_000_000_000),
-        ), patch("quiver.harness.rate_limits._fetch_json") as fetch:
+        ), patch("swe.harness.rate_limits._fetch_json") as fetch:
             status, _, _ = fetch_cursor_usage_events()
         self.assertEqual(status, "auth-required")
         fetch.assert_not_called()
@@ -4782,31 +4782,31 @@ class CursorUsageEventsTest(unittest.TestCase):
             return None
 
         with patch(
-            "quiver.harness.rate_limits._get_cursor_access_token",
+            "swe.harness.rate_limits._get_cursor_access_token",
             return_value=self._token(),
-        ), patch("quiver.harness.rate_limits._fetch_json", side_effect=reply):
+        ), patch("swe.harness.rate_limits._fetch_json", side_effect=reply):
             status, _, _ = fetch_cursor_usage_events()
         self.assertEqual(status, "auth-required")
 
     def test_unavailable_on_network_error_or_bad_page(self):
-        from quiver.harness.rate_limits import fetch_cursor_usage_events
+        from swe.harness.rate_limits import fetch_cursor_usage_events
 
         # None is a network failure; a non-list usageEventsDisplay is a
         # shape change. Cursor omits the key on an empty window, so a dict
         # without it is not an outage (covered by the chunk tests).
         for reply in (None, {"usageEventsDisplay": "not-a-list"}):
             with patch(
-                "quiver.harness.rate_limits._get_cursor_access_token",
+                "swe.harness.rate_limits._get_cursor_access_token",
                 return_value=self._token(),
             ), patch(
-                "quiver.harness.rate_limits._fetch_json", return_value=reply,
+                "swe.harness.rate_limits._fetch_json", return_value=reply,
             ):
                 status, events, account_id = fetch_cursor_usage_events()
             self.assertEqual(status, "unavailable")
             self.assertEqual(events, [])
 
     def test_account_dir_reads_only_its_state_db(self):
-        from quiver.harness.rate_limits import fetch_cursor_usage_events
+        from swe.harness.rate_limits import fetch_cursor_usage_events
 
         with tempfile.TemporaryDirectory() as tmp:
             db = os.path.join(tmp, "User", "globalStorage", "state.vscdb")
@@ -4824,9 +4824,9 @@ class CursorUsageEventsTest(unittest.TestCase):
                 return None
 
             with patch(
-                "quiver.harness.rate_limits._read_cursor_state_token", read,
+                "swe.harness.rate_limits._read_cursor_state_token", read,
             ), patch(
-                "quiver.harness.rate_limits._get_cursor_access_token",
+                "swe.harness.rate_limits._get_cursor_access_token",
             ) as default_token:
                 status, events, account_id = fetch_cursor_usage_events(db)
 
@@ -4838,7 +4838,7 @@ class CursorUsageEventsTest(unittest.TestCase):
     def test_account_state_db_blob_never_falls_back(self):
         """An extra account's opaque token reports signed-out on its
         own; the default token ladder is never asked."""
-        from quiver.harness.rate_limits import fetch_cursor_usage_events
+        from swe.harness.rate_limits import fetch_cursor_usage_events
 
         with tempfile.TemporaryDirectory() as tmp:
             db = os.path.join(tmp, "state.vscdb")
@@ -4851,9 +4851,9 @@ class CursorUsageEventsTest(unittest.TestCase):
             connection.commit()
             connection.close()
             with patch(
-                "quiver.harness.rate_limits._get_cursor_access_token",
+                "swe.harness.rate_limits._get_cursor_access_token",
             ) as default_token, patch(
-                "quiver.harness.rate_limits._read_cursor_keychain_token",
+                "swe.harness.rate_limits._read_cursor_keychain_token",
             ) as keychain:
                 status, events, account_id = fetch_cursor_usage_events(db)
 
@@ -4869,7 +4869,7 @@ class CursorUsageEventsTest(unittest.TestCase):
         self.assertEqual(account_id, "google-oauth2|user_01TEST")
 
     def test_the_window_reads_in_oldest_first_week_slices(self):
-        from quiver.harness.rate_limits import _CURSOR_USAGE_EVENTS_CHUNK
+        from swe.harness.rate_limits import _CURSOR_USAGE_EVENTS_CHUNK
 
         now = 1_800_000_000.0
         since = now - (_CURSOR_USAGE_EVENTS_CHUNK + 60)
@@ -4891,7 +4891,7 @@ class CursorUsageEventsTest(unittest.TestCase):
         self.assertEqual(int(second["endDate"]), int(now * 1000))
 
     def test_a_slice_filling_every_page_reports_incomplete(self):
-        from quiver.harness.rate_limits import _CURSOR_USAGE_EVENTS_MAX_PAGES
+        from swe.harness.rate_limits import _CURSOR_USAGE_EVENTS_MAX_PAGES
 
         full = [self._event() for _ in range(1000)]
         pages = [full for _ in range(_CURSOR_USAGE_EVENTS_MAX_PAGES)]
@@ -4931,7 +4931,7 @@ class DevinFetcherTest(unittest.TestCase):
     }
 
     def test_parser_surfaces_the_more_used_window(self):
-        from quiver.harness.rate_limits import _parse_devin_status
+        from swe.harness.rate_limits import _parse_devin_status
 
         info = _parse_devin_status(self._SAMPLE_RESPONSE)
 
@@ -4948,7 +4948,7 @@ class DevinFetcherTest(unittest.TestCase):
 
     def test_parser_survives_a_reply_with_no_email(self):
         """proto3 drops empty strings: older responses name no account."""
-        from quiver.harness.rate_limits import _parse_devin_status
+        from swe.harness.rate_limits import _parse_devin_status
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         del data["userStatus"]["email"]
@@ -4958,7 +4958,7 @@ class DevinFetcherTest(unittest.TestCase):
 
     def test_parser_reports_both_windows_like_the_cli(self):
         """Daily and weekly, as `devin /usage` lists them."""
-        from quiver.harness.rate_limits import _parse_devin_status
+        from swe.harness.rate_limits import _parse_devin_status
 
         info = _parse_devin_status(self._SAMPLE_RESPONSE)
 
@@ -4969,7 +4969,7 @@ class DevinFetcherTest(unittest.TestCase):
         self.assertEqual([w["window"] for w in info.to_json()["windows"]], ["1d", "7d"])
 
     def test_parser_reads_the_extra_usage_balance(self):
-        from quiver.harness.rate_limits import _parse_devin_status
+        from swe.harness.rate_limits import _parse_devin_status
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         self.assertIsNone(_parse_devin_status(data).extra_usage_usd)
@@ -4981,7 +4981,7 @@ class DevinFetcherTest(unittest.TestCase):
         self.assertIsNone(_parse_devin_status(data).extra_usage_usd)
 
     def test_parser_picks_daily_when_it_is_the_tighter_window(self):
-        from quiver.harness.rate_limits import _parse_devin_status
+        from swe.harness.rate_limits import _parse_devin_status
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         data["userStatus"]["planStatus"]["dailyQuotaRemainingPercent"] = 0
@@ -4995,7 +4995,7 @@ class DevinFetcherTest(unittest.TestCase):
         self.assertEqual(info.window_seconds, 86400)
 
     def test_parser_falls_back_to_prompt_credits(self):
-        from quiver.harness.rate_limits import _parse_devin_status
+        from swe.harness.rate_limits import _parse_devin_status
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         plan = data["userStatus"]["planStatus"]
@@ -5018,7 +5018,7 @@ class DevinFetcherTest(unittest.TestCase):
 
     def test_an_omitted_remaining_with_a_reset_means_exhausted(self):
         """proto3 JSON drops zeros: only the reset times are sent."""
-        from quiver.harness.rate_limits import _parse_devin_status
+        from swe.harness.rate_limits import _parse_devin_status
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         plan = data["userStatus"]["planStatus"]
@@ -5036,7 +5036,7 @@ class DevinFetcherTest(unittest.TestCase):
         self.assertTrue(info.limit_reached)
 
     def test_an_omitted_window_is_exhausted_next_to_a_live_one(self):
-        from quiver.harness.rate_limits import _parse_devin_status
+        from swe.harness.rate_limits import _parse_devin_status
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         plan = data["userStatus"]["planStatus"]
@@ -5054,7 +5054,7 @@ class DevinFetcherTest(unittest.TestCase):
         self.assertTrue(info.limit_reached)
 
     def test_no_remaining_and_no_resets_keeps_the_old_behaviour(self):
-        from quiver.harness.rate_limits import _parse_devin_status
+        from swe.harness.rate_limits import _parse_devin_status
 
         data = copy.deepcopy(self._SAMPLE_RESPONSE)
         plan = data["userStatus"]["planStatus"]
@@ -5067,7 +5067,7 @@ class DevinFetcherTest(unittest.TestCase):
         self.assertIsNone(_parse_devin_status(data))
 
     def test_parser_rejects_unusable_payloads(self):
-        from quiver.harness.rate_limits import _parse_devin_status
+        from swe.harness.rate_limits import _parse_devin_status
 
         self.assertIsNone(_parse_devin_status({}))
         self.assertIsNone(_parse_devin_status({"userStatus": {"planStatus": "nope"}}))
@@ -5079,7 +5079,7 @@ class DevinFetcherTest(unittest.TestCase):
         self.assertIsNone(_parse_devin_status(data))
 
     def test_credentials_come_from_the_toml_file(self):
-        from quiver.harness.rate_limits import _read_devin_credentials
+        from swe.harness.rate_limits import _read_devin_credentials
 
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "credentials.toml")
@@ -5088,35 +5088,35 @@ class DevinFetcherTest(unittest.TestCase):
                 'api_server_url = "https://server.example.com/"\n'
                 'devin_api_url = "https://api.devin.ai"\n'
             )
-            with patch("quiver.harness.rate_limits._DEVIN_CREDENTIALS_PATH", path):
+            with patch("swe.harness.rate_limits._DEVIN_CREDENTIALS_PATH", path):
                 self.assertEqual(
                     _read_devin_credentials(), ("sk-test", "https://server.example.com"),
                 )
             Path(path).write_text('windsurf_api_key = "sk-test"\n')
-            with patch("quiver.harness.rate_limits._DEVIN_CREDENTIALS_PATH", path):
+            with patch("swe.harness.rate_limits._DEVIN_CREDENTIALS_PATH", path):
                 self.assertEqual(
                     _read_devin_credentials(), ("sk-test", "https://server.codeium.com"),
                 )
             Path(path).write_text('api_server_url = "https://server.example.com"\n')
-            with patch("quiver.harness.rate_limits._DEVIN_CREDENTIALS_PATH", path):
+            with patch("swe.harness.rate_limits._DEVIN_CREDENTIALS_PATH", path):
                 self.assertIsNone(_read_devin_credentials())
             Path(path).write_text("not = = toml")
-            with patch("quiver.harness.rate_limits._DEVIN_CREDENTIALS_PATH", path):
+            with patch("swe.harness.rate_limits._DEVIN_CREDENTIALS_PATH", path):
                 self.assertIsNone(_read_devin_credentials())
             with patch(
-                "quiver.harness.rate_limits._DEVIN_CREDENTIALS_PATH",
+                "swe.harness.rate_limits._DEVIN_CREDENTIALS_PATH",
                 os.path.join(tmp, "absent.toml"),
             ):
                 self.assertIsNone(_read_devin_credentials())
 
     def test_fetch_posts_the_key_in_the_rpc_metadata(self):
-        from quiver.harness.rate_limits import _fetch_devin
+        from swe.harness.rate_limits import _fetch_devin
 
         with patch(
-            "quiver.harness.rate_limits._read_devin_credentials",
+            "swe.harness.rate_limits._read_devin_credentials",
             return_value=("sk-test", "https://server.example.com"),
         ), patch(
-            "quiver.harness.rate_limits._fetch_json",
+            "swe.harness.rate_limits._fetch_json",
             return_value=self._SAMPLE_RESPONSE,
         ) as fetch:
             info = _fetch_devin()
@@ -5135,18 +5135,18 @@ class DevinFetcherTest(unittest.TestCase):
         self.assertIsNone(request.get_header("Authorization"))
 
     def test_fetch_without_credentials_or_on_failure_reports_nothing(self):
-        from quiver.harness.rate_limits import _fetch_devin
+        from swe.harness.rate_limits import _fetch_devin
 
         with patch(
-            "quiver.harness.rate_limits._read_devin_credentials", return_value=None,
-        ), patch("quiver.harness.rate_limits._fetch_json") as fetch:
+            "swe.harness.rate_limits._read_devin_credentials", return_value=None,
+        ), patch("swe.harness.rate_limits._fetch_json") as fetch:
             self.assertIsNone(_fetch_devin())
         fetch.assert_not_called()
 
         with patch(
-            "quiver.harness.rate_limits._read_devin_credentials",
+            "swe.harness.rate_limits._read_devin_credentials",
             return_value=("sk-test", "https://server.example.com"),
-        ), patch("quiver.harness.rate_limits._fetch_json", return_value=None):
+        ), patch("swe.harness.rate_limits._fetch_json", return_value=None):
             self.assertIsNone(_fetch_devin())
 
 
@@ -5160,7 +5160,7 @@ class VerifiedContextTest(unittest.TestCase):
     """
 
     def test_uses_os_bundle_when_certifi_is_missing(self):
-        from quiver.harness.rate_limits import _verified_context
+        from swe.harness.rate_limits import _verified_context
 
         with tempfile.TemporaryDirectory() as tmp:
             bundle = os.path.join(tmp, "cert.pem")
@@ -5168,17 +5168,17 @@ class VerifiedContextTest(unittest.TestCase):
             missing = os.path.join(tmp, "absent.pem")
             sentinel = object()
             with patch.dict("sys.modules", {"certifi": None}), patch(
-                "quiver.harness.rate_limits._SYSTEM_CA_BUNDLES",
+                "swe.harness.rate_limits._SYSTEM_CA_BUNDLES",
                 (missing, bundle),
             ), patch(
-                "quiver.harness.rate_limits.ssl.create_default_context",
+                "swe.harness.rate_limits.ssl.create_default_context",
                 return_value=sentinel,
             ) as make:
                 self.assertIs(_verified_context(), sentinel)
             make.assert_called_once_with(cafile=bundle)
 
     def test_os_bundle_wins_over_certifi(self):
-        from quiver.harness.rate_limits import _ca_bundle_candidates
+        from swe.harness.rate_limits import _ca_bundle_candidates
         import types
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -5188,7 +5188,7 @@ class VerifiedContextTest(unittest.TestCase):
                 Path(path).write_text("")
             fake = types.SimpleNamespace(where=lambda: certifi_bundle)
             with patch.dict("sys.modules", {"certifi": fake}), patch(
-                "quiver.harness.rate_limits._SYSTEM_CA_BUNDLES",
+                "swe.harness.rate_limits._SYSTEM_CA_BUNDLES",
                 (os_bundle,),
             ):
                 self.assertEqual(
@@ -5196,20 +5196,20 @@ class VerifiedContextTest(unittest.TestCase):
                 )
 
     def test_gives_up_without_any_bundle(self):
-        from quiver.harness.rate_limits import _verified_context
+        from swe.harness.rate_limits import _verified_context
 
         with tempfile.TemporaryDirectory() as tmp:
             missing = os.path.join(tmp, "absent.pem")
             with patch.dict("sys.modules", {"certifi": None}), patch(
-                "quiver.harness.rate_limits._SYSTEM_CA_BUNDLES", (missing,),
+                "swe.harness.rate_limits._SYSTEM_CA_BUNDLES", (missing,),
             ), patch(
-                "quiver.harness.rate_limits.ssl.create_default_context",
+                "swe.harness.rate_limits.ssl.create_default_context",
             ) as make:
                 self.assertIsNone(_verified_context())
             make.assert_not_called()
 
     def test_unreadable_bundle_falls_through_to_the_next(self):
-        from quiver.harness.rate_limits import _verified_context
+        from swe.harness.rate_limits import _verified_context
         import ssl
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -5219,9 +5219,9 @@ class VerifiedContextTest(unittest.TestCase):
                 Path(path).write_text("")
             sentinel = object()
             with patch.dict("sys.modules", {"certifi": None}), patch(
-                "quiver.harness.rate_limits._SYSTEM_CA_BUNDLES", (bad, good),
+                "swe.harness.rate_limits._SYSTEM_CA_BUNDLES", (bad, good),
             ), patch(
-                "quiver.harness.rate_limits.ssl.create_default_context",
+                "swe.harness.rate_limits.ssl.create_default_context",
                 side_effect=[ssl.SSLError("no start line"), sentinel],
             ):
                 self.assertIs(_verified_context(), sentinel)
@@ -5236,7 +5236,7 @@ class DroidHTTPDiagnosticTest(unittest.TestCase):
         return urllib.error.HTTPError("url", code, reason, headers or {}, None)
 
     def _capture_droid(self, http_err):
-        from quiver.harness.rate_limits import _fetch_droid
+        from swe.harness.rate_limits import _fetch_droid
         import io
         import sys
         buf = io.StringIO()
@@ -5245,9 +5245,9 @@ class DroidHTTPDiagnosticTest(unittest.TestCase):
         try:
             with patch.dict(os.environ, {"FACTORY_API_KEY": "fake-token"},
                             clear=True), \
-                 patch("quiver.harness.rate_limits.shutil.which",
+                 patch("swe.harness.rate_limits.shutil.which",
                        return_value=None), \
-                 patch("quiver.harness.rate_limits.urllib.request.urlopen",
+                 patch("swe.harness.rate_limits.urllib.request.urlopen",
                        side_effect=http_err):
                 info = _fetch_droid()
         finally:
@@ -5303,7 +5303,7 @@ class DroidHTTPDiagnosticTest(unittest.TestCase):
 
     def test_callback_failure_does_not_propagate(self):
         """A diagnostic that raises must NOT flip the result from None."""
-        from quiver.harness.rate_limits import _fetch_json
+        from swe.harness.rate_limits import _fetch_json
         import urllib.error
         import io
         import sys
@@ -5319,7 +5319,7 @@ class DroidHTTPDiagnosticTest(unittest.TestCase):
         sys.stderr = buf
         try:
             with patch(
-                "quiver.harness.rate_limits.urllib.request.urlopen",
+                "swe.harness.rate_limits.urllib.request.urlopen",
                 side_effect=http_err,
             ):
                 info = _fetch_json(
@@ -5333,7 +5333,7 @@ class DroidHTTPDiagnosticTest(unittest.TestCase):
     def test_401_does_not_fire_on_http_error(self):
         """A 401 must take the on_401 path, NOT on_http_error.
         Otherwise double-hints would spam stderr on the keychain-stale case."""
-        from quiver.harness.rate_limits import _fetch_json
+        from swe.harness.rate_limits import _fetch_json
         import urllib.error
         import io
         import sys
@@ -5347,7 +5347,7 @@ class DroidHTTPDiagnosticTest(unittest.TestCase):
         sys.stderr = buf
         try:
             with patch(
-                "quiver.harness.rate_limits.urllib.request.urlopen",
+                "swe.harness.rate_limits.urllib.request.urlopen",
                 side_effect=http_err,
             ):
                 info = _fetch_json(
@@ -5384,12 +5384,12 @@ class AccountRateLimitTest(unittest.TestCase):
         return root if db else root
 
     def test_devin_reads_the_account_credentials(self):
-        from quiver.harness.rate_limits import get_account_rate_limit
+        from swe.harness.rate_limits import get_account_rate_limit
 
         with tempfile.TemporaryDirectory() as tmp:
             self._devin_dir(tmp)
             with patch(
-                "quiver.harness.rate_limits._fetch_json",
+                "swe.harness.rate_limits._fetch_json",
                 return_value=self._DEVIN_RESPONSE,
             ) as fetch:
                 info = get_account_rate_limit("devin", tmp)
@@ -5400,18 +5400,18 @@ class AccountRateLimitTest(unittest.TestCase):
         self.assertEqual(body["metadata"]["api_key"], "sk-extra")
 
     def test_cursor_reads_only_the_account_state_db(self):
-        from quiver.harness.rate_limits import get_account_rate_limit
+        from swe.harness.rate_limits import get_account_rate_limit
 
         token = CursorFetcherTest()._token()
         with tempfile.TemporaryDirectory() as tmp:
             self._cursor_dir(tmp, token)
             with patch(
-                "quiver.harness.rate_limits._fetch_json",
+                "swe.harness.rate_limits._fetch_json",
                 return_value=self._CURSOR_RESPONSE,
             ), patch(
-                "quiver.harness.rate_limits._read_cursor_keychain_token",
+                "swe.harness.rate_limits._read_cursor_keychain_token",
             ) as keychain, patch(
-                "quiver.harness.rate_limits._cursor_session_cookie",
+                "swe.harness.rate_limits._cursor_session_cookie",
                 return_value="cookie",
             ):
                 info = get_account_rate_limit("cursor", tmp)
@@ -5421,37 +5421,37 @@ class AccountRateLimitTest(unittest.TestCase):
         keychain.assert_not_called()
 
     def test_empty_account_dir_reports_nothing(self):
-        from quiver.harness.rate_limits import get_account_rate_limit
+        from swe.harness.rate_limits import get_account_rate_limit
 
         with tempfile.TemporaryDirectory() as tmp:
             for name in ("devin", "cursor"):
                 with patch(
-                    "quiver.harness.rate_limits._read_cursor_keychain_token",
+                    "swe.harness.rate_limits._read_cursor_keychain_token",
                 ) as keychain, patch(
-                    "quiver.harness.rate_limits._fetch_json",
+                    "swe.harness.rate_limits._fetch_json",
                 ) as fetch:
                     self.assertIsNone(get_account_rate_limit(name, tmp))
                 keychain.assert_not_called()
                 fetch.assert_not_called()
 
     def test_unsupported_name_raises(self):
-        from quiver.harness.rate_limits import get_account_rate_limit
+        from swe.harness.rate_limits import get_account_rate_limit
 
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):
                 get_account_rate_limit("gemini", tmp)
 
     def test_shared_cache_is_never_touched(self):
-        from quiver.harness.rate_limits import get_account_rate_limit
+        from swe.harness.rate_limits import get_account_rate_limit
 
         with tempfile.TemporaryDirectory() as tmp:
             self._devin_dir(tmp)
             with patch(
-                "quiver.harness.rate_limits._load_cached",
+                "swe.harness.rate_limits._load_cached",
             ) as load, patch(
-                "quiver.harness.rate_limits._save_cached",
+                "swe.harness.rate_limits._save_cached",
             ) as save, patch(
-                "quiver.harness.rate_limits._fetch_json",
+                "swe.harness.rate_limits._fetch_json",
                 return_value=self._DEVIN_RESPONSE,
             ):
                 get_account_rate_limit("devin", tmp)
@@ -5459,7 +5459,7 @@ class AccountRateLimitTest(unittest.TestCase):
             save.assert_not_called()
 
     def test_credentials_but_failed_fetch_is_an_outage_not_signed_out(self):
-        from quiver.harness.rate_limits import (
+        from swe.harness.rate_limits import (
             AccountUsageError,
             get_account_rate_limit,
         )
@@ -5468,25 +5468,25 @@ class AccountRateLimitTest(unittest.TestCase):
             self._devin_dir(tmp)
             # Fetcher returns None (an unreadable reply) and raises alike.
             with patch(
-                "quiver.harness.rate_limits._fetch_json", return_value=None
+                "swe.harness.rate_limits._fetch_json", return_value=None
             ):
                 with self.assertRaises(AccountUsageError):
                     get_account_rate_limit("devin", tmp)
             with patch(
-                "quiver.harness.rate_limits._fetch_json",
+                "swe.harness.rate_limits._fetch_json",
                 side_effect=OSError("connection refused"),
             ):
                 with self.assertRaises(AccountUsageError):
                     get_account_rate_limit("devin", tmp)
 
     def test_successful_reading_is_stamped_with_the_fetch_time(self):
-        from quiver.harness.rate_limits import get_account_rate_limit
+        from swe.harness.rate_limits import get_account_rate_limit
 
         with tempfile.TemporaryDirectory() as tmp:
             self._devin_dir(tmp)
             before = time.time()
             with patch(
-                "quiver.harness.rate_limits._fetch_json",
+                "swe.harness.rate_limits._fetch_json",
                 return_value=self._DEVIN_RESPONSE,
             ):
                 info = get_account_rate_limit("devin", tmp)
@@ -5495,8 +5495,8 @@ class AccountRateLimitTest(unittest.TestCase):
         self.assertLessEqual(info.fetched_at, time.time())
 
     def test_a_reading_already_dated_keeps_its_stamp(self):
-        from quiver.harness.rate_limits import get_account_rate_limit
-        from quiver.harness.models import RateLimitInfo
+        from swe.harness.rate_limits import get_account_rate_limit
+        from swe.harness.models import RateLimitInfo
 
         carried = RateLimitInfo(
             tool_name="devin", used_percent=10, limit_reached=False,
@@ -5506,7 +5506,7 @@ class AccountRateLimitTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self._devin_dir(tmp)
             with patch(
-                "quiver.harness.rate_limits._fetch_devin",
+                "swe.harness.rate_limits._fetch_devin",
                 return_value=carried,
             ):
                 info = get_account_rate_limit("devin", tmp)
@@ -5535,12 +5535,12 @@ class UsageOutcomeTest(unittest.TestCase):
         return root
 
     def test_no_credentials_is_signed_out(self):
-        from quiver.harness.rate_limits import get_account_usage
+        from swe.harness.rate_limits import get_account_usage
 
         with tempfile.TemporaryDirectory() as tmp:
             for name in ("devin", "cursor"):
                 with patch(
-                    "quiver.harness.rate_limits._fetch_json",
+                    "swe.harness.rate_limits._fetch_json",
                 ) as fetch:
                     outcome = get_account_usage(name, tmp)
                 self.assertEqual(outcome.status, "signed-out")
@@ -5548,11 +5548,11 @@ class UsageOutcomeTest(unittest.TestCase):
                 fetch.assert_not_called()
 
     def test_denied_credentials_are_permission_required(self):
-        from quiver.harness import rate_limits
+        from swe.harness import rate_limits
 
         with tempfile.TemporaryDirectory() as tmp:
             self._devin_dir(tmp)
-            with patch("quiver.harness.rate_limits.open",
+            with patch("swe.harness.rate_limits.open",
                        side_effect=PermissionError(13, "denied"),
                        create=True):
                 outcome = rate_limits.get_account_usage("devin", tmp)
@@ -5560,12 +5560,12 @@ class UsageOutcomeTest(unittest.TestCase):
         self.assertIsNone(outcome.limit)
 
     def test_a_cursor_blob_is_auth_required(self):
-        from quiver.harness.rate_limits import get_account_usage
+        from swe.harness.rate_limits import get_account_usage
 
         with tempfile.TemporaryDirectory() as tmp:
             self._cursor_dir(tmp, "cursor-safe-storage:v1:AAAA")
             with patch(
-                "quiver.harness.rate_limits._fetch_json",
+                "swe.harness.rate_limits._fetch_json",
             ) as fetch:
                 outcome = get_account_usage("cursor", tmp)
         self.assertEqual(outcome.status, "auth-required")
@@ -5573,12 +5573,12 @@ class UsageOutcomeTest(unittest.TestCase):
         fetch.assert_not_called()
 
     def test_a_failed_fetch_is_unavailable(self):
-        from quiver.harness.rate_limits import get_account_usage
+        from swe.harness.rate_limits import get_account_usage
 
         with tempfile.TemporaryDirectory() as tmp:
             self._devin_dir(tmp)
             with patch(
-                "quiver.harness.rate_limits._fetch_json",
+                "swe.harness.rate_limits._fetch_json",
                 return_value=None,
             ):
                 outcome = get_account_usage("devin", tmp)
@@ -5586,7 +5586,7 @@ class UsageOutcomeTest(unittest.TestCase):
         self.assertIsNone(outcome.limit)
 
     def test_a_401_is_auth_required(self):
-        from quiver.harness import rate_limits
+        from swe.harness import rate_limits
 
         def dead(_path=None):
             # A 401 inside _fetch_json lands on the worker thread's sink.
@@ -5600,12 +5600,12 @@ class UsageOutcomeTest(unittest.TestCase):
         self.assertEqual(outcome.status, "auth-required")
 
     def test_an_ok_reading(self):
-        from quiver.harness.rate_limits import get_account_usage
+        from swe.harness.rate_limits import get_account_usage
 
         with tempfile.TemporaryDirectory() as tmp:
             self._devin_dir(tmp)
             with patch(
-                "quiver.harness.rate_limits._fetch_json",
+                "swe.harness.rate_limits._fetch_json",
                 return_value=self._DEVIN_RESPONSE,
             ):
                 outcome = get_account_usage("devin", tmp)
@@ -5613,7 +5613,7 @@ class UsageOutcomeTest(unittest.TestCase):
         self.assertIsNotNone(outcome.limit)
 
     def test_the_old_contract_still_holds(self):
-        from quiver.harness.rate_limits import (
+        from swe.harness.rate_limits import (
             AccountUsageError,
             get_account_rate_limit,
         )
@@ -5624,7 +5624,7 @@ class UsageOutcomeTest(unittest.TestCase):
             self.assertIsNone(get_account_rate_limit("devin", tmp))
             self._devin_dir(tmp)
             with patch(
-                "quiver.harness.rate_limits._fetch_json", return_value=None
+                "swe.harness.rate_limits._fetch_json", return_value=None
             ), self.assertRaises(AccountUsageError):
                 get_account_rate_limit("devin", tmp)
 
@@ -5633,7 +5633,7 @@ class IssueStatusTest(unittest.TestCase):
     """``get_all_rate_limits(issues=...)``: the fine-grained statuses."""
 
     def setUp(self):
-        from quiver.harness import rate_limits
+        from swe.harness import rate_limits
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.cache = Path(tmp.name) / "rate_limits_cache.json"
@@ -5658,8 +5658,8 @@ class IssueStatusTest(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def test_each_failure_kind_gets_its_status(self):
-        from quiver.harness import rate_limits
-        from quiver.harness.rate_limits import register
+        from swe.harness import rate_limits
+        from swe.harness.rate_limits import register
 
         def dead_auth():
             # A 401 inside _fetch_json lands on the worker thread's sink.
@@ -5730,20 +5730,20 @@ class CursorCliTokenTest(unittest.TestCase):
         return path
 
     def test_reads_the_access_token(self):
-        from quiver.harness.rate_limits import _read_cursor_cli_token
+        from swe.harness.rate_limits import _read_cursor_cli_token
         with tempfile.TemporaryDirectory() as tmp:
             path = self._write(tmp, {"accessToken": " a.b.c ", "refreshToken": "r.s.t"})
             self.assertEqual(_read_cursor_cli_token(path), "a.b.c")
 
     def test_missing_or_malformed_files_have_no_token(self):
-        from quiver.harness.rate_limits import _read_cursor_cli_token
+        from swe.harness.rate_limits import _read_cursor_cli_token
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(_read_cursor_cli_token(os.path.join(tmp, "absent.json")))
             for body in ("{not json", "[]", {"accessToken": ""}, {"accessToken": 7}, {}):
                 self.assertIsNone(_read_cursor_cli_token(self._write(tmp, body)), body)
 
     def test_token_ladder_is_editor_then_cli_file_then_keychain(self):
-        from quiver.harness import rate_limits
+        from swe.harness import rate_limits
         jwt = CursorFetcherTest._jwt
         editor_token = jwt({"sub": "editor"})
         cli_token = jwt({"sub": "cli"})
@@ -5784,7 +5784,7 @@ class CursorSafeStorageTest(unittest.TestCase):
     )
 
     def setUp(self):
-        from quiver.harness import rate_limits
+        from swe.harness import rate_limits
         self.rl = rate_limits
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -5801,7 +5801,7 @@ class CursorSafeStorageTest(unittest.TestCase):
             patcher = patch.object(rate_limits, target, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        patcher = patch("quiver.harness.rate_limits.shutil.which",
+        patcher = patch("swe.harness.rate_limits.shutil.which",
                         return_value="/usr/bin/security")
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -5812,10 +5812,10 @@ class CursorSafeStorageTest(unittest.TestCase):
 
     def _security(self, returncode=0, stdout=None, side_effect=None):
         if side_effect is not None:
-            return patch("quiver.harness.rate_limits.subprocess.run",
+            return patch("swe.harness.rate_limits.subprocess.run",
                          side_effect=side_effect)
         return patch(
-            "quiver.harness.rate_limits.subprocess.run",
+            "swe.harness.rate_limits.subprocess.run",
             return_value=MagicMock(
                 returncode=returncode,
                 stdout=self._PASSWORD + "\n" if stdout is None else stdout),
@@ -6016,7 +6016,7 @@ class NoReadingReasonTest(unittest.TestCase):
     """``get_all_rate_limits(no_reading=...)``: signed out vs failed fetch."""
 
     def setUp(self):
-        from quiver.harness import rate_limits
+        from swe.harness import rate_limits
         self.rl = rate_limits
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -6114,7 +6114,7 @@ class NoReadingReasonTest(unittest.TestCase):
         self.assertEqual(saved["no_data_status"]["broken"], "error")
 
     def test_a_slow_credential_lookup_is_unknown_not_signed_out(self):
-        from quiver.harness import rate_limits
+        from swe.harness import rate_limits
         with patch.object(rate_limits.shutil, "which", return_value="/usr/bin/x"), \
              patch.object(rate_limits.subprocess, "run",
                           side_effect=subprocess.TimeoutExpired("security", 1)):
@@ -6128,7 +6128,7 @@ class NoReadingReasonTest(unittest.TestCase):
         self.assertEqual(reasons, {})
 
     def test_probes_never_read_a_secret(self):
-        from quiver.harness import rate_limits
+        from swe.harness import rate_limits
         calls = []
 
         def run(args, **kw):
@@ -6176,7 +6176,7 @@ class NoReadingReasonTest(unittest.TestCase):
         self.assertEqual(saved["no_data_status"], {"out": "signed_out", "broken": "error"})
 
     def test_cache_without_the_status_map_reads_as_no_reason(self):
-        from quiver.harness.rate_limits import _load_cached_no_data_status
+        from swe.harness.rate_limits import _load_cached_no_data_status
         self.assertEqual(_load_cached_no_data_status(), {})
         self.cache.write_text(json.dumps({"cached_at": time.time(), "limits": {},
                                           "no_data": {"a": time.time()}}))

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The user's own model prices at `~/.quiver/config/pricing.json`:
+/// The user's own model prices at `~/.swe/config/pricing.json`:
 ///
 ///     {"schema": 1, "models": {"<name>": {
 ///         "input": <usd per 1M>, "output": <usd per 1M>,

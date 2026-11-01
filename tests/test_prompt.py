@@ -4,7 +4,7 @@ import io
 import unittest
 from unittest.mock import patch
 
-from quiver.prompt import read_line
+from swe.prompt import read_line
 
 
 class ReadLineTest(unittest.TestCase):
@@ -52,7 +52,7 @@ class ByteReaderTest(unittest.TestCase):
     def test_a_cr_followed_by_a_letter_pushes_the_letter_back(self):
         import os
 
-        from quiver import prompt
+        from swe import prompt
 
         fd = self._pipe(b"a\rx")
         try:
@@ -66,7 +66,7 @@ class ByteReaderTest(unittest.TestCase):
     def test_a_select_failure_after_cr_still_ends_the_line(self):
         import os
 
-        from quiver import prompt
+        from swe import prompt
 
         fd = self._pipe(b"a\r")
         try:
@@ -79,7 +79,7 @@ class ByteReaderTest(unittest.TestCase):
     def test_backspace_edits_and_echoes_on_a_tty_without_echo(self):
         import os
 
-        from quiver import prompt
+        from swe import prompt
 
         fd = self._pipe(b"ab\x7fc\n")
         out = io.StringIO()
@@ -94,7 +94,7 @@ class ByteReaderTest(unittest.TestCase):
     def test_ctrl_c_raises_and_ctrl_d_ends_like_eof(self):
         import os
 
-        from quiver import prompt
+        from swe import prompt
 
         fd = self._pipe(b"\x03")
         try:
@@ -123,7 +123,7 @@ class ByteReaderTest(unittest.TestCase):
         CR, so no partner byte is consumed and the line still ends."""
         import os
 
-        from quiver import prompt
+        from swe import prompt
 
         r, w = os.pipe()
         os.write(w, b"a\r")
@@ -140,7 +140,7 @@ class ByteReaderTest(unittest.TestCase):
     def test_backspace_on_an_empty_line_is_a_noop(self):
         import os
 
-        from quiver import prompt
+        from swe import prompt
 
         fd = self._pipe(b"\x7fok\n")
         try:
@@ -163,7 +163,7 @@ class ByteReaderTest(unittest.TestCase):
     def test_control_characters_are_skipped(self):
         import os
 
-        from quiver import prompt
+        from swe import prompt
 
         fd = self._pipe(b"a\x01b\n")
         try:
@@ -177,7 +177,7 @@ class ByteReaderTest(unittest.TestCase):
         the cursor moved off the row."""
         import os
 
-        from quiver import prompt
+        from swe import prompt
 
         for tty_echo in (False, True):
             out = io.StringIO()
@@ -228,7 +228,7 @@ class ByteReaderTest(unittest.TestCase):
 
     def test_pushback_does_not_drop_byte_after_cr(self):
         """CR followed by a non-LF byte must not eat the next character."""
-        from quiver import prompt as prompt_mod
+        from swe import prompt as prompt_mod
 
         prompt_mod._pushback.clear()
         # "ab\rcd\n" — after CR, 'c' must start next line, not be dropped

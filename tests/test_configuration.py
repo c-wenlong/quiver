@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from quiver.configuration import (
+from swe.configuration import (
     CONFIG_FILE,
     DEFAULT_CONFIG,
     ConfigurationError,
@@ -65,7 +65,7 @@ class ConfigurationValueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
             path.write_text('{"report": {"max_workers": 8}}')
-            with patch("quiver.configuration.CONFIG_FILE", path):
+            with patch("swe.configuration.CONFIG_FILE", path):
                 resolved = load_resolved_config(
                     overrides={"report": {"max_summary_calls": 9}}
                 )
@@ -78,7 +78,7 @@ class ConfigurationIOTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
             config = {"report": {"max_workers": 4}}
-            with patch("quiver.configuration.os.replace", wraps=__import__("os").replace) as replace:
+            with patch("swe.configuration.os.replace", wraps=__import__("os").replace) as replace:
                 save_config(config, path)
             self.assertEqual(load_config(path), config)
             replace.assert_called_once()
@@ -99,10 +99,10 @@ class ConfigurationIOTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), malformed)
 
     def test_default_path_uses_config_dir(self):
-        # ~/.quiver/config/config.json since the roots merged in 0.2.7.
+        # ~/.swe/config/config.json since the roots merged in 0.2.7.
         self.assertEqual(CONFIG_FILE.name, "config.json")
         self.assertEqual(CONFIG_FILE.parent.name, "config")
-        self.assertEqual(CONFIG_FILE.parent.parent.name, ".quiver")
+        self.assertEqual(CONFIG_FILE.parent.parent.name, ".swe")
 
 
 class ConfigurationValidationTests(unittest.TestCase):

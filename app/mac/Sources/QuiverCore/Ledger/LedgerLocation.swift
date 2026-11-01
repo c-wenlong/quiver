@@ -6,7 +6,7 @@ import os
 ///
 /// The ledger is data, not cache: harnesses prune their transcripts (Claude
 /// Code after 30 days by default), so its rows can be the only record of
-/// that usage. It lives in `~/.quiver/data/ledger/`. Earlier builds kept it
+/// that usage. It lives in `~/.swe/data/ledger/`. Earlier builds kept it
 /// in `cache/ledger/`, which nothing backs up and Mac cleaners empty.
 public enum LedgerLocation {
     static let fileName = "ledger.sqlite"

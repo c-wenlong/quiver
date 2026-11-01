@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.harness.commands import _sort_tools
-from quiver.harness.stars import (
+from swe.harness.commands import _sort_tools
+from swe.harness.stars import (
     is_starred,
     load_stars,
     save_stars,
@@ -17,13 +17,13 @@ from quiver.harness.stars import (
 
 class HarnessStarsTest(unittest.TestCase):
     """Star state now lives on each harness's row in harness.json (see
-    quiver.harness.registry); patch that file rather than a standalone
-    stars.json, since quiver.harness.stars is a thin shim over it."""
+    swe.harness.registry); patch that file rather than a standalone
+    stars.json, since swe.harness.stars is a thin shim over it."""
 
     def _patch_paths(self, tmp: str):
-        config_dir = Path(tmp) / ".quiver" / "config"
+        config_dir = Path(tmp) / ".swe" / "config"
         return patch.multiple(
-            "quiver.harness.registry",
+            "swe.harness.registry",
             CONFIG_DIR=config_dir,
             HARNESS_FILE=config_dir / "harness.json",
             TOOLS_FILE=config_dir / "tools.json",
@@ -52,7 +52,7 @@ class HarnessStarsTest(unittest.TestCase):
                 save_stars(["droid", "claude", "droid", ""])
                 self.assertEqual(load_stars(), ["droid", "claude"])
                 raw = json.loads(
-                    (Path(tmp) / ".quiver" / "config" / "harness.json").read_text())
+                    (Path(tmp) / ".swe" / "config" / "harness.json").read_text())
                 self.assertEqual(raw["droid"]["pin"], 1)
                 self.assertEqual(raw["claude"]["pin"], 2)
                 self.assertEqual(raw["droid"]["state"], "starred")

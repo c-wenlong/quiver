@@ -79,7 +79,7 @@ import Testing
         #expect(roster.title(for: "friendly-session") == "Deleted Bot (friendly-session)")
     }
 
-    /// A temp file for the remembered names, never `~/.quiver`.
+    /// A temp file for the remembered names, never `~/.swe`.
     private func memoryFile() -> URL {
         scratch.url
             .appendingPathComponent("grok-names-\(UUID().uuidString)/grok-bot-names.json")

@@ -15,9 +15,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from quiver.cli import cmd_autocomplete
-from quiver.find.commands import cmd_find
-from quiver.harness.commands import (
+from swe.cli import cmd_autocomplete
+from swe.find.commands import cmd_find
+from swe.harness.commands import (
     cmd_add,
     cmd_aliases,
     cmd_check,
@@ -32,14 +32,14 @@ from quiver.harness.commands import (
     cmd_tags,
     cmd_use,
 )
-from quiver.help_text import cmd_help
-from quiver.providers.commands import (
+from swe.help_text import cmd_help
+from swe.providers.commands import (
     cmd_info as provider_info,
     cmd_list as provider_list,
     cmd_remove as provider_remove,
 )
-from quiver.sessions.commands import cmd_models
-from quiver.skills.commands import cmd_skills
+from swe.sessions.commands import cmd_models
+from swe.skills.commands import cmd_skills
 
 
 def _run(fn, args):
@@ -56,10 +56,10 @@ def _provider_patches(tmp_path: Path):
     keys_dir = tmp_path / ".api_keys"
     keys_dir.mkdir()
     return (
-        patch("quiver.providers.registry.CONFIG_DIR", config_dir),
-        patch("quiver.providers.registry.PROVIDERS_REGISTRY_FILE", registry_file),
+        patch("swe.providers.registry.CONFIG_DIR", config_dir),
+        patch("swe.providers.registry.PROVIDERS_REGISTRY_FILE", registry_file),
         patch(
-            "quiver.providers.commands.default_keys_dir",
+            "swe.providers.commands.default_keys_dir",
             return_value=keys_dir,
         ),
     )
@@ -73,7 +73,7 @@ class ErrorExitCodesTest(unittest.TestCase):
         self.assertEqual(code, 1)
 
     def test_info_not_found(self):
-        with patch("quiver.harness.commands.load_registry", return_value={}):
+        with patch("swe.harness.commands.load_registry", return_value={}):
             code, _ = _run(cmd_info, ["nope"])
         self.assertEqual(code, 1)
 
@@ -82,35 +82,35 @@ class ErrorExitCodesTest(unittest.TestCase):
         self.assertEqual(code, 1)
 
     def test_remove_not_found(self):
-        with patch("quiver.harness.commands.load_registry", return_value={}):
+        with patch("swe.harness.commands.load_registry", return_value={}):
             code, _ = _run(cmd_remove, ["nope"])
         self.assertEqual(code, 1)
 
     def test_use_usage(self):
-        with patch("quiver.harness.commands.load_registry", return_value={}), patch(
-            "quiver.harness.archive.load_archive", return_value={}
+        with patch("swe.harness.commands.load_registry", return_value={}), patch(
+            "swe.harness.archive.load_archive", return_value={}
         ):
             code, _ = _run(cmd_use, [])
         self.assertEqual(code, 1)
 
     def test_use_not_found(self):
-        with patch("quiver.harness.commands.load_registry", return_value={}):
+        with patch("swe.harness.commands.load_registry", return_value={}):
             code, _ = _run(cmd_use, ["nope"])
         self.assertEqual(code, 1)
 
     def test_use_command_not_in_path(self):
         tools = {"demo": {"command": "definitely-not-installed-xyz"}}
-        with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
-            "quiver.harness.commands.resolve", return_value="demo"
+        with patch("swe.harness.commands.load_registry", return_value=tools), patch(
+            "swe.harness.commands.resolve", return_value="demo"
         ), patch(
-            "quiver.harness.commands.is_installed", return_value=False
+            "swe.harness.commands.is_installed", return_value=False
         ):
             code, _ = _run(cmd_use, ["demo"])
         self.assertEqual(code, 1)
 
     def test_star_not_found(self):
-        with patch("quiver.harness.commands.load_registry", return_value={}), patch(
-            "quiver.harness.commands.is_starred", return_value=False
+        with patch("swe.harness.commands.load_registry", return_value={}), patch(
+            "swe.harness.commands.is_starred", return_value=False
         ):
             code, _ = _run(cmd_star, ["nope"])
         self.assertEqual(code, 1)
@@ -147,7 +147,7 @@ class ErrorExitCodesTest(unittest.TestCase):
         self.assertIn("swe <cmd> --help", out)
 
     def test_help_full_lists_every_category(self):
-        from quiver.help_text import COMMAND_CATEGORIES, HELP
+        from swe.help_text import COMMAND_CATEGORIES, HELP
         _code, out = _run(cmd_help, [])
         for cat_name, cmds in COMMAND_CATEGORIES:
             self.assertIn(cat_name, out)
@@ -221,16 +221,16 @@ class UnknownArgRejectionTest(unittest.TestCase):
         self.assertIn("Unexpected args: b", out)
 
     def test_star_clear_extra_positional_does_not_clear(self):
-        with patch("quiver.harness.commands.load_registry", return_value={}), \
-                patch("quiver.harness.stars.save_stars") as save_stars:
+        with patch("swe.harness.commands.load_registry", return_value={}), \
+                patch("swe.harness.stars.save_stars") as save_stars:
             code, out = _run(cmd_star, ["clear", "junk"])
         self.assertEqual(code, 1)
         self.assertIn("Unexpected args: junk", out)
         save_stars.assert_not_called()
 
     def test_list_edit_reset_extra_positional_does_not_reset(self):
-        with patch("quiver.harness.commands.save_columns") as save_columns, \
-                patch("quiver.harness.commands.save_window") as save_window:
+        with patch("swe.harness.commands.save_columns") as save_columns, \
+                patch("swe.harness.commands.save_window") as save_window:
             code, out = _run(cmd_list_edit, ["--reset", "junk"])
         self.assertEqual(code, 1)
         self.assertIn("Unexpected args: junk", out)
@@ -286,7 +286,7 @@ class SkillsHelpTopicsTest(unittest.TestCase):
     """Every topic `swe help skills` advertises must resolve."""
 
     def test_tree_and_scope_topics_exist(self):
-        from quiver.skills.help_text import cmd_skills_help
+        from swe.skills.help_text import cmd_skills_help
 
         for topic in ("tree", "scope", "scopes"):
             code, out = _run(cmd_skills_help, [topic])
@@ -294,7 +294,7 @@ class SkillsHelpTopicsTest(unittest.TestCase):
             self.assertIn("swe find skills", out)
 
     def test_unknown_topic_fails(self):
-        from quiver.skills.help_text import cmd_skills_help
+        from swe.skills.help_text import cmd_skills_help
 
         code, out = _run(cmd_skills_help, ["bogus"])
         self.assertEqual(code, 1)

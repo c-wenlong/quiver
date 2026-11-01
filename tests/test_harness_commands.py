@@ -1,4 +1,4 @@
-"""Tests for the migrated ``cmd_list`` (now renders via ``quiver.table.Table``).
+"""Tests for the migrated ``cmd_list`` (now renders via ``swe.table.Table``).
 
 The refactored cmd_list no longer hand-rolls f-strings; it builds a
 9-column Table once and renders once per row with a single
@@ -42,8 +42,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.console import c, strip_ansi, visible_len
-from quiver.harness.commands import (
+from swe.console import c, strip_ansi, visible_len
+from swe.harness.commands import (
     _fetch_rate_limits,
     _sort_tools,
     cmd_aliases,
@@ -52,8 +52,8 @@ from quiver.harness.commands import (
     cmd_list,
     cmd_tags,
 )
-from quiver.harness.rate_limits import RateLimitInfo, _FETCHERS, register
-from quiver.table import Table
+from swe.harness.rate_limits import RateLimitInfo, _FETCHERS, register
+from swe.table import Table
 
 
 def _run_cmd_list(args=None):
@@ -108,24 +108,24 @@ def _setup_patches(testcase, *, stars=(), registry=None, archive=None):
         # shallow copy was harmless, but deepcopy future-proofs against
         # any cmd_list mutation path that may be added later.
         patch(
-            "quiver.harness.commands.load_registry",
+            "swe.harness.commands.load_registry",
             return_value=copy.deepcopy(
                 registry if registry is not None else _REGISTRY),
         ),
-        patch("quiver.harness.commands._session_counts", return_value={
+        patch("swe.harness.commands._session_counts", return_value={
             "claude": 42,  # positive → green
             "codex": 0,    # present-zero → dim
             # droid absent → dim em-dash
         }),
-        patch("quiver.harness.commands.load_stars", return_value=list(stars)),
+        patch("swe.harness.commands.load_stars", return_value=list(stars)),
         # The archive is per-user state that cmd_list filters on. Without
         # this, anything the developer had archived would drop out of the
         # default scope and a fixture row would simply vanish.
-        patch("quiver.harness.archive.load_archive",
+        patch("swe.harness.archive.load_archive",
               return_value=copy.deepcopy(archive or {})),
-        patch("quiver.harness.commands.is_installed", side_effect=_is_installed_false),
+        patch("swe.harness.commands.is_installed", side_effect=_is_installed_false),
         patch(
-            "quiver.harness.rate_limits.get_all_rate_limits",
+            "swe.harness.rate_limits.get_all_rate_limits",
             return_value={
                 "codex": RateLimitInfo(
                     tool_name="codex",
@@ -174,14 +174,14 @@ def _pin_columns(test):
     """
     from unittest import mock
 
-    from quiver.harness import columns as _columns
+    from swe.harness import columns as _columns
 
     patch = mock.patch.object(
         _columns, "load_columns", lambda: list(_columns.DEFAULT_COLUMNS))
     patch.start()
     test.addCleanup(patch.stop)
     patch2 = mock.patch(
-        "quiver.harness.commands.load_columns",
+        "swe.harness.commands.load_columns",
         lambda: list(_columns.DEFAULT_COLUMNS))
     patch2.start()
     test.addCleanup(patch2.stop)
@@ -202,7 +202,7 @@ class CmdListGhostRowTest(unittest.TestCase):
         reg = copy.deepcopy(_REGISTRY)
         reg["ghost-tool"] = {"state": "starred", "pin": 1}
         p = patch(
-            "quiver.harness.commands.load_registry",
+            "swe.harness.commands.load_registry",
             return_value=reg,
         )
         p.start()
@@ -258,7 +258,7 @@ class CmdListHeaderTest(unittest.TestCase):
         # gap) enabled in cmd_list, both rows must still land the tool
         # name at the same offset — column 5 (mark=2 + gap=3). Override
         # load_stars locally without disturbing the class-level setUp.
-        with patch("quiver.harness.commands.load_stars", return_value=["claude"]):
+        with patch("swe.harness.commands.load_stars", return_value=["claude"]):
             output = _run_cmd_list()
         starred_row = next(
             line for line in output.split("\n")
@@ -307,7 +307,7 @@ class CmdListHeaderTest(unittest.TestCase):
         # sess column grows around it; every other row must still land
         # on the same separators instead of drifting right.
         with patch(
-            "quiver.harness.commands._session_counts",
+            "swe.harness.commands._session_counts",
             return_value={"claude": 10000, "codex": 0},
         ):
             self._assert_body_rows_align(_run_cmd_list())
@@ -474,7 +474,7 @@ class CmdListInstColumnTest(unittest.TestCase):
 
     def test_inst_shows_green_check_when_installed(self):
         # Patch is_installed again to override the False default for this test.
-        with patch("quiver.harness.commands.is_installed", return_value=True):
+        with patch("swe.harness.commands.is_installed", return_value=True):
             output = _run_cmd_list()
         plain = strip_ansi(output)
         self.assertIn("\u2713", plain)
@@ -486,8 +486,8 @@ class CmdListSessColumnTest(unittest.TestCase):
     def setUp(self):
         _setup_patches(self)
         # The header reads the developer's saved session window; pin it so
-        # the column really is "100d" whatever ~/.quiver/config.json says.
-        p = patch("quiver.harness.commands.load_window", return_value=100)
+        # the column really is "100d" whatever ~/.swe/config.json says.
+        p = patch("swe.harness.commands.load_window", return_value=100)
         p.start()
         self.addCleanup(p.stop)
 
@@ -549,7 +549,7 @@ class CmdListRefreshFlagTest(unittest.TestCase):
     def test_list_requests_usage_only_for_starred_harnesses(self):
         _setup_patches(self, stars=["claude", "droid"])
         with patch(
-            "quiver.harness.rate_limits.get_all_rate_limits",
+            "swe.harness.rate_limits.get_all_rate_limits",
             return_value={},
         ) as fetch_rates, redirect_stdout(io.StringIO()):
             cmd_list(["--usage"])
@@ -563,11 +563,11 @@ class CmdListRefreshFlagTest(unittest.TestCase):
     def test_new_short_flag_refetches_sessions_and_rate_limits(self):
         _setup_patches(self)
         with patch(
-            "quiver.sessions.aggregator.invalidate_cache",
+            "swe.sessions.aggregator.invalidate_cache",
         ) as invalidate_sessions, patch(
-            "quiver.harness.rate_limits.invalidate_cache",
+            "swe.harness.rate_limits.invalidate_cache",
         ) as invalidate_rates, patch(
-            "quiver.harness.rate_limits.get_all_rate_limits",
+            "swe.harness.rate_limits.get_all_rate_limits",
             return_value={},
         ) as fetch_rates, redirect_stdout(io.StringIO()):
             cmd_list(["-n"])
@@ -586,7 +586,7 @@ class CmdListRefreshFailedFlagTest(unittest.TestCase):
     def test_refresh_failed_and_cache_ttl_are_passed_through(self):
         _setup_patches(self)
         with patch(
-            "quiver.harness.rate_limits.get_all_rate_limits",
+            "swe.harness.rate_limits.get_all_rate_limits",
             return_value={},
         ) as fetch_rates, redirect_stdout(io.StringIO()):
             code = cmd_list(["--usage", "--refresh-failed", "--cache-ttl=300"])
@@ -600,7 +600,7 @@ class CmdListRefreshFailedFlagTest(unittest.TestCase):
     def test_refresh_failed_alone_turns_on_the_usage_view(self):
         _setup_patches(self)
         with patch(
-            "quiver.harness.rate_limits.get_all_rate_limits",
+            "swe.harness.rate_limits.get_all_rate_limits",
             return_value={},
         ) as fetch_rates, redirect_stdout(io.StringIO()):
             code = cmd_list(["--refresh-failed"])
@@ -630,7 +630,7 @@ class CmdListRefreshFailedFlagTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# cmd_check migration to quiver.table.Table
+# cmd_check migration to swe.table.Table
 # ---------------------------------------------------------------------------
 #
 # The refactored cmd_check now builds a 4-column Table once (STATUS | NAME |
@@ -765,24 +765,24 @@ def _setup_check_patches(
     # bullet for the rate-limit cohort, applies to cmd_check too).
     patches = [
         patch(
-            "quiver.harness.commands.load_registry",
+            "swe.harness.commands.load_registry",
             return_value=copy.deepcopy(
                 registry if registry is not None else _CHECK_REGISTRY),
         ),
         patch(
-            "quiver.harness.commands.is_installed",
+            "swe.harness.commands.is_installed",
             side_effect=lambda cmd: cmd in installed_set,
         ),
         patch(
-            "quiver.harness.commands.live_version",
+            "swe.harness.commands.live_version",
             side_effect=lambda cmd: live_versions.get(cmd),
         ),
         patch(
-            "quiver.harness.commands.save_registry",
+            "swe.harness.commands.save_registry",
             side_effect=lambda _tools: saved_calls.append(_tools),
         ),
         patch(
-            "quiver.harness.path_health.find_off_path_tools",
+            "swe.harness.path_health.find_off_path_tools",
             return_value=list(orphans),
         ),
     ]
@@ -962,21 +962,21 @@ class CmdCheckHealSideEffectTest(unittest.TestCase):
 
         patches = [
             patch(
-                "quiver.harness.commands.load_registry",
+                "swe.harness.commands.load_registry",
                 return_value=copy.deepcopy(dirty_registry),
             ),
-            patch("quiver.harness.commands.is_installed", return_value=True),
-            patch("quiver.harness.commands.live_version", return_value=None),
+            patch("swe.harness.commands.is_installed", return_value=True),
+            patch("swe.harness.commands.live_version", return_value=None),
             patch(
-                "quiver.harness.commands.extract_version_number",
+                "swe.harness.commands.extract_version_number",
                 side_effect=_fake_extract,
             ),
             patch(
-                "quiver.harness.commands.save_registry",
+                "swe.harness.commands.save_registry",
                 side_effect=lambda t: saved_calls.append(t),
             ),
             patch(
-                "quiver.harness.path_health.find_off_path_tools",
+                "swe.harness.path_health.find_off_path_tools",
                 return_value=[],
             ),
         ]
@@ -1002,7 +1002,7 @@ class CmdCheckOffPathFooterTest(unittest.TestCase):
         self.assertNotIn("not on current PATH", plain)
 
     def test_orphans_render_under_off_path_header(self):
-        from quiver.harness.path_health import OffPathHit
+        from swe.harness.path_health import OffPathHit
         _setup_check_patches(
             self,
             installed_cmds=(),
@@ -1031,7 +1031,7 @@ class CmdCheckOffPathFooterTest(unittest.TestCase):
         self.assertIn("\033[33m!", output)
 
     def test_orphans_trigger_doctor_tip(self):
-        from quiver.harness.path_health import OffPathHit
+        from swe.harness.path_health import OffPathHit
         _setup_check_patches(
             self,
             installed_cmds=(),
@@ -1086,7 +1086,7 @@ class CmdCheckArchivedTest(unittest.TestCase):
     def test_archived_orphan_is_not_reported_as_off_path(self):
         # A shelved harness missing from PATH is deliberate, not drift to
         # fix — the Off-PATH block must skip it.
-        from quiver.harness.path_health import OffPathHit
+        from swe.harness.path_health import OffPathHit
         _setup_check_patches(
             self,
             registry=self._registry(),
@@ -1140,7 +1140,7 @@ class CmdCheckSortAndPrintTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# cmd_info migration to quiver.table.Table
+# cmd_info migration to swe.table.Table
 # ---------------------------------------------------------------------------
 #
 # cmd_info is a label-value structured view of one registry entry.
@@ -1172,11 +1172,11 @@ def _run_cmd_info(name="claude"):
 def _setup_info_patches(testcase, *, installed=True, which_path="/opt/homebrew/bin/claude"):
     patches = [
         patch(
-            "quiver.harness.commands.load_registry",
+            "swe.harness.commands.load_registry",
             return_value=copy.deepcopy(_INFO_REGISTRY),
         ),
-        patch("quiver.harness.commands.is_installed", return_value=installed),
-        patch("quiver.harness.commands.shutil.which", return_value=which_path),
+        patch("swe.harness.commands.is_installed", return_value=installed),
+        patch("swe.harness.commands.shutil.which", return_value=which_path),
     ]
     for p in patches:
         p.start()
@@ -1246,11 +1246,11 @@ class CmdInfoMigrationTest(unittest.TestCase):
         del no_notes_registry["claude"]["notes"]
         patches = [
             patch(
-                "quiver.harness.commands.load_registry",
+                "swe.harness.commands.load_registry",
                 return_value=no_notes_registry,
             ),
-            patch("quiver.harness.commands.is_installed", return_value=True),
-            patch("quiver.harness.commands.shutil.which", return_value="/x/claude"),
+            patch("swe.harness.commands.is_installed", return_value=True),
+            patch("swe.harness.commands.shutil.which", return_value="/x/claude"),
         ]
         for p in patches:
             p.start()
@@ -1269,11 +1269,11 @@ class CmdInfoPrimaryColorTest(unittest.TestCase):
     def _info_with(self, registry, name="claude"):
         patches = [
             patch(
-                "quiver.harness.commands.load_registry",
+                "swe.harness.commands.load_registry",
                 return_value=registry,
             ),
-            patch("quiver.harness.commands.is_installed", return_value=True),
-            patch("quiver.harness.commands.shutil.which", return_value="/x/claude"),
+            patch("swe.harness.commands.is_installed", return_value=True),
+            patch("swe.harness.commands.shutil.which", return_value="/x/claude"),
         ]
         for p in patches:
             p.start()
@@ -1302,9 +1302,9 @@ class CmdInfoPrimaryColorTest(unittest.TestCase):
         named = copy.deepcopy(_INFO_REGISTRY)
         named["claude"]["display_name"] = "Claude Code"
         patches = [
-            patch("quiver.harness.commands.load_registry", return_value=named),
-            patch("quiver.harness.commands.is_installed", return_value=True),
-            patch("quiver.harness.commands.shutil.which", return_value="/x/claude"),
+            patch("swe.harness.commands.load_registry", return_value=named),
+            patch("swe.harness.commands.is_installed", return_value=True),
+            patch("swe.harness.commands.shutil.which", return_value="/x/claude"),
         ]
         for p in patches:
             p.start()
@@ -1318,11 +1318,11 @@ class CmdInfoPrimaryColorTest(unittest.TestCase):
         empty_registry["claude"]["aliases"] = []
         patches = [
             patch(
-                "quiver.harness.commands.load_registry",
+                "swe.harness.commands.load_registry",
                 return_value=empty_registry,
             ),
-            patch("quiver.harness.commands.is_installed", return_value=True),
-            patch("quiver.harness.commands.shutil.which", return_value="/x/claude"),
+            patch("swe.harness.commands.is_installed", return_value=True),
+            patch("swe.harness.commands.shutil.which", return_value="/x/claude"),
         ]
         for p in patches:
             p.start()
@@ -1336,9 +1336,9 @@ class CmdInfoPrimaryColorTest(unittest.TestCase):
     def test_cmd_info_unknown_tool_prints_usage(self):
         empty = {"no_such": {"command": "no_such"}}
         patches = [
-            patch("quiver.harness.commands.load_registry", return_value=empty),
-            patch("quiver.harness.commands.is_installed", return_value=False),
-            patch("quiver.harness.commands.shutil.which", return_value=None),
+            patch("swe.harness.commands.load_registry", return_value=empty),
+            patch("swe.harness.commands.is_installed", return_value=False),
+            patch("swe.harness.commands.shutil.which", return_value=None),
         ]
         for p in patches:
             p.start()
@@ -1351,7 +1351,7 @@ class CmdInfoPrimaryColorTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# cmd_aliases migration to quiver.table.Table
+# cmd_aliases migration to swe.table.Table
 # ---------------------------------------------------------------------------
 #
 # cmd_aliases is a 2-column ALIASES | NAME table where the column gap
@@ -1376,7 +1376,7 @@ class CmdAliasesMigrationTest(unittest.TestCase):
     def setUp(self):
         patches = [
             patch(
-                "quiver.harness.commands.load_registry",
+                "swe.harness.commands.load_registry",
                 return_value=copy.deepcopy(_ALIASES_REGISTRY),
             ),
         ]
@@ -1446,7 +1446,7 @@ class CmdAliasesMigrationTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# cmd_tags migration to quiver.table.Table
+# cmd_tags migration to swe.table.Table
 # ---------------------------------------------------------------------------
 #
 # cmd_tags is a 2-column TAG | TOOLS table where the TAG cell is
@@ -1473,7 +1473,7 @@ class CmdTagsMigrationTest(unittest.TestCase):
     def setUp(self):
         patches = [
             patch(
-                "quiver.harness.commands.load_registry",
+                "swe.harness.commands.load_registry",
                 return_value=copy.deepcopy(_TAGS_REGISTRY),
             ),
         ]
@@ -1544,7 +1544,7 @@ class CmdTagsMigrationTest(unittest.TestCase):
     def test_no_tags_emits_notice_instead_of_table(self):
         patches = [
             patch(
-                "quiver.harness.commands.load_registry",
+                "swe.harness.commands.load_registry",
                 return_value={"noop": {"command": "noop", "tags": []}},
             ),
         ]
@@ -1583,23 +1583,23 @@ class FetchRateLimitsTtyTest(unittest.TestCase):
         err = _FakeTty()
         try:
             with tempfile.TemporaryDirectory() as tmp, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp) / "rate_limits_cache.json",
             ), patch(
                 # The fetcher misses the pipe-sized deadline but lands
                 # inside the TTY budget — the same call both ways is the
                 # proof the longer deadline reaches the worker.
-                "quiver.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
+                "swe.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
                 0.05,
                 create=True,
             ), patch("sys.stdout", _FakeTty()), patch("sys.stderr", err):
                 result = _fetch_rate_limits(refresh=True,
                                             tool_names={"fake"})
             with tempfile.TemporaryDirectory() as tmp2, patch(
-                "quiver.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
+                "swe.harness.rate_limits.RATE_LIMITS_CACHE_FILE",
                 Path(tmp2) / "rate_limits_cache.json",
             ), patch(
-                "quiver.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
+                "swe.harness.rate_limits._RATE_LIMIT_FETCH_DEADLINE",
                 0.05,
                 create=True,
             ), patch("sys.stdout", io.StringIO()):
@@ -1623,7 +1623,7 @@ class FetchRateLimitsTtyTest(unittest.TestCase):
         with patch("sys.stdout", _FakeTty()), patch(
             "sys.stderr", _FakeTty(),
         ), patch(
-            "quiver.harness.rate_limits.get_all_rate_limits",
+            "swe.harness.rate_limits.get_all_rate_limits",
             side_effect=RuntimeError("boom"),
         ):
             with self.assertRaises(RuntimeError):
@@ -1634,7 +1634,7 @@ class FetchRateLimitsTtyTest(unittest.TestCase):
         sentinel = {"fake": "info"}
         err = io.StringIO()
         with patch("sys.stdout", io.StringIO()), patch("sys.stderr", err), patch(
-            "quiver.harness.rate_limits.get_all_rate_limits",
+            "swe.harness.rate_limits.get_all_rate_limits",
             return_value=sentinel,
         ) as fetch:
             result = _fetch_rate_limits(refresh=True, tool_names={"fake"})

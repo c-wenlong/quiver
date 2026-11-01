@@ -15,14 +15,14 @@ class SkillsNewTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = pathlib.Path(self.tmp.name)
-        (self.home / ".quiver" / "skills").mkdir(parents=True)
+        (self.home / ".swe" / "skills").mkdir(parents=True)
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def run_skills(self, *args):
         """In-process: swe skills <args> against the throwaway HOME."""
-        from quiver.skills.commands import cmd_skills
+        from swe.skills.commands import cmd_skills
 
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.dict(os.environ, {"HOME": str(self.home)}), \
@@ -33,7 +33,7 @@ class SkillsNewTest(unittest.TestCase):
         return code, out.getvalue(), err.getvalue()
 
     def skill(self, name):
-        return self.home / ".quiver" / "skills" / name / "SKILL.md"
+        return self.home / ".swe" / "skills" / name / "SKILL.md"
 
     def test_creates_exact_content(self):
         code, out, err = self.run_skills("new", "my-skill")
@@ -68,13 +68,13 @@ class SkillsNewTest(unittest.TestCase):
         desc = 'Use when: testing "quotes" # and more'
         code, out, err = self.run_skills("new", "s", f"--description={desc}")
         self.assertEqual(code, 0, out + err)
-        from quiver.skills.discovery import parse_skill_md
+        from swe.skills.discovery import parse_skill_md
         name, parsed = parse_skill_md(self.skill("s"))
         self.assertEqual(name, "s")
         self.assertEqual(parsed, desc)
 
     def test_description_with_both_quotes_round_trips_as_yaml(self):
-        from quiver.skills.discovery import parse_skill_md
+        from swe.skills.discovery import parse_skill_md
 
         for i, desc in enumerate(["it's \"quoted\"", "- starts with a dash", "ends with '"]):
             name = f"s{i}"
@@ -85,7 +85,7 @@ class SkillsNewTest(unittest.TestCase):
         self.assertIn("description: 'it''s \"quoted\"'", self.skill("s0").read_text())
 
     def test_yaml_lookalikes_stay_text(self):
-        from quiver.skills.discovery import parse_skill_md
+        from swe.skills.discovery import parse_skill_md
 
         code, out, err = self.run_skills("new", "123", "--description=true")
         self.assertEqual(code, 0, out + err)
@@ -100,7 +100,7 @@ class SkillsNewTest(unittest.TestCase):
         self.assertFalse(self.skill("s").parent.exists())
 
     def test_failed_write_leaves_no_folder(self):
-        from quiver.skills import create as create_mod
+        from swe.skills import create as create_mod
 
         with mock.patch.object(create_mod.tempfile, "mkstemp", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
@@ -119,7 +119,7 @@ class SkillsNewTest(unittest.TestCase):
         self.assertEqual(self.run_skills("new", "a", "--description")[0], 1)
 
     def test_discovery_reads_double_quoted_values(self):
-        from quiver.skills.discovery import parse_skill_md
+        from swe.skills.discovery import parse_skill_md
 
         md = self.home / "x" / "SKILL.md"
         md.parent.mkdir()
@@ -135,14 +135,14 @@ class SkillsNewTest(unittest.TestCase):
 
     def test_missing_quiver_dir_refuses(self):
         import shutil
-        shutil.rmtree(self.home / ".quiver")
+        shutil.rmtree(self.home / ".swe")
         code, out, err = self.run_skills("new", "s")
         self.assertEqual(code, 1)
         self.assertIn("swe init", out + err)
 
     def test_missing_skills_dir_is_created(self):
         import shutil
-        shutil.rmtree(self.home / ".quiver" / "skills")
+        shutil.rmtree(self.home / ".swe" / "skills")
         code, out, err = self.run_skills("new", "s")
         self.assertEqual(code, 0, out + err)
 

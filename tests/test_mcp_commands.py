@@ -1,5 +1,5 @@
 """Tests for the migration of ``cmd_list`` and ``cmd_status`` matrix view
-in ``mcp/cli.py`` to ``quiver.table.Table``.
+in ``mcp/cli.py`` to ``swe.table.Table``.
 
 Both handlers rendered a server × tool matrix using hand-rolled
 ``f"{header:<{w}}"`` padding. The migration replaces that with a
@@ -43,9 +43,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from quiver.console import strip_ansi, visible_len
-from quiver.mcp import cli as cli_mod
-from quiver.mcp.cli import cmd_list, cmd_status
+from swe.console import strip_ansi, visible_len
+from swe.mcp import cli as cli_mod
+from swe.mcp.cli import cmd_list, cmd_status
 
 
 # Three-tool fixture used by most tests. Each tool has 1-2 servers
@@ -360,6 +360,32 @@ class CmdStatusEmptyTest(McpMatrixFixtureMixin, unittest.TestCase):
         self.assertNotIn("servers across", output)
 
 
+class HubDescriptorTest(unittest.TestCase):
+    """The hub is a name, not a ``~/.<tool>`` convention: ``quiver`` and its
+    aliases resolve to ``~/.swe/mcp.json`` no matter what the hub dir is
+    called."""
+
+    def test_hub_names_share_one_descriptor(self):
+        for name in ("quiver", "hub", "mcp.json", "."):
+            cfg = cli_mod.get_tool_config(name)
+            self.assertEqual(cfg["path"], cli_mod.MCP_SOURCE_FILE, name)
+            self.assertEqual(cfg["key"], "mcpServers", name)
+            self.assertEqual(cfg["format"], "standard", name)
+            self.assertNotIn("unverified", cfg, name)
+        self.assertIsNone(cli_mod.get_tool_config(""))
+
+    def test_hub_servers_read_the_hub_file(self):
+        with TemporaryDirectory() as tmp:
+            hub = Path(tmp) / ".swe" / "mcp.json"
+            hub.parent.mkdir()
+            hub.write_text('{"mcpServers": {"gh": {"command": "ghd"}}}')
+            with patch.object(cli_mod, "MCP_SOURCE_FILE", hub):
+                cfg = cli_mod.get_tool_config("quiver")
+                self.assertEqual(cfg["path"], hub)
+                self.assertEqual(cli_mod.get_tool_servers("quiver"),
+                                 {"gh": {"command": "ghd"}})
+
+
 class KiloMcpConfigTest(unittest.TestCase):
     """Kilo keeps opencode's mcp schema in ~/.config/kilo/kilo.jsonc."""
 
@@ -370,7 +396,7 @@ class KiloMcpConfigTest(unittest.TestCase):
         self.assertEqual(cfg["path"].name, "kilo.jsonc")
 
     def test_load_json_strips_jsonc_comments(self):
-        from quiver.mcp.cli import load_json
+        from swe.mcp.cli import load_json
 
         with TemporaryDirectory() as tmp:
             p = Path(tmp) / "kilo.jsonc"
@@ -388,7 +414,7 @@ class KiloMcpConfigTest(unittest.TestCase):
         self.assertEqual(data["mcp"]["srv"]["command"], ["echo"])
 
     def test_load_json_strips_jsonc_trailing_commas(self):
-        from quiver.mcp.cli import load_json
+        from swe.mcp.cli import load_json
 
         with TemporaryDirectory() as tmp:
             p = Path(tmp) / "kilo.jsonc"
@@ -403,8 +429,8 @@ class KiloMcpConfigTest(unittest.TestCase):
         self.assertEqual(data["s"], "keep ,} this")
 
     def test_load_json_leaves_plain_json_alone(self):
-        from quiver.configuration import CorruptConfigurationError
-        from quiver.mcp.cli import load_json
+        from swe.configuration import CorruptConfigurationError
+        from swe.mcp.cli import load_json
 
         with TemporaryDirectory() as tmp:
             p = Path(tmp) / "mcp.json"
@@ -415,7 +441,7 @@ class KiloMcpConfigTest(unittest.TestCase):
                 load_json(p)
 
     def test_jsonc_round_trip_preserves_other_keys(self):
-        from quiver.mcp.cli import get_tool_loader, get_tool_saver, load_json
+        from swe.mcp.cli import get_tool_loader, get_tool_saver, load_json
 
         with TemporaryDirectory() as tmp:
             p = Path(tmp) / "kilo.jsonc"
@@ -438,12 +464,12 @@ class KiloMcpConfigTest(unittest.TestCase):
 
 class McpLsAliasTest(unittest.TestCase):
     def test_ls_routes_to_list(self):
-        from quiver.mcp.cli import COMMANDS
+        from swe.mcp.cli import COMMANDS
 
         self.assertIs(COMMANDS["ls"], COMMANDS["list"])
 
     def test_help_ls_resolves_to_list_topic(self):
-        from quiver.mcp.cli import cmd_help
+        from swe.mcp.cli import cmd_help
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -452,7 +478,7 @@ class McpLsAliasTest(unittest.TestCase):
         self.assertIn("swe mcp list", buf.getvalue())
 
     def test_sync_help_documents_prune(self):
-        from quiver.mcp.cli import MCP_HELP
+        from swe.mcp.cli import MCP_HELP
 
         self.assertIn("--prune", MCP_HELP["sync"])
 

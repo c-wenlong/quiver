@@ -18,6 +18,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scheduled maintenance never banners. Each page's first reading only
   records what is already open. A click opens Service status.
   Part of [#528](https://github.com/c-wenlong/quiver/issues/528).
+- **Doctor folds in `swe mcp doctor`.** `swe doctor` now warns about
+  each MCP server a harness config holds that fails a local check (a
+  stdio binary missing, an empty env value, a bad URL scheme) as
+  `mcp.server`; reachability stays `swe mcp doctor`'s, so doctor makes
+  no network calls. When the hub's `mcp.json` holds the same name in a
+  shape that passes, the finding gets `mcp-sync`: a click per finding
+  that checks again, backs the config file up to `~/.quiver/backups`
+  and runs `swe mcp sync quiver <tool> --only=<name> --force`, which
+  replaces only that entry (through a symlink, the file it points at is
+  what gets backed up), then checks again: a sync that skipped the entry
+  is an error. The hub copy must name only stored secrets and have a
+  command or url. A config the readers cannot parse is one
+  `mcp.unchecked` warning. Batches never run it, since it overwrites.
+  Part of [#529](https://github.com/c-wenlong/quiver/issues/529).
+- **iPhone: home screen widget.** Small and medium widgets show the
+  hub's sessions waiting on you (approvals and replies), sessions still
+  working, and today's spend
+  ([#1442](https://github.com/c-wenlong/quiver/issues/1442)). The
+  widget fetches sessions, the inbox and today's overview about every
+  15 minutes, and redraws when the app's refresh changes the snapshot
+  it keeps in the App Group. When the hub can't be reached it draws
+  that snapshot with "as of <time>". A medium widget's session row
+  opens its chat through the new `quiver://session/<key>?hub=<hub>`
+  deep link; anywhere else opens the app.
+- **Doctor folds in plugin drift and broken hub links.** `swe doctor`
+  now lists `swe find plugins`' drift as `plugins.<kind>` findings. An
+  unregistered marketplace folder or an uninstalled plugin gets the
+  `plugin-fix` action, which `--fix` and Fix all run (it only adds, via
+  `plugin_drift.apply_fix`); a stale Codex copy gets `plugin-reinstall`,
+  a click per finding since it removes the copy first; a disabled plugin
+  or a linked manifest keeps its command. A broken top-level symlink in
+  `~/.quiver` or its skills folder gets `dangling-link`, a click that
+  copies the link to `~/.quiver/backups` and removes it, and refuses
+  anything that is no longer a broken link directly in those folders.
+  A marketplace `--fix` registers shows its uninstalled plugins to the
+  next pass, which installs them. Part of
+  [#529](https://github.com/c-wenlong/quiver/issues/529).
 - **Live reply text on iPhone, web and Mac.** The chat draws a reply
   word by word while a Codex app-server, opencode serve or headless
   Claude session writes it: `message.delta` text grows a bubble at the
@@ -952,6 +989,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **New icon and logo everywhere; the pixel-art mascot is gone.** The
+  Mac and iPhone app icons, the web app's icons, the landing site and
+  the README now use the new mark: three arrowheads above `swe` on a
+  dark tile. The web app serves `favicon.ico`, `favicon.svg`,
+  `favicon-32.png` and `apple-touch-icon.png`, plus a
+  `manifest.webmanifest` that lists `icon-192.png`, `icon-512.png` and
+  a maskable `icon-maskable-512.png` for home-screen shortcuts. The
+  landing site gets the same favicons. The mascot banner, the README's
+  mascot picture and the landing page's mascot figure are removed. The
+  source art (square, rounded and a transparent mark for dark
+  backgrounds) lives in `assets/`. The new mark has one look, so the Mac
+  app's Settings › App icon choice (Light or Dark) is gone, along with
+  its placeholder row on the web Settings page: the app builds one
+  `AppIcon.icns` and the Dock always shows it. The DMG window's
+  background now scatters the mark's three arrowheads instead of the
+  old icon's five glyphs.
 - **Mac app: Artificial Analysis moves to its V2 API.** AA retires the
   legacy `/api/v2/data/*` routes on November 4, 2026, so the Models page
   refresh and the Settings › Services "Test" probe now call
@@ -1099,7 +1152,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   roadmap is now `app/ios/ROADMAP.md`). Build with
   `app/mac/script/build-app.sh` and install with
   `app/mac/script/install-app.sh`. The web app stays in
-  `src/quiver/webapp/`, inside the Python package. An app installed
+  `src/swe/webapp/`, inside the Python package. An app installed
   before this change can't rebuild itself from Settings › Updates once
   the checkout has the new layout; run `app/mac/script/install-app.sh`
   once.
@@ -1485,7 +1538,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over the real `item_completed` turns) and the span's first prompt
   overwrote the stored session title, sometimes with an injected turn
   like a `<local-command-caveat>` block. `SearchIndexer.beginFile` now
-  primes appends the way `src/quiver/sessions/search_writer.py` does:
+  primes appends the way `src/swe/sessions/search_writer.py` does:
   the head's first `session_meta` restores the `history_mode`, and only
   an explicit title record may rename the session. Appends are also
   gated to claude/codex/pi, Python's `APPENDABLE` set — any other
@@ -3039,7 +3092,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [GHSA-84m7-p3x7-pcfv](https://github.com/advisories/GHSA-84m7-p3x7-pcfv)
   (CVE-2026-59951): a stateful Streamable HTTP server never reclaimed
   sessions, so a client could grow its memory without bound. Quiver's
-  session server (`python -m quiver.mcp_server`) runs over stdio, which
+  session server (`python -m swe.mcp_server`) runs over stdio, which
   the advisory lists as unaffected, so there was no live exposure; the
   floor only keeps a fresh install off the vulnerable range.
 
@@ -3825,7 +3878,7 @@ service / model layering, tests with an 84% coverage floor).
   utilization ties. Existing outage caching keeps the last successful reading
   visible when Antigravity is closed.
 - **Security: SSRF / LFI fix in `swe mcp <tool> status` health check.**
-  `src/quiver/mcp/cli.py::check_server_health` now validates that any
+  `src/swe/mcp/cli.py::check_server_health` now validates that any
   URL it fetches via `urllib.request.urlopen` strictly starts with
   `http://` or `https://` (case-insensitive) before issuing the
   HEAD request. Without this guard, an attacker who can write a
@@ -3835,7 +3888,7 @@ service / model layering, tests with an 84% coverage floor).
   both `http` server types (direct URL field) and `wrapped` server
   types (URL inside `args`). (PR #2.)
 - **Security: Bandit B324 / FIPS-compliant `hashlib.md5` in Kimi
-  parser.** `src/quiver/sessions/parsers.py::parse_kimi::load_hash_map`
+  parser.** `src/swe/sessions/parsers.py::parse_kimi::load_hash_map`
   now passes `usedforsecurity=False` to the single
   `hashlib.md5(p.encode())` call — the hash is used purely to build
   a stable map-key from a path string, never for authentication or
@@ -3844,7 +3897,7 @@ service / model layering, tests with an 84% coverage floor).
   `usedforsecurity` was added in Python 3.9; the project's
   `requires-python = ">=3.10"` covers it natively. (PR #17.)
 - **Performance: memoize `os.path.realpath` in the session
-  aggregator's `cwd` filter loop.** `src/quiver/sessions/aggregator.py::get_all_sessions`
+  aggregator's `cwd` filter loop.** `src/swe/sessions/aggregator.py::get_all_sessions`
   used to issue an `os.path.realpath` syscall on every session's
   path when filtering by `cwd` — O(N) disk stats for what is
   functionally O(U) unique paths (most sessions share a project
@@ -3859,10 +3912,10 @@ service / model layering, tests with an 84% coverage floor).
   nested agent session trees. `os.scandir()` returns DirEntry
   objects whose `is_dir()` / `is_file()` / `stat()` reuse cached
   metadata from the directory iteration itself, collapsing the N+
-  syscalls into one. Touched files: `src/quiver/sessions/parsers.py`
-  (parse_cursor, parse_antigravity), `src/quiver/sessions/engines/jsonl_engine.py`
-  (5 sites), `src/quiver/sessions/engines/json_engine.py` (2 sites —
-  nested parent+session-dir loops), `src/quiver/sessions/models_analytics.py`
+  syscalls into one. Touched files: `src/swe/sessions/parsers.py`
+  (parse_cursor, parse_antigravity), `src/swe/sessions/engines/jsonl_engine.py`
+  (5 sites), `src/swe/sessions/engines/json_engine.py` (2 sites —
+  nested parent+session-dir loops), `src/swe/sessions/models_analytics.py`
   (3 sites — claude + freebuff paths). Every site is wrapped in
   `with os.scandir(...) as <var>_it:` so the directory FD is
   released on scope exit (caught and fixed during triage — bare

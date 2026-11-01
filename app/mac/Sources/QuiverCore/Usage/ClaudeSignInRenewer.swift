@@ -53,7 +53,7 @@ public struct ClaudeSignInRenewer: ClaudeSignInRenewing {
         self.sigtermGrace = sigtermGrace
         self.command = command
         self.workingDirectory = workingDirectory
-            ?? realHome().appending(path: ".quiver/cache/claude-renew")
+            ?? realHome().appending(path: ".swe/cache/claude-renew")
         self.environment = environment
         self.isExecutable = isExecutable
     }

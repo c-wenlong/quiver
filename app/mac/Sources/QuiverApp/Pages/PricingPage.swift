@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The models the ledger saw, grouped by provider, with the price each one
 /// resolves to and where that price came from. Unpriced rows open the form
-/// that writes `~/.quiver/config/pricing.json`.
+/// that writes `~/.swe/config/pricing.json`.
 struct PricingPage: View {
     @Environment(AppModel.self) private var app
 

@@ -11,11 +11,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.configuration import load_config
-from quiver.paths import config_file_for
-from quiver.webapp import compute
-from quiver.webapp.pages import PageError
-from quiver.webapp.pages import compute as page
+from swe.configuration import load_config
+from swe.paths import config_file_for
+from swe.webapp import compute
+from swe.webapp.pages import PageError
+from swe.webapp.pages import compute as page
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp import app_js_function
@@ -154,7 +154,7 @@ class TestAttribution(unittest.TestCase):
                   cgroup="0::/user.slice/user-1000.slice/user@1000.service/app.slice/quiver-hub.service")
         m.process(230, 1, ["node", "x"], exe="/usr/bin/node", cwd="/")                    # in /
         m.process(240, 1, ["/usr/bin/tmux"], exe="/usr/bin/tmux", cwd="/home/u")          # not a runner
-        m.process(250, 1, ["python3", "-m", "quiver.cli"], exe="/usr/bin/python3", cwd="/home/u")  # the hub
+        m.process(250, 1, ["python3", "-m", "swe.cli"], exe="/usr/bin/python3", cwd="/home/u")  # the hub
         m.process(260, 100, ["node", "dev"], exe="/usr/bin/node", cwd="/home/u")          # parent alive
         found = compute.attribute(list(self._procs().values()), _matchers(), m.proc, self_pid=250)
         roots = {root.pid: sorted(d.pid for d in ds) for root, ds in found.orphans}
@@ -169,8 +169,8 @@ class TestAttribution(unittest.TestCase):
         home = Path(tempfile.mkdtemp())
         (home / "real").mkdir()
         os.symlink(home / "real", home / ".claude")
-        with patch("quiver.harness.registry.load_registry_readonly", return_value=registry), \
-                patch("quiver.harness.registry.load_registry", side_effect=AssertionError("migrates")):
+        with patch("swe.harness.registry.load_registry_readonly", return_value=registry), \
+                patch("swe.harness.registry.load_registry", side_effect=AssertionError("migrates")):
             matchers = compute.load_matchers(home)
         self.assertEqual([m.harness for m in matchers], ["codex", "claude"])
         self.assertEqual(matchers[0].commands, {"codex", "cx"})
@@ -188,10 +188,10 @@ class TestAttribution(unittest.TestCase):
         stars.write_text(json.dumps(["codex", "old"]))
         archive.write_text(json.dumps({"old": {"reason": "x"}}))
         harness = folder / "harness.json"
-        with patch("quiver.harness.registry.HARNESS_FILE", harness), \
-                patch("quiver.harness.registry.TOOLS_FILE", tools), \
-                patch("quiver.harness.registry.STARS_FILE", stars), \
-                patch("quiver.harness.registry.ARCHIVE_FILE", archive):
+        with patch("swe.harness.registry.HARNESS_FILE", harness), \
+                patch("swe.harness.registry.TOOLS_FILE", tools), \
+                patch("swe.harness.registry.STARS_FILE", stars), \
+                patch("swe.harness.registry.ARCHIVE_FILE", archive):
             matchers = compute.load_matchers(Path(HOME))
         self.assertEqual([m.harness for m in matchers], ["codex"])
         self.assertFalse(harness.exists())
@@ -346,7 +346,7 @@ class _Model(unittest.TestCase):
             clock=lambda: self.now[0], self_pid=999)
         self.model.home = Path(HOME)
         self._patches = [
-            patch("quiver.harness.registry.load_registry_readonly",
+            patch("swe.harness.registry.load_registry_readonly",
                   return_value={"claude": {"command": "claude", "state": "starred"},
                                 "codex": {"command": "codex", "state": "starred"}}),
         ]
@@ -479,7 +479,7 @@ class TestModel(_Model):
         self.assertTrue(trend["gpu_available"])
 
     def test_a_bad_registry_is_an_error_not_a_crash(self):
-        with patch("quiver.harness.registry.load_registry_readonly", side_effect=ValueError("bad json")):
+        with patch("swe.harness.registry.load_registry_readonly", side_effect=ValueError("bad json")):
             self.model.sample()
         body = self.model.payload(10)
         self.assertFalse(body["matchers_loaded"])
@@ -499,7 +499,7 @@ class TestAutoClean(_Model):
 
     def _config(self, section):
         home = Path(tempfile.mkdtemp())
-        from quiver.configuration import save_config
+        from swe.configuration import save_config
         save_config({"compute": section}, config_file_for(home))
         self.model.home = home
 
@@ -620,7 +620,7 @@ class TestAutoClean(_Model):
                          {"enabled": False, "force": False,
                           "orphan_age_seconds": compute.DEFAULT_ORPHAN_AGE,
                           "grace_seconds": compute.AUTOCLEAN_GRACE})
-        from quiver.configuration import save_config
+        from swe.configuration import save_config
         save_config({"compute": {"auto_clean": "yes", "auto_clean_force": True,
                                  "orphan_age_seconds": "x"}},
                     config_file_for(home))
@@ -793,7 +793,7 @@ class TestStoredChoices(unittest.TestCase):
     unknown tab threw in the chart and stopped the poll)."""
 
     def choices(self, stored):
-        script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/compute.js"
+        script = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/compute.js"
         prelude = ("const stored = " + json.dumps({f"quiver.compute.{k}": v for k, v in stored.items()}) + ";\n"
                    "globalThis.localStorage = { getItem: (k) => (k in stored ? stored[k] : null) };\n"
                    "function registerPage() {}\n")
@@ -823,7 +823,7 @@ class TestSettingsSheetLeavesWithThePage(unittest.TestCase):
     over the next page."""
 
     def test_navigation_closes_and_removes_the_sheet(self):
-        script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/compute.js"
+        script = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/compute.js"
         prelude = (
             "const stored = {};\n"
             "globalThis.localStorage = { getItem: (k) => stored[k] ?? null, setItem: (k, v) => { stored[k] = v; } };\n"

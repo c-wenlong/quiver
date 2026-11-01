@@ -1,4 +1,4 @@
-"""`swe hooks`: the management surface over ~/.quiver/hooks/<harness>/.
+"""`swe hooks`: the management surface over ~/.swe/hooks/<harness>/.
 
 The link half comes from ``init.hooks.plan_hooks`` (tested in
 test_init_hooks.py); these cover what the domain adds — settings-file
@@ -16,23 +16,23 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from quiver.harness import drift
-from quiver.hooks import commands as hooks_commands
-from quiver.hooks import create as mk
-from quiver.hooks.inventory import find_script, hook_findings, script_summary
-from quiver.hooks.models import HookRow
-from quiver.hooks.settings import (
+from swe.harness import drift
+from swe.hooks import commands as hooks_commands
+from swe.hooks import create as mk
+from swe.hooks.inventory import find_script, hook_findings, script_summary
+from swe.hooks.models import HookRow
+from swe.hooks.settings import (
     basenames_in,
     declarations,
     expand_command_path,
     settings_files,
 )
-from quiver.init.layout import hooks_dir
+from swe.init.layout import hooks_dir
 
 
 def _home(tmp: str) -> Path:
     home = Path(tmp)
-    (home / ".quiver").mkdir()
+    (home / ".swe").mkdir()
     (home / ".claude").mkdir()
     return home
 
@@ -45,7 +45,7 @@ def _hook(home: Path, harness: str, name: str, body: str = "print('hi')\n") -> P
 
 
 def _registry(home: Path, data: dict) -> None:
-    path = home / ".quiver" / "config" / "harness.json"
+    path = home / ".swe" / "config" / "harness.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data))
 
@@ -422,7 +422,7 @@ class CheckCommandTest(unittest.TestCase):
             home = _home(tmp)
             dest = home / ".claude/hooks/guard.py"
             dest.parent.mkdir(parents=True)
-            dest.symlink_to(home / ".quiver/hooks/claude/guard.py")  # dangling
+            dest.symlink_to(home / ".swe/hooks/claude/guard.py")  # dangling
             _settings(home, ".claude/settings.json", {
                 "Stop": [{"hooks": [{"command": str(dest)}]}],
             })
@@ -533,7 +533,7 @@ class CheckCommandTest(unittest.TestCase):
 class DropScriptDeclarationsTest(unittest.TestCase):
     """Doctor's Run button for declared-missing: the one settings write."""
     def test_removes_the_entries_and_the_empty_groups(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -551,12 +551,12 @@ class DropScriptDeclarationsTest(unittest.TestCase):
             self.assertEqual(data["hooks"]["Stop"], [
                 {"matcher": "x", "hooks": [
                     {"type": "command", "command": "keep.py"}]}])
-            backups = list((home / ".quiver/backups").iterdir())
+            backups = list((home / ".swe/backups").iterdir())
             self.assertEqual(len(backups), 1)
             self.assertIn("gone.py", backups[0].read_text())
 
     def test_a_working_command_with_the_same_basename_survives(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -577,7 +577,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
             self.assertEqual(hooks, [{"command": f"python3 {live}"}])
 
     def test_a_flat_schema_drops_the_entry(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -594,7 +594,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
             self.assertEqual(data["hooks"]["sessionStart"], [{"command": "keep.py"}])
 
     def test_a_managed_file_is_refused(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -611,7 +611,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
                                          ["gone.py"], {}, "muse", home)
 
     def test_a_file_changed_under_the_read_is_refused(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -624,13 +624,13 @@ class DropScriptDeclarationsTest(unittest.TestCase):
                     {"hooks": [{"command": "plugin-toggle"}]}]}}))
                 return real_read
 
-            with mock.patch("quiver.hooks.settings._read_json",
+            with mock.patch("swe.hooks.settings._read_json",
                             side_effect=write_under_read), \
                     self.assertRaises(ValueError):
                 drop_script_declarations(path, ["gone.py"], {}, "claude", home)
 
     def test_nothing_matching_is_an_error_not_a_write(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -642,7 +642,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
             self.assertEqual(path.read_text(), before)
 
     def test_unusable_calls_are_errors_not_writes(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -658,7 +658,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
                 drop_script_declarations(path, ["gone.py"], {}, "claude", home)
 
     def test_malformed_events_and_entries_are_left_alone(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -677,7 +677,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
                 {"matcher": "x"}, {"hooks": [{"type": "command"}]}])
 
     def test_a_flat_schema_drops_the_emptied_event(self):
-        from quiver.hooks.settings import drop_script_declarations
+        from swe.hooks.settings import drop_script_declarations
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -708,7 +708,7 @@ class DoctorWiringTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             _registry(home, {"claude": {}})
-            (home / ".quiver/config/harness.json").write_text("{bad json")
+            (home / ".swe/config/harness.json").write_text("{bad json")
             findings = drift.check_hook_drift(home)
             self.assertEqual(len(findings), 1)
             self.assertIn("could not run", findings[0].message)
@@ -795,7 +795,7 @@ class NewCommandTest(unittest.TestCase):
             code, out = _run(home, "new", "qwen", "gate")
             self.assertEqual(code, 0)
             self.assertTrue((hooks_dir(home) / "qwen/gate.py").is_file())
-            self.assertIn("~/.quiver/hooks/qwen/gate.py", out)
+            self.assertIn("~/.swe/hooks/qwen/gate.py", out)
 
     def test_alias_resolves_to_the_registry_key(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1039,7 +1039,7 @@ class DispatchTest(unittest.TestCase):
             home = _home(tmp)
             _hook(home, "claude", "guard.py")
             # An unreadable .linkignore raises LinkIgnoreError on load.
-            (home / ".quiver/.linkignore").mkdir()
+            (home / ".swe/.linkignore").mkdir()
             err = StringIO()
             out = StringIO()
             with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
@@ -1121,7 +1121,7 @@ class EditEdgeTest(unittest.TestCase):
             out = StringIO()
             with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
                  mock.patch("sys.stdin", stdin), \
-                 mock.patch("quiver.prompt.read_line", return_value="2"), \
+                 mock.patch("swe.prompt.read_line", return_value="2"), \
                  mock.patch("subprocess.run", fake_run), \
                  redirect_stdout(out):
                 code = hooks_commands.cmd_hooks(["edit", "guard"])
@@ -1134,7 +1134,7 @@ class EditEdgeTest(unittest.TestCase):
                 with mock.patch.object(Path, "home",
                                        staticmethod(lambda: home)), \
                      mock.patch("sys.stdin", stdin), \
-                     mock.patch("quiver.prompt.read_line",
+                     mock.patch("swe.prompt.read_line",
                                 return_value=bad), \
                      redirect_stdout(out):
                     code = hooks_commands.cmd_hooks(["edit", "guard"])
@@ -1144,7 +1144,7 @@ class EditEdgeTest(unittest.TestCase):
             out = StringIO()
             with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
                  mock.patch("sys.stdin", stdin), \
-                 mock.patch("quiver.prompt.read_line",
+                 mock.patch("swe.prompt.read_line",
                             side_effect=EOFError), \
                  redirect_stdout(out):
                 code = hooks_commands.cmd_hooks(["edit", "guard"])
@@ -1157,7 +1157,7 @@ class CreateEdgeTest(unittest.TestCase):
         self.assertIsNotNone(mk.validate_args("ok", ".."))
         self.assertIsNone(mk.validate_args("claude", "gate-2_x"))
         with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp)  # no .quiver at all
+            home = Path(tmp)  # no .swe at all
             with self.assertRaises(ValueError) as ctx:
                 mk.create("claude", "gate", home)
             self.assertIn("swe init", str(ctx.exception))

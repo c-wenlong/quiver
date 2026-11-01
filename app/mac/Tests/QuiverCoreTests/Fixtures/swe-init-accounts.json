@@ -10,14 +10,14 @@
       {
         "account": "claude/claude-work",
         "primitive": "instructions",
-        "path": "/tmp/quiver-fixture-home/.quiver/accounts/claude/claude-work/home/CLAUDE.md",
+        "path": "/tmp/quiver-fixture-home/.swe/accounts/claude/claude-work/home/CLAUDE.md",
         "state": "conflict",
         "detail": "the account's own file, left alone"
       },
       {
         "account": "claude/claude-work",
         "primitive": "skills",
-        "path": "/tmp/quiver-fixture-home/.quiver/accounts/claude/claude-work/home/skills",
+        "path": "/tmp/quiver-fixture-home/.swe/accounts/claude/claude-work/home/skills",
         "state": "linked",
         "detail": ""
       }

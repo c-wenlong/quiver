@@ -1,15 +1,15 @@
 # Hooks
 
 The Mac app's Hooks page (`HooksPage.swift`, `HooksModel`, `Hook`) as a
-web page. Module `quiver/webapp/pages/hooks.py`, script
+web page. Module `swe/webapp/pages/hooks.py`, script
 `static/pages/hooks.js`, styles `static/pages/hooks.css`.
 
 ## What it shows
 
-The list is `#/hooks`: every script under `~/.quiver/hooks` — the
+The list is `#/hooks`: every script under `~/.swe/hooks` — the
 per-harness tier, the shared tier (one row per deploy target, plus
 dormant scripts listed under "Shared") and the foreign tier (scripts a
-harness's hooks dir or settings file runs that no `~/.quiver` source
+harness's hooks dir or settings file runs that no `~/.swe` source
 claims) — grouped Shared first, Foreign last, each harness in first-seen
 order between. A row carries the name, the link-state word (Linked,
 Points elsewhere, Not linked, Copy to absorb, Only copy kept, File in
@@ -37,7 +37,7 @@ summary (docstring or leading comments), Linked-at destination, the
 declarations in full (label, timeout, command, settings file), the
 supported events, and a read-only preview of the script text. A hook
 that is not editable — any source that does not resolve inside
-`~/.quiver/hooks` — gets the lock note instead of pretending it could be
+`~/.swe/hooks` — gets the lock note instead of pretending it could be
 edited; a missing or directory source gets a note rather than a preview.
 
 **New hook** is `swe hooks new`: a sheet with the harness picker (every
@@ -45,7 +45,7 @@ non-archived registry name plus every name the inventory rows carry,
 plus "shared") and the name field live-checked against
 `^[A-Za-z0-9][A-Za-z0-9_-]*$`. On success the sheet stays open to show
 "Created <path>", the stanza to paste into the harness's settings file
-(quiver never writes one), a copy button, and "Then swe init links it
+(swe never writes one), a copy button, and "Then swe init links it
 into place".
 
 ## Payload
@@ -67,7 +67,7 @@ the CLI's behaviour of listing without it. `blocked` is the
 `swe hooks info` does — exact filename, else stem, optionally scoped by
 `harness` through the registry's aliases — and returns it plus
 `summary`, `exists`, `is_dir`, `editable` (the source resolves inside
-`~/.quiver/hooks`), `text` (the Skills page's preview rule: a real file
+`~/.swe/hooks`), `text` (the Skills page's preview rule: a real file
 under 1 MB with no NUL in the first 8 KB) and the declarations in full
 (`timeout`, `command`, `file` too). No match is a 404 `unknown_hook`.
 

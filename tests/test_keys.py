@@ -17,7 +17,7 @@ import unittest
 from unittest import mock
 from unittest.mock import patch
 
-from quiver import keys
+from swe import keys
 
 
 def feed(data: bytes, letters=None, sequences=None) -> str:
@@ -191,7 +191,7 @@ class LayeringTest(unittest.TestCase):
         can reach it without inventing a cycle."""
         from pathlib import Path
 
-        source = Path("src/quiver/keys.py").read_text()
+        source = Path("src/swe/keys.py").read_text()
         for line in source.splitlines():
             stripped = line.strip()
             if stripped.startswith(("import ", "from ")):
@@ -205,8 +205,8 @@ class ChecklistWindowTest(unittest.TestCase):
     def _draw(self, cursor, n=40, height=10):
         import io
         from contextlib import redirect_stdout
-        from quiver import multiselect
-        from quiver.console import strip_ansi
+        from swe import multiselect
+        from swe.console import strip_ansi
 
         rows = [multiselect.Choice(f"s{i}", f"s{i}") for i in range(n)]
         buf = io.StringIO()
@@ -229,7 +229,7 @@ class ChecklistWindowTest(unittest.TestCase):
     def test_a_short_pane_gets_no_minimum_rows(self):
         # Five rows forced into a seven-line pane wrote eight lines.
         import os
-        from quiver import multiselect
+        from swe import multiselect
 
         with patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 7))):
             self.assertEqual(multiselect._default_height(), 3)
@@ -241,7 +241,7 @@ class ChecklistWindowTest(unittest.TestCase):
         import os
         import sys
         from contextlib import redirect_stdout
-        from quiver import multiselect
+        from swe import multiselect
 
         heights = []
         real = multiselect._render
@@ -279,7 +279,7 @@ class WidgetCancelTest(unittest.TestCase):
         import sys
         import io
         from contextlib import redirect_stdout
-        from quiver import multiselect
+        from swe import multiselect
 
         with patch.object(multiselect, "_supported", return_value=True), \
                 patch.object(sys, "stdin", **{"fileno.return_value": 0}), \
@@ -291,21 +291,21 @@ class WidgetCancelTest(unittest.TestCase):
             return widget([choice])
 
     def test_escape_cancels_the_checklist(self):
-        from quiver import multiselect
+        from swe import multiselect
         result = self._run_widget(
             multiselect.multiselect,
             multiselect.Choice("a", "a"), ["escape"])
         self.assertIsNone(result)
 
     def test_escape_cancels_the_statepicker(self):
-        from quiver import multiselect
+        from swe import multiselect
         result = self._run_widget(
             multiselect.statepicker,
             multiselect.StateChoice("a", "a"), ["escape"])
         self.assertIsNone(result)
 
     def test_enter_still_confirms_the_checklist(self):
-        from quiver import multiselect
+        from swe import multiselect
         result = self._run_widget(
             multiselect.multiselect,
             multiselect.Choice("a", "a"), ["enter"])
@@ -313,7 +313,7 @@ class WidgetCancelTest(unittest.TestCase):
 
     def test_no_choices_is_an_empty_selection_not_a_crash(self):
         """An empty list used to meet "% 0" on the first arrow key."""
-        from quiver import multiselect
+        from swe import multiselect
 
         self.assertEqual(multiselect.multiselect([]), [])
         self.assertEqual(multiselect.statepicker([]), [])
@@ -568,9 +568,9 @@ class WidgetsShareItTest(unittest.TestCase):
     """Every raw-mode reader in the tree is a wrapper over this one."""
 
     def test_the_three_widgets_delegate_rather_than_hand_rolling(self):
-        from quiver.find import browser
-        from quiver import multiselect
-        from quiver.sessions import picker
+        from swe.find import browser
+        from swe import multiselect
+        from swe.sessions import picker
 
         readers = [picker._read_key, multiselect._read_key,
                    multiselect._read_state_key, browser._read_key]
@@ -580,9 +580,9 @@ class WidgetsShareItTest(unittest.TestCase):
             self.assertEqual(m.call_count, 1, reader)
 
     def test_a_wheel_notch_is_a_move_in_every_widget(self):
-        from quiver.find import browser
-        from quiver import multiselect
-        from quiver.sessions import picker
+        from swe.find import browser
+        from swe import multiselect
+        from swe.sessions import picker
 
         for reader in (picker._read_key, multiselect._read_key,
                        multiselect._read_state_key, browser._read_key):

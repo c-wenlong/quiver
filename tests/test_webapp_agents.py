@@ -10,8 +10,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import quote
 
-from quiver.webapp.pages import PageError
-from quiver.webapp.pages import agents as page
+from swe.webapp.pages import PageError
+from swe.webapp.pages import agents as page
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp_doctor import _TempHome
@@ -19,10 +19,10 @@ from tests.test_webapp_doctor import _TempHome
 
 class TestCheckDocument(unittest.TestCase):
     def test_matches_init_check_json_and_writes_nothing(self):
-        from quiver.init.commands import check_document
+        from swe.init.commands import check_document
         home = Path(tempfile.mkdtemp())
         doc = check_document(home)
-        self.assertEqual(doc["agents_file"], str(home / ".quiver" / "AGENTS.md"))
+        self.assertEqual(doc["agents_file"], str(home / ".swe" / "AGENTS.md"))
         self.assertFalse(doc["agents_file_exists"])
         self.assertIsInstance(doc["harnesses"], list)
         self.assertEqual(list(home.iterdir()), [])
@@ -110,7 +110,7 @@ class TestLink(_TempHome, unittest.TestCase):
         self.assertEqual((reply["ran"], reply["error"]), ("replace", None))
         self.assertEqual(self.states(reply)["codex"], "linked")
         self.assertEqual(reply["blocked"], [])
-        backups = list((self.home / ".quiver" / "backups").iterdir())
+        backups = list((self.home / ".swe" / "backups").iterdir())
         self.assertEqual([b.read_text() for b in backups], ["mine\n"])
 
     def test_unknown_actions_are_refused(self):
@@ -124,12 +124,12 @@ class TestLink(_TempHome, unittest.TestCase):
 class TestRoute(HubBase):
     def test_global_shows_the_file_and_its_links(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/agents")[0], 401)
-        agents = self.srv.home / ".quiver" / "AGENTS.md"
+        agents = self.srv.home / ".swe" / "AGENTS.md"
         agents.parent.mkdir(parents=True, exist_ok=True)
         agents.write_text("# Shared")
         report = {"agents_file": str(agents), "agents_file_exists": True, "harnesses": [
             {"name": "claude", "instructions": {"path": "/c/CLAUDE.md", "state": "linked"}, "skills": None}]}
-        with patch("quiver.init.commands.check_document", return_value=report):
+        with patch("swe.init.commands.check_document", return_value=report):
             status, data = self.srv.request("GET", "/v1/app/agents", headers=self.auth())
         self.assertEqual(status, 200, data)
         body = json.loads(data)
@@ -140,7 +140,7 @@ class TestRoute(HubBase):
     def test_link_through_the_hub(self):
         origin = {"Origin": f"http://127.0.0.1:{self.srv.port}"}
         self.assertEqual(self.srv.request("POST", "/v1/app/agents/link", body={}, headers=origin)[0], 401)
-        with patch("quiver.webapp.pages.doctor._run_init", return_value=None) as ran:
+        with patch("swe.webapp.pages.doctor._run_init", return_value=None) as ran:
             status, data = self.srv.request("POST", "/v1/app/agents/replace", body={},
                                             headers={**self.auth(), **origin})
         self.assertEqual(status, 200, data)

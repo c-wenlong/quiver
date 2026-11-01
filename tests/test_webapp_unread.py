@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-STATIC = Path(__file__).resolve().parent.parent / "src" / "quiver" / "webapp" / "static"
+STATIC = Path(__file__).resolve().parent.parent / "src" / "swe" / "webapp" / "static"
 SESSIONS_JS = STATIC / "sessions.js"
 CHAT_JS = STATIC / "pages" / "chat.js"
 

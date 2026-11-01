@@ -5,7 +5,7 @@ The Mac app's Skills page (`SkillsPage.swift`, `SkillDetailView` in
 as a web page. It links and unlinks harness skills folders as the app's
 Harness links popover does, and writes a new skill as the app's New skill
 sheet does; everything else is read only. Module
-`quiver/webapp/pages/skills.py`, script `static/pages/skills.js`, styles
+`swe/webapp/pages/skills.py`, script `static/pages/skills.js`, styles
 `static/pages/skills.css`.
 
 ## What it shows
@@ -39,7 +39,7 @@ sheet does; everything else is read only. Module
 
 ## Writes
 
-quiver links whole skills folders, never single skills, so every write
+swe links whole skills folders, never single skills, so every write
 names a harness skills folder from the payload's `harnesses`. Each action
 asks first, inline in the popover: a panel says exactly what will happen
 (which folder, linked to what, whether it is backed up first) with Cancel
@@ -55,7 +55,7 @@ rewrites `skill_links.json`):
 
 | Action | Body | Does |
 |---|---|---|
-| `link` | `{"harness": "<folder path>", "expect": "create", "expect_detail": "", "skill"?: "<skill folder>"}` | `link_skill_root(path, force=…)`, as `swe skills link <path> [--force] --json`. Only a Not linked folder (`create`, `relink`, `absorb`); `--force` only for `absorb`, which is backed up to `~/.quiver/backups` first when it has anything in it (copies of shared skills, or empty subfolders, which swe's link otherwise refuses). |
+| `link` | `{"harness": "<folder path>", "expect": "create", "expect_detail": "", "skill"?: "<skill folder>"}` | `link_skill_root(path, force=…)`, as `swe skills link <path> [--force] --json`. Only a Not linked folder (`create`, `relink`, `absorb`); `--force` only for `absorb`, which is backed up to `~/.swe/backups` first when it has anything in it (copies of shared skills, or empty subfolders, which swe's link otherwise refuses). |
 | `unlink` | `{"harness": "<folder path>", "expect": "linked", "expect_detail": "", "skill"?: …}` | `unlink_skill_root(path)`, as `swe skills unlink <path> --json`. Only a Linked folder; the folder is left absent, not recreated. |
 | `link_all` | `{"harnesses"?: ["<folder path>", …], "skill"?: …}` | `SkillsModel.linkAll`: each folder `linkAllTargets` clears (Not linked, not archived, and not a folder of shared copies), one at a time; a failure is reported and the rest go on. `harnesses` limits it to the folders the confirm named; one named that is no longer free, or no longer listed at all, is reported in `failed`, not linked. |
 
@@ -95,16 +95,16 @@ is a valid Agent Skills name: lowercase letters, digits and single hyphens,
 at most 64), Description, a line saying which file it writes on which
 machine, Cancel and Create. Create stays off until the name is valid. On
 success the list repaints behind the sheet, which turns into "Created
-~/.quiver/skills/<name>/SKILL.md" with Open it (the skill's detail) and
+~/.swe/skills/<name>/SKILL.md" with Open it (the skill's detail) and
 Done.
 
 `POST /v1/app/skills/new` with `{"name", "description"?}` runs
 `skills.create.create`, the code `swe skills new <name>
-[--description=…]` runs: `~/.quiver/skills/<name>/SKILL.md` from its
+[--description=…]` runs: `~/.swe/skills/<name>/SKILL.md` from its
 template, written atomically, under the same lock as the links. A blank
 description takes the template's default. Whatever `create` refuses (a bad
 name, a name already taken, a multi-line or over-long description, no
-`~/.quiver` yet) is a 422 `bad_skill` with its reason. The reply is the list
+`~/.swe` yet) is a 422 `bad_skill` with its reason. The reply is the list
 payload plus `action: "new"`, `created` (the SKILL.md's path) and `skill`
 (its row, or null if the inventory doesn't list it).
 
@@ -114,7 +114,7 @@ payload plus `action: "new"`, `created` (the SKILL.md's path) and `skill`
 
 ```json
 {"machine": "home-server", "home": "/home/dev",
- "shared_dir": "/home/dev/.quiver/skills",
+ "shared_dir": "/home/dev/.swe/skills",
  "harnesses": [{"name": "codex", "label": "codex", "path": "…/.codex/skills",
                 "state": "keep", "detail": "6 of 6 skills exist nowhere else", "archived": false}],
  "skills": [{"name": "tdd", "description": "…", "path": "…", "root": "shared",

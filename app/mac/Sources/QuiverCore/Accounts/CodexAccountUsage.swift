@@ -79,7 +79,7 @@ public struct CodexAccountSection: Sendable, Equatable {
 /// and every six hours, compared against what this Mac's ledger logged
 /// for the same account home.
 ///
-/// Replies cache in `~/.quiver/cache/codex-account-usage.json` so the
+/// Replies cache in `~/.swe/cache/codex-account-usage.json` so the
 /// section paints instantly on launch. An swe old enough to lack the
 /// command hides the section rather than showing an error, and an
 /// `unavailable` reply keeps the cached numbers with a "couldn't

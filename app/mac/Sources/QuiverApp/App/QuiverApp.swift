@@ -95,7 +95,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         FocusVisibility.start()
         CommandKeyHold.start()
         statusItem = StatusItemController(model: AppModel.shared)
-        AppModel.shared.applyAppIcon()
         AppModel.shared.start()
         // The Dock tile mirrors the unread inbox count — ambient even
         // when no window is open.

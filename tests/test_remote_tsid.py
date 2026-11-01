@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import tsid
+from swe.remote import tsid
 
 
 def _cp(rc=0, stdout=""):

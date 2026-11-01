@@ -9,8 +9,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import commands, pairing, supervise
-from quiver.sessions.models import Session
+from swe.remote import commands, pairing, supervise
+from swe.sessions.models import Session
 
 
 def _run(args):
@@ -57,9 +57,9 @@ class TestPair(unittest.TestCase):
         with patch.object(pairing, "mint_pair_token",
                           return_value="tok123") as mint, \
              patch.object(commands.pairing, "mint_pair_token", mint):
-            with patch("quiver.remote.commands._tailscale_ip",
+            with patch("swe.remote.commands._tailscale_ip",
                        return_value="100.1.2.3"), \
-                 patch("quiver.remote.pairing.mint_pair_token",
+                 patch("swe.remote.pairing.mint_pair_token",
                       return_value="tok123"):
                 rc, out, _ = _run(["pair", "--name=iphone", "--port=9000"])
         self.assertEqual(rc, 0)
@@ -71,14 +71,14 @@ class TestPair(unittest.TestCase):
 class TestStatus(unittest.TestCase):
     def setUp(self):
         # Without --host, status reads the saved hub.json; keep it from
-        # reading the real ~/.quiver.
+        # reading the real ~/.swe.
         patcher = patch.object(commands, "load_hub_config", return_value={})
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def test_unreachable_hub(self):
         home = Path(tempfile.mkdtemp())
-        with patch("quiver.remote.commands._probe", return_value=None), \
+        with patch("swe.remote.commands._probe", return_value=None), \
              patch.object(commands.pairing, "load_devices",
                           lambda *a: {}), \
              patch.object(commands.catalog_mod, "load_machines",
@@ -90,7 +90,7 @@ class TestStatus(unittest.TestCase):
     def test_status_json(self):
         info = {"ok": True, "version": "9.9", "uptime_s": 3,
                 "machine": {"name": "srv", "id": "m1"}}
-        with patch("quiver.remote.commands._probe", return_value=info), \
+        with patch("swe.remote.commands._probe", return_value=info), \
              patch.object(commands.pairing, "load_devices",
                           lambda *a: {"d1": {"name": "phone",
                                              "created_at": 1}}), \
@@ -105,7 +105,7 @@ class TestStatus(unittest.TestCase):
     def test_status_json_exits_1_when_hub_unreachable(self):
         # The envelope still goes out; the exit code reports reachability,
         # as docs/json-contracts.md and the Mac app's caller expect.
-        with patch("quiver.remote.commands._probe", return_value=None), \
+        with patch("swe.remote.commands._probe", return_value=None), \
              patch.object(commands.pairing, "load_devices", lambda *a: {}), \
              patch.object(commands.catalog_mod, "load_machines", lambda *a: {}):
             rc, out, _ = _run(["status", "--json", "--host=127.0.0.1"])
@@ -116,7 +116,7 @@ class TestStatus(unittest.TestCase):
     def test_status_pretty_online(self):
         info = {"ok": True, "version": "1.0.0", "uptime_s": 9,
                 "machine": {"name": "srv", "id": "m1"}}
-        with patch("quiver.remote.commands._probe", return_value=info), \
+        with patch("swe.remote.commands._probe", return_value=info), \
              patch.object(commands.pairing, "load_devices", lambda *a: {}), \
              patch.object(commands.catalog_mod, "load_machines", lambda *a: {}):
             rc, out, _ = _run(["status"])
@@ -160,9 +160,9 @@ class TestAttachCmd(unittest.TestCase):
 
     def _patch_discovery(self, sessions):
         return (
-            patch("quiver.sessions.aggregator.get_all_sessions",
+            patch("swe.sessions.aggregator.get_all_sessions",
                   return_value=sessions),
-            patch("quiver.sessions.status.session_statuses",
+            patch("swe.sessions.status.session_statuses",
                   lambda ss: ["done"] * len(ss)),
             patch.object(commands.tail, "resolve_jsonl_path",
                          return_value=None),
@@ -224,7 +224,7 @@ class TestServe(unittest.TestCase):
         state.machine_id = "m1"
         with patch.object(commands, "HubState", return_value=state), \
              patch.object(commands, "serve", fake_serve), \
-             patch("quiver.remote.commands._tailscale_ip",
+             patch("swe.remote.commands._tailscale_ip",
                    return_value="100.1.2.3"):
             rc, out, _ = _run(["serve"])
         self.assertEqual(rc, 0)
@@ -237,7 +237,7 @@ class TestServe(unittest.TestCase):
         state.machine_id = "m1"
         with patch.object(commands, "HubState", return_value=state), \
              patch.object(commands, "serve", lambda *a: 0), \
-             patch("quiver.remote.commands._tailscale_ip",
+             patch("swe.remote.commands._tailscale_ip",
                    return_value=None):
             rc, _, err = _run(["serve"])
         self.assertEqual(rc, 0)
@@ -250,7 +250,7 @@ class TestServe(unittest.TestCase):
         with patch.object(commands, "HubState", return_value=state), \
              patch.object(commands, "serve",
                           side_effect=OSError("busy")), \
-             patch("quiver.remote.commands._tailscale_ip",
+             patch("swe.remote.commands._tailscale_ip",
                    return_value="100.1.2.3"):
             rc, _, err = _run(["serve"])
         self.assertEqual(rc, 1)
@@ -263,7 +263,7 @@ class TestServe(unittest.TestCase):
         with patch.object(commands, "HubState", return_value=state), \
              patch.object(commands, "serve", lambda *a: 0), \
              patch.object(commands, "_stamp", return_value="2026-10-23 17:01:00"), \
-             patch("quiver.remote.commands._tailscale_ip", return_value="100.1.2.3"):
+             patch("swe.remote.commands._tailscale_ip", return_value="100.1.2.3"):
             rc, out, _ = _run(["serve"])
         self.assertEqual(rc, 0)
         self.assertIn("2026-10-23 17:01:00  remote hub on", out)
@@ -271,7 +271,7 @@ class TestServe(unittest.TestCase):
 
     def test_serve_tailnet_exits_without_tailscale(self):
         with patch.object(commands, "HubState") as hub, \
-             patch("quiver.remote.commands._tailscale_ip", return_value=None):
+             patch("swe.remote.commands._tailscale_ip", return_value=None):
             rc, _, err = _run(["serve", "--tailnet"])
         self.assertEqual(rc, 1)
         self.assertIn("launchd retries", err)
@@ -356,7 +356,7 @@ class TestServe(unittest.TestCase):
 
         with patch.object(commands.sys, "platform", "darwin"), \
              patch.object(commands.sys, "argv", ["/opt/swe/bin/swe"]), \
-             patch("quiver.remote.commands.os.access", return_value=True), \
+             patch("swe.remote.commands.os.access", return_value=True), \
              patch.object(commands.launchd, "bundled_swe", return_value=None), \
              patch.object(commands.launchd, "loaded_pid",
                           return_value=(False, None)), \
@@ -376,12 +376,12 @@ class TestServe(unittest.TestCase):
 
         with patch.object(commands.sys, "platform", "darwin"), \
              patch.object(commands.sys, "argv", ["/opt/swe/bin/swe"]), \
-             patch("quiver.remote.commands.os.access", return_value=True), \
+             patch("swe.remote.commands.os.access", return_value=True), \
              patch.object(commands.launchd, "bundled_swe", return_value=None), \
              patch.object(commands.launchd, "loaded_pid", return_value=(False, None)), \
              patch.object(commands.launchd, "install", fake_install), \
              patch.object(commands, "_probe", return_value={"ok": True}), \
-             patch("quiver.remote.commands._tailscale_ip", return_value="100.1.2.3"):
+             patch("swe.remote.commands._tailscale_ip", return_value="100.1.2.3"):
             rc, out, err = _run(["serve", "--install", "--port=9000"])
         self.assertEqual(rc, 0)
         self.assertEqual(seen["program"], ["/opt/swe/bin/swe", "remote", "serve", "--tailnet", "--port=9000"])
@@ -406,7 +406,7 @@ class TestServe(unittest.TestCase):
 
         with patch.object(commands.sys, "platform", "linux"), \
              patch.object(commands.sys, "argv", ["/home/dev/.local/bin/swe"]), \
-             patch("quiver.remote.commands.os.access", return_value=True), \
+             patch("swe.remote.commands.os.access", return_value=True), \
              patch.object(commands.systemd, "available", return_value=True), \
              patch.object(commands.systemd, "status", return_value=(None, False)), \
              patch.object(commands.systemd, "install", fake_install), \
@@ -446,8 +446,8 @@ class TestServe(unittest.TestCase):
              patch.object(commands.launchd, "loaded_pid", return_value=(False, None)), \
              patch.object(commands.launchd, "install", fake_install), \
              patch.object(commands, "_probe", side_effect=[None, None, {"ok": True}]), \
-             patch("quiver.remote.commands.time.sleep"), \
-             patch("quiver.remote.commands._tailscale_ip", return_value="100.1.2.3"):
+             patch("swe.remote.commands.time.sleep"), \
+             patch("swe.remote.commands._tailscale_ip", return_value="100.1.2.3"):
             rc, out, _ = _run(["serve", "--install"])
         self.assertEqual(rc, 0)
         self.assertEqual(seen["program"][0], str(shim))
@@ -459,8 +459,8 @@ class TestServe(unittest.TestCase):
              patch.object(commands.launchd, "loaded_pid", return_value=(False, None)), \
              patch.object(commands.launchd, "install", return_value=Path("/h/x.plist")), \
              patch.object(commands, "_probe", return_value=None), \
-             patch("quiver.remote.commands.time.sleep"), \
-             patch("quiver.remote.commands._tailscale_ip", return_value="100.1.2.3"):
+             patch("swe.remote.commands.time.sleep"), \
+             patch("swe.remote.commands._tailscale_ip", return_value="100.1.2.3"):
             rc, _, err = _run(["serve", "--install"])
         self.assertEqual(rc, 0)
         self.assertIn("not answering on 100.1.2.3:8477 after 20 s", err)
@@ -469,7 +469,7 @@ class TestServe(unittest.TestCase):
         home = Path.home()
         with patch.object(commands.sys, "platform", "darwin"), \
              patch.object(commands.sys, "argv", [str(home / "Desktop/quiver/.venv/bin/swe")]), \
-             patch("quiver.remote.commands.os.access", return_value=True), \
+             patch("swe.remote.commands.os.access", return_value=True), \
              patch.object(commands.launchd, "bundled_swe", return_value=None), \
              patch.object(commands.launchd, "install") as install:
             rc, _, err = _run(["serve", "--install"])
@@ -481,7 +481,7 @@ class TestServe(unittest.TestCase):
         with patch.object(commands.sys, "platform", "darwin"), \
              patch.object(commands.launchd, "bundled_swe", return_value=None), \
              patch.object(commands.sys, "argv", ["-c"]), \
-             patch("quiver.remote.commands.os.access", return_value=False):
+             patch("swe.remote.commands.os.access", return_value=False):
             rc, _, err = _run(["serve", "--install"])
         self.assertEqual(rc, 1)
         self.assertIn("cannot find the swe executable", err)
@@ -550,9 +550,9 @@ class TestProbeAndPair(unittest.TestCase):
         ])
 
     def test_pair_without_qrencode(self):
-        with patch("quiver.remote.commands._tailscale_ip",
+        with patch("swe.remote.commands._tailscale_ip",
                    return_value="100.1.2.3"), \
-             patch("quiver.remote.pairing.mint_pair_token",
+             patch("swe.remote.pairing.mint_pair_token",
                    return_value="tk"), \
              patch("shutil.which", return_value=None):
             rc, out, _ = _run(["pair"])
@@ -561,9 +561,9 @@ class TestProbeAndPair(unittest.TestCase):
         self.assertIn("tk", out)
 
     def test_pair_with_qrencode(self):
-        with patch("quiver.remote.commands._tailscale_ip",
+        with patch("swe.remote.commands._tailscale_ip",
                    return_value="100.1.2.3"), \
-             patch("quiver.remote.pairing.mint_pair_token",
+             patch("swe.remote.pairing.mint_pair_token",
                    return_value="tk"), \
              patch("shutil.which", return_value="/usr/bin/qrencode"), \
              patch.object(commands.subprocess, "run") as run:
@@ -629,9 +629,9 @@ class TestAttachFail(unittest.TestCase):
         session = Session(timestamp=0, agent="Claude Code",
                           path="/tmp/p", session_id="abc",
                           tool_name="claude")
-        with patch("quiver.sessions.aggregator.get_all_sessions",
+        with patch("swe.sessions.aggregator.get_all_sessions",
                    return_value=[session]), \
-             patch("quiver.sessions.status.session_statuses",
+             patch("swe.sessions.status.session_statuses",
                    lambda ss: ["active"]), \
              patch.object(commands.tail, "resolve_jsonl_path",
                           return_value=None), \
@@ -645,9 +645,9 @@ class TestAttachFail(unittest.TestCase):
 class TestPairApp(unittest.TestCase):
     def test_pair_app_encodes_deep_link(self):
         ran = []
-        with patch("quiver.remote.pairing.mint_pair_token",
+        with patch("swe.remote.pairing.mint_pair_token",
                    return_value="tok9"), \
-             patch("quiver.remote.commands._tailscale_ip",
+             patch("swe.remote.commands._tailscale_ip",
                    return_value="100.1.2.3"), \
              patch.object(commands.shutil, "which",
                           return_value="/x/qrencode"), \
@@ -659,9 +659,9 @@ class TestPairApp(unittest.TestCase):
         self.assertIn("quiver://pair", ran[0][-1])
 
     def test_pair_json(self):
-        with patch("quiver.remote.pairing.mint_pair_token",
+        with patch("swe.remote.pairing.mint_pair_token",
                    return_value="tok9"), \
-             patch("quiver.remote.commands._tailscale_ip",
+             patch("swe.remote.commands._tailscale_ip",
                    return_value="100.1.2.3"):
             rc, out, _ = _run(["pair", "--json", "--name=phone"])
         self.assertEqual(rc, 0)
@@ -677,9 +677,9 @@ class TestPairApp(unittest.TestCase):
 
     def test_pair_default_qr_uses_http_url(self):
         ran = []
-        with patch("quiver.remote.pairing.mint_pair_token",
+        with patch("swe.remote.pairing.mint_pair_token",
                    return_value="tok9"), \
-             patch("quiver.remote.commands._tailscale_ip",
+             patch("swe.remote.commands._tailscale_ip",
                    return_value="100.1.2.3"), \
              patch.object(commands.shutil, "which",
                           return_value="/x/qrencode"), \
@@ -735,7 +735,7 @@ class TestTailscaleIp(unittest.TestCase):
     def test_no_binary(self):
         from pathlib import Path
 
-        from quiver.remote import tsid
+        from swe.remote import tsid
 
         # Neither on PATH nor inside Tailscale.app.
         with patch.object(commands.catalog_mod.shutil, "which",
@@ -912,7 +912,7 @@ class TestUnwritableHome(unittest.TestCase):
             rc, out, err = _run(["devices", "--approve=123456"])
         self.assertEqual(rc, 1)
         self.assertIn("can't write", out)
-        self.assertIn(".quiver", out)
+        self.assertIn(".swe", out)
         self.assertNotIn("Traceback", out + err)
 
     def test_error_moves_to_stderr_under_json(self):
@@ -931,7 +931,7 @@ class TestUnwritableHome(unittest.TestCase):
 
         home = self._locked_home()
         with patch.dict(os.environ, {"HOME": str(home)}), \
-             patch("quiver.remote.commands._tailscale_ip",
+             patch("swe.remote.commands._tailscale_ip",
                    return_value="100.1.2.3"):
             rc, out, err = _run(["pair"])
         self.assertEqual(rc, 1)

@@ -1,0 +1,93 @@
+/* Pricing (and the controls the Models page shares): every class is
+ * prefixed qp- so page styles never meet another page's. */
+
+.qp-page .page-header { flex-wrap: wrap; }
+.qp-page .page-actions { flex-wrap: wrap; justify-content: flex-end; }
+.qp-logo-14 { width: 14px; height: 14px; }
+
+/* The harness filter and the warning popover: a <details> menu. */
+.qp-menu, .qp-pop { position: relative; }
+.qp-menu > summary, .qp-pop > summary { list-style: none; cursor: pointer; }
+.qp-menu > summary::-webkit-details-marker, .qp-pop > summary::-webkit-details-marker { display: none; }
+.qp-menu-button { display: flex; align-items: center; gap: 8px; white-space: nowrap; user-select: none; }
+.qp-chevron { width: 6px; height: 6px; border-right: 1.5px solid var(--text-secondary);
+  border-bottom: 1.5px solid var(--text-secondary); transform: translateY(-2px) rotate(45deg); display: inline-block; }
+.qp-chevron.up { transform: translateY(1px) rotate(-135deg); }
+.qp-menu-list {
+  position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 220px; max-width: min(320px, 90vw);
+  max-height: 60vh; overflow-y: auto; background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 6px 0;
+}
+.qp-menu-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent;
+  padding: 7px 12px; font-size: 13px; text-align: left; cursor: pointer; color: var(--text-primary);
+}
+.qp-menu-row:hover { background: var(--hover); }
+.qp-check { width: 12px; flex: none; color: var(--interactive); font-size: 12px; }
+.qp-grow { flex: 1; }
+.qp-unpriced { width: 300px; }
+.qp-unpriced .qp-menu-row { font-size: 12px; }
+.qp-warn { color: var(--warning-text); }
+
+/* Provider cards: a header line, the column heads, the rows. */
+.qp-card { padding: 0; gap: 0; container-type: inline-size; overflow: hidden; }
+.qp-card-head { display: flex; align-items: center; gap: 8px; padding: 20px 20px 12px; }
+.qp-count { margin-left: auto; text-align: right; }
+.qp-grid {
+  display: grid; align-items: center; gap: 10px; padding: 0 28px;
+  grid-template-columns: minmax(120px, 1fr) repeat(4, 76px) 56px 68px;
+}
+.qp-head { font-size: 12px; font-weight: 500; color: var(--table-header); padding-bottom: 8px; }
+.qp-head span { white-space: nowrap; }
+.qp-row { padding-top: 9px; padding-bottom: 9px; border-top: 1px solid var(--row-divider); font-size: 13px; }
+.qp-row:hover { background: var(--row-hover); }
+.qp-row.qp-flash { background: var(--selected); transition: background .4s; }
+.qp-rate, .qp-num { text-align: right; white-space: nowrap; }
+.qp-src { display: flex; justify-content: flex-end; align-items: center; gap: 3px; }
+.qp-model { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.qp-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.qp-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.qp-harnesses { display: flex; gap: 2px; flex: none; }
+.qp-tier, .qp-raw { white-space: nowrap; flex: none; }
+.qp-src-caption { display: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qp-symbol { display: grid; place-items: center; width: 16px; height: 16px; color: var(--text-secondary); }
+.qp-symbol svg, .qp-warn svg { width: 15px; height: 15px; }
+.qp-symbol.warn { color: var(--warning-text); }
+.qp-swe { width: 18px; height: 18px; border-radius: 4px; }
+.qp-expand { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%;
+  border-top: 1px solid var(--row-divider); padding: 10px; }
+
+/* Narrow cards drop columns rather than clip them: the cache rates first,
+ * then the source mark, which a caption under the name replaces. */
+@container (max-width: 639px) {
+  .qp-cache { display: none; }
+  .qp-grid { grid-template-columns: minmax(120px, 1fr) repeat(2, 76px) 56px 68px; }
+}
+@container (max-width: 519px) {
+  .qp-src { display: none; }
+  .qp-src-caption { display: block; }
+  /* The name gets the row's width; its harness icons and tier wrap under it. */
+  .qp-line { flex-wrap: wrap; row-gap: 2px; }
+  .qp-line > .ellipsis { flex: 1 0 100%; }
+  .qp-grid { grid-template-columns: minmax(0, 1fr) repeat(2, 60px) 52px; gap: 8px; padding: 0 16px; }
+  .qp-card-head { padding: 16px 16px 10px; }
+}
+
+/* Rows open the price form (PricingEditSheet). */
+.qp-row[role="button"] { cursor: pointer; }
+.qp-row[role="button"]:focus-visible { outline: 1px solid var(--interactive); outline-offset: -2px; }
+dialog.qp-sheet { width: min(460px, calc(100vw - 32px)); }
+.qp-sheet .sheet-title { min-width: 0; }
+.qp-sheet .caption, .qp-sheet .error { margin: 0; }
+.qp-field { display: flex; flex-direction: column; gap: 4px; }
+.qp-field .field { height: 32px; }
+.qp-key { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.qp-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.qp-actions { align-items: center; }
+.qp-spacer { flex: 1; }
+.qp-button { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--card);
+  color: var(--text-primary); font-size: 13px; cursor: pointer; white-space: nowrap; }
+.qp-button:hover:not(:disabled) { background: var(--hover); }
+.qp-button.primary { background: var(--text-primary); color: var(--card); border-color: var(--text-primary); }
+.qp-button.danger-text { color: var(--danger-text); }
+.qp-button:disabled { opacity: .45; cursor: default; }

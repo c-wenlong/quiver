@@ -2,7 +2,7 @@
 
 The web app's first writes. The Harnesses page (sidebar id `harnesses`,
 drawn by `static/manage.js`) lists rows from `GET /v1/app/harnesses`; this
-plugin, `quiver/webapp/pages/harness.py`, changes them. Its one `GET` is
+plugin, `swe/webapp/pages/harness.py`, changes them. Its one `GET` is
 Detect's scan.
 
 ## What the page does

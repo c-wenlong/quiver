@@ -258,10 +258,6 @@ private struct SettingsSectionView: View {
                 Tabs(options: AppearanceMode.allCases.map { ($0, $0.title) }, selection: $app.appearance)
             }
             SettingsDivider()
-            SettingRow(title: "App icon", detail: "The Dock shows this one. Finder keeps the light icon.") {
-                Tabs(options: AppIconStyle.allCases.map { ($0, $0.title) }, selection: $app.appIcon)
-            }
-            SettingsDivider()
             SettingRow(title: "Hide accidental sessions",
                        detail: "Sessions with no responses, no tokens, or a one-shot probe drop out of Sessions and the calendar.") {
                 SettingSwitch(title: "Hide accidental sessions", isOn: $app.hideTrivialSessions)
@@ -508,14 +504,14 @@ private struct SettingsSectionView: View {
                         ? "Empty uses the swe your login shell finds."
                         : "Empty uses the swe that comes with Quiver.") { app.swePath = $0 }
             SettingsDivider()
-            PathRow(title: "API keys file", placeholder: "~/.quiver/secrets/providers/.api_keys",
+            PathRow(title: "API keys file", placeholder: "~/.swe/secrets/providers/.api_keys",
                     stored: app.apiKeysPath, draft: $drafts.apiKeys, running: app.apiKeys.path,
-                    hint: "Empty uses ~/.quiver/secrets/providers/.api_keys.") { app.apiKeysPath = $0 }
+                    hint: "Empty uses ~/.swe/secrets/providers/.api_keys.") { app.apiKeysPath = $0 }
             SettingsDivider()
-            PathRow(title: "MCP servers folder", placeholder: "~/.quiver/mcp/servers",
+            PathRow(title: "MCP servers folder", placeholder: "~/.swe/mcp/servers",
                     stored: app.mcpServersPath, draft: $drafts.mcpServers,
                     running: AppModel.mcpServersFolder(path: app.mcpServersPath).path,
-                    hint: "Empty uses ~/.quiver/mcp/servers.", folders: true) { app.mcpServersPath = $0 }
+                    hint: "Empty uses ~/.swe/mcp/servers.", folders: true) { app.mcpServersPath = $0 }
             SettingsDivider()
             // Every candidate is listed so the row can say what it supports;
             // one that isn't installed greys out and can't be picked. Seven

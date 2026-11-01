@@ -12,8 +12,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from quiver.remote import commands, pairing
-from quiver.remote import devices as devices_mod
+from swe.remote import commands, pairing
+from swe.remote import devices as devices_mod
 
 from tests.test_remote_commands import _run
 from tests.test_remote_hub import _Server, _session
@@ -155,7 +155,7 @@ class TestReviewFixes(_Owner):
         self.assertFalse(rows[laptop["device_id"]]["revoked_at"])
 
     def test_open_streams_see_a_revoked_sign_in(self):
-        from quiver.remote import hub as hub_mod
+        from swe.remote import hub as hub_mod
 
         self.owner(_PHONE_IP)
         self.assertFalse(hub_mod._Handler._device_revoked(self.home, "tailnet:n-phone"))
@@ -190,7 +190,7 @@ class TestReviewFixes(_Owner):
 
     def test_keys_are_resynced_on_every_revoke(self):
         self.owner(_PHONE_IP)
-        with patch("quiver.remote.sshkeys.sync") as sync:
+        with patch("swe.remote.sshkeys.sync") as sync:
             pairing.revoke_signin(self.home, "n-phone")
         sync.assert_called_once()
 

@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.remote import pairing
+from swe.remote import pairing
 
 from tests._tempdir import temp_dir
 
@@ -522,7 +522,7 @@ class TestDeviceMetadata(unittest.TestCase):
         token = pairing.mint_pair_token(self.tmp)
         cred = pairing.exchange(
             self.tmp, token, "phone",
-            meta={"kind": "iphone", "client": "Quiver Web",
+            meta={"kind": "iphone", "client": "SWE Web",
                   "os": "iOS 18.5", "node_name": "test-iphone.ts.net",
                   "display_name": "nope", "credential_hash": "nope"},
         )

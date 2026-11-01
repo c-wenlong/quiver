@@ -13,10 +13,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.paths import session_status_cache_file_for
-from quiver.sessions import parse_cache, status
-from quiver.sessions.models import Session
-from quiver.sessions.status import (
+from swe.paths import session_status_cache_file_for
+from swe.sessions import parse_cache, status
+from swe.sessions.models import Session
+from swe.sessions.status import (
     ACTIVE,
     ACTIVE_WINDOW_S,
     DONE,

@@ -13,8 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import inject, protocol, supervise
-from quiver.sessions.models import Session
+from swe.remote import inject, protocol, supervise
+from swe.sessions.models import Session
 
 
 def _session(tool="opencode", sid="ses_1", cwd="/tmp/proj"):

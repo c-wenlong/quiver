@@ -23,10 +23,10 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.status import catalog, catalogue, parsers, poller, tracked
-from quiver.status.catalog import ComponentState, Health
-from quiver.status.parsers import Component
-from quiver.webapp.pages import status as status_page
+from swe.status import catalog, catalogue, parsers, poller, tracked
+from swe.status.catalog import ComponentState, Health
+from swe.status.parsers import Component
+from swe.webapp.pages import status as status_page
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp import app_js_function
@@ -489,7 +489,7 @@ class TestPoller(PollerBase):
     def test_poller_for_is_one_per_home(self):
         home = Path(tempfile.mkdtemp())
         self.assertIs(poller.poller_for(home), poller.poller_for(home))
-        self.assertEqual(poller.poller_for(home).cache_path, home / ".quiver" / "cache" / "web-service-status.json")
+        self.assertEqual(poller.poller_for(home).cache_path, home / ".swe" / "cache" / "web-service-status.json")
 
 
 class TestRetryAfter(unittest.TestCase):
@@ -531,7 +531,7 @@ class TestHttpGet(unittest.TestCase):
             return _Resp(b"{}")
         sentinel = ssl.create_default_context()
         with patch("urllib.request.urlopen", side_effect=urlopen), \
-                patch("quiver.harness.rate_limits._verified_context", return_value=sentinel):
+                patch("swe.harness.rate_limits._verified_context", return_value=sentinel):
             response = poller.http_get("https://example.test/", {}, 1)
         self.assertEqual(calls, [None, sentinel])
         self.assertEqual((response.status, response.body, response.header("etag")), (200, b"{}", "x"))
@@ -539,7 +539,7 @@ class TestHttpGet(unittest.TestCase):
     def test_never_connects_unverified(self):
         error = urllib.error.URLError(ssl.SSLCertVerificationError("bad"))
         with patch("urllib.request.urlopen", side_effect=error), \
-                patch("quiver.harness.rate_limits._verified_context", return_value=None):
+                patch("swe.harness.rate_limits._verified_context", return_value=None):
             with self.assertRaises(OSError):
                 poller.http_get("https://example.test/", {}, 1)
 
@@ -618,7 +618,7 @@ class TestRoute(HubBase):
         self.transport.reply(200, fixture("statuspage-github"))
         self.poller = poller.StatusPoller(self.srv.home / "status.json", transport=self.transport,
                                           now=Clock(time.time()))
-        p = patch("quiver.webapp.pages.status.poller_for", return_value=self.poller)
+        p = patch("swe.webapp.pages.status.poller_for", return_value=self.poller)
         p.start()
         self.addCleanup(p.stop)
 
@@ -687,7 +687,7 @@ class TestTracked(unittest.TestCase):
         self.path = tracked.tracked_file_for(self.home)
 
     def test_path_is_under_the_quiver_data_dir(self):
-        self.assertEqual(self.path, self.home / ".quiver" / "data" / "web-status-services.json")
+        self.assertEqual(self.path, self.home / ".swe" / "data" / "web-status-services.json")
 
     def test_add_load_remove(self):
         entry = catalogue.entry("groq")
@@ -816,7 +816,7 @@ class TestTrackRoute(HubBase):
         self.transport.reply(200, fixture("statuspage-github"))
         self.poller = poller.StatusPoller(self.srv.home / "status.json", transport=self.transport,
                                           now=Clock(time.time()))
-        p = patch("quiver.webapp.pages.status.poller_for", return_value=self.poller)
+        p = patch("swe.webapp.pages.status.poller_for", return_value=self.poller)
         p.start()
         self.addCleanup(p.stop)
         self.headers = self.auth()
@@ -831,7 +831,7 @@ class TestTrackRoute(HubBase):
         return status, json.loads(data)
 
     def store(self):
-        return self.srv.home / ".quiver" / "data" / "web-status-services.json"
+        return self.srv.home / ".swe" / "data" / "web-status-services.json"
 
     def card(self, body, id):
         return next((s for g in body["groups"] for s in g["services"] if s["id"] == id), None)
@@ -925,7 +925,7 @@ class TestLateWriteGate(unittest.TestCase):
     it moved to; on the page it does."""
 
     def gates_after_untrack(self, hash_):
-        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/status.js"
+        page = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/status.js"
         prelude = ("globalThis.location = { hash: " + json.dumps(hash_) + " };\n"
                    "const gates = []; function renderGate(m) { gates.push(m); }\n"
                    "function registerPage() {}\n" + app_js_function("currentRoute")
@@ -949,7 +949,7 @@ class TestUntrackOnce(unittest.TestCase):
     for a page already gone reads the list again instead of erroring."""
 
     def run_js(self, body):
-        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/status.js"
+        page = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/status.js"
         prelude = ("globalThis.location = { hash: '#/status' };\n"
                    "function registerPage() {}\n" + app_js_function("currentRoute")
                    + "const posts = []; const replies = [];\n"
@@ -1008,7 +1008,7 @@ class TestRelativeTime(unittest.TestCase):
     Service status and Settings' device rows show."""
 
     def test_named_past_times(self):
-        fmt = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/format.js"
+        fmt = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/format.js"
         now = 1_800_000_000
         ages = [0, 30, 5 * 60, 3 * 3600, 26 * 3600, 9 * 86400, -120]
         src = (fmt.read_text(encoding="utf-8") + "\nprocess.stdout.write(JSON.stringify("
@@ -1021,7 +1021,7 @@ class TestRelativeTime(unittest.TestCase):
 
     def test_tokens_pick_the_unit_after_rounding(self):
         # The same cases as the Mac app's UsageFormatTests: never "1000K".
-        fmt = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/format.js"
+        fmt = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/format.js"
         counts = [0, 950, 12_340, 1_000_000, 999_949, 999_950, 999_950_000, 999_999_999_999]
         src = (fmt.read_text(encoding="utf-8") + "\nprocess.stdout.write(JSON.stringify("
                + json.dumps(counts) + ".map((n) => Fmt.tokens(n))));\n")
@@ -1032,7 +1032,7 @@ class TestRelativeTime(unittest.TestCase):
 
     def test_thought_reads_the_thinking_duration(self):
         # The same cases as the Mac's and the iPhone's ThoughtLabelTests (#1440).
-        fmt = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/format.js"
+        fmt = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/format.js"
         cases = [12, 12.4, 59.6, 65, 3600, 3725, 0, 0.3, None, -1, "12"]
         src = (fmt.read_text(encoding="utf-8") + "\nprocess.stdout.write(JSON.stringify("
                + json.dumps(cases) + ".map((n) => Fmt.thought(n === null ? undefined : n))"

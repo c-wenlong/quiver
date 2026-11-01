@@ -2,7 +2,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from quiver.harness.tools import extract_version_number, live_version
+from swe.harness.tools import extract_version_number, live_version
 
 
 class ExtractVersionNumberTest(unittest.TestCase):
@@ -52,7 +52,7 @@ class LiveVersionTest(unittest.TestCase):
             out = outputs.get(argv[1], "")
             return subprocess.CompletedProcess(argv, 0 if out else 1, stdout=out, stderr="")
 
-        with patch("quiver.harness.tools.subprocess.run", side_effect=fake_run):
+        with patch("swe.harness.tools.subprocess.run", side_effect=fake_run):
             version = live_version("claude")
         return version, calls
 

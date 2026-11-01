@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "data": {
-    "shared_dir": "/tmp/quiver-fixture-home/.quiver/skills",
+    "shared_dir": "/tmp/quiver-fixture-home/.swe/skills",
     "harnesses": [
       {
         "name": "claude",
@@ -24,7 +24,7 @@
       {
         "name": "fixture-skill",
         "description": "A made-up skill for contract fixtures",
-        "path": "/private/tmp/quiver-fixture-home/.quiver/skills/fixture-skill",
+        "path": "/private/tmp/quiver-fixture-home/.swe/skills/fixture-skill",
         "root": "shared",
         "source": "shared",
         "harnesses": [

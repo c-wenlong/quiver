@@ -13,9 +13,9 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import agent as agent_mod
-from quiver.remote import commands, pairing
-from quiver.remote import hub as hub_mod
+from swe.remote import agent as agent_mod
+from swe.remote import commands, pairing
+from swe.remote import hub as hub_mod
 
 from tests.test_remote_commands import _run
 from tests.test_remote_hub import _Server
@@ -412,7 +412,7 @@ class TestCommands(unittest.TestCase):
 
         with patch.object(commands.sys, "platform", "darwin"), \
                 patch.object(commands.sys, "argv", ["/opt/swe/bin/swe"]), \
-                patch("quiver.remote.commands.os.access", return_value=True), \
+                patch("swe.remote.commands.os.access", return_value=True), \
                 patch.object(commands.launchd, "loaded_pid",
                              return_value=(False, None)), \
                 patch.object(commands.launchd, "bundled_swe", return_value=None), \
@@ -464,7 +464,7 @@ class TestAgentCaFallback(unittest.TestCase):
             return "resp"
 
         with patch("urllib.request.urlopen", urlopen), \
-                patch("quiver.harness.rate_limits._verified_context",
+                patch("swe.harness.rate_limits._verified_context",
                       return_value=ctx):
             self.assertEqual(agent_mod._urlopen("req", 5), "resp")
             self.assertEqual(agent_mod._urlopen("req", 5), "resp")
@@ -474,7 +474,7 @@ class TestAgentCaFallback(unittest.TestCase):
     def test_no_bundle_reraises(self):
         with patch("urllib.request.urlopen",
                    side_effect=self._cert_error()), \
-                patch("quiver.harness.rate_limits._verified_context",
+                patch("swe.harness.rate_limits._verified_context",
                       return_value=None):
             with self.assertRaises(urllib.error.URLError):
                 agent_mod._urlopen("req", 5)

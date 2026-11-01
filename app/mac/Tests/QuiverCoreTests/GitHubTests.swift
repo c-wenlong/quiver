@@ -34,7 +34,7 @@ import Testing
         let reply = try await client("swe-gh-worktree").ghPrWorktree(repo: "c-wenlong/quiver", pr: 459)
         #expect(reply.repo == "c-wenlong/quiver")
         #expect(reply.pr == 459)
-        #expect(reply.path == "/Users/k/.quiver/worktrees/c-wenlong__quiver-pr459")
+        #expect(reply.path == "/Users/k/.swe/worktrees/c-wenlong__quiver-pr459")
         #expect(reply.head == "a9463720b1c2")
         #expect(reply.created)
         #expect(reply.error == nil)

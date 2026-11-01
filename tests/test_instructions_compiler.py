@@ -11,9 +11,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from quiver.instructions import compiler
-from quiver.instructions.compiler import InstructionError, build
-from quiver.paths import (
+from swe.instructions import compiler
+from swe.instructions.compiler import InstructionError, build
+from swe.paths import (
     agents_file_for, cache_dir_for, instructions_dir_for, instructions_index_for,
 )
 
@@ -267,7 +267,7 @@ import sys
 sys.modules["fcntl"] = None
 if hasattr(os, "O_NOFOLLOW"):
     del os.O_NOFOLLOW
-from quiver.cli import main
+from swe.cli import main
 sys.argv = ["swe", sys.argv[1]]
 raise SystemExit(main())
 """
