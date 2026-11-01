@@ -168,7 +168,7 @@ history again, as an app relaunch does.
   Everything else the sheet holds (the badge and flag thresholds, the
   tab, the interval, the temperature lines) is per-browser display state.
 - **Fan control is Mac only.** The fan button and its popover write the
-  SMC through Quiver's privileged helper on a Mac; there is no Linux
+  SMC through SWE's privileged helper on a Mac; there is no Linux
   counterpart, so the page has no fan button and no "Fans up above"
   threshold line. Fan readings still shade the Temperature chart when
   hwmon reports them.

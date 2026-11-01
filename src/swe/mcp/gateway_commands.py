@@ -186,7 +186,7 @@ def _uninstall(args: list[str]) -> int:
 
 def _sync_hint(names: list[str] | None = None) -> None:
     only = f" --only={','.join(names)}" if names else ""
-    print(c("dim", f"  point harnesses at it: swe mcp sync quiver --all{only} --force"))
+    print(c("dim", f"  point harnesses at it: swe mcp sync swe --all{only} --force"))
 
 
 # -- share / unshare ------------------------------------------------------

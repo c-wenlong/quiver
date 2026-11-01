@@ -41,7 +41,7 @@ Its writes are a server's Sync, with its Preview, and its Remove.
   field and repaints the sheet. Revealed values are forgotten when the
   sheet closes.
 - **Sync** is the Mac sheet's: **Copy from** (each definition's first
-  harness, plus the Quiver hub when `mcp.json` holds the server), then a
+  harness, plus the SWE hub when `mcp.json` holds the server), then a
   switch per harness that lacks the server (on by default for compared
   harnesses that use MCP) and per harness with a different definition
   ("replaces its own definition", always opt-in). **Preview** shows swe's
@@ -191,10 +191,10 @@ How it runs:
 
 The sheet's footer has **Remove…** (red text) on the left, as the app's
 does. It opens a confirm above the footer: "Remove demo? It goes from
-Claude Code, Quiver hub on box." with the command, `swe mcp remove demo
---from=claude,quiver`, and a red Remove. On success the sheet closes and
+Claude Code, SWE hub on box." with the command, `swe mcp remove demo
+--from=claude,swe`, and a red Remove. On success the sheet closes and
 the list repaints from the answer, with "Removed demo from Claude Code,
-Quiver hub." above it until the list is read again; a refusal stays in
+SWE hub." above it until the list is read again; a refusal stays in
 the sheet and the list is read again.
 
 `POST /v1/app/mcp/remove` with `{"server", "from": [places]}` (`quiver`
@@ -236,14 +236,14 @@ URL, reached from any machine). Only that kind's fields show.
   is saved: each harness signs in the first time it connects, if it
   supports OAuth); and **Other headers**, rows like the env vars.
 - **Where**: Add to, defaulting to the compared harnesses, with All active
-  and None; "Always saved to the Quiver hub too"; Replace if it already
+  and None; "Always saved to the SWE hub too"; Replace if it already
   exists. For a Remote server a harness that can't take it is switched off
   with the reason: Claude Desktop takes local servers only in its config,
   and opencode and Codex can't use an SSE server. The page reads this from
   `caps` (`{harness: {"remote", "sse"}}`) in the payload.
 
 A secret's value is a password field. On success the sheet closes and the
-list repaints with "Added github in Quiver hub, Codex." above it.
+list repaints with "Added github in SWE hub, Codex." above it.
 
 `POST /v1/app/mcp/add` with `{"name", "kind": "command" | "url",
 "command": [words] | "url" + "transport": "http" | "sse" + "sign_in":

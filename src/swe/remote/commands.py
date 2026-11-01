@@ -63,7 +63,7 @@ _USAGE = f"""\
   {c('cyan', 'swe remote serve --install | --uninstall')}
                                   Keep the hub running (macOS LaunchAgent, Linux systemd unit)
   {c('cyan', 'swe remote setup [--apply] [--recheck] [--json]')}
-                                  Check every step to a paired phone; --apply does Quiver's part
+                                  Check every step to a paired phone; --apply does SWE's part
   {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: dial out to the hub
   {c('cyan', 'swe remote agent --install | --uninstall | --status [--json]')}
                                   Keep the satellite running (macOS LaunchAgent, Linux systemd unit)
@@ -299,7 +299,7 @@ class Service:
 HUB = Service("hub", "serve", launchd.LABEL, systemd.UNIT,
               systemd.HUB_DESCRIPTION, "serve.log")
 AGENT = Service("agent", "agent", launchd.AGENT_LABEL, systemd.AGENT_UNIT,
-                "Quiver remote agent (swe remote agent)", "agent.log")
+                "SWE remote agent (swe remote agent)", "agent.log")
 
 
 def _service_swe(service: Service) -> tuple[str, str | None]:

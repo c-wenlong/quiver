@@ -969,7 +969,7 @@ def _parse(line: bytes):
 
 
 def _homes(home: Path, vendor: str, default: str) -> list[Path]:
-    """The harness's own home, then each Quiver account profile's."""
+    """The harness's own home, then each SWE account profile's."""
     out = [home / default]
     out += sorted((swe_dir_for(home) / "accounts" / vendor).glob("*/home"))
     return [p for p in out if p.is_dir()]

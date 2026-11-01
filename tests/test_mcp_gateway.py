@@ -496,7 +496,7 @@ class GatewayCommandsInProcessTest(unittest.TestCase):
                 patch.object(gc.launchd, "uninstall", return_value=True):
             code, out, _ = self.run_cmd("uninstall")
         self.assertEqual(code, 0)
-        self.assertIn("swe mcp sync quiver --all", out)
+        self.assertIn("swe mcp sync swe --all", out)
         self.assertIs(self.hub_data()["gateway"]["enabled"], False)
         with patch.object(gc.sys, "platform", "linux"):
             self.assertEqual(self.run_cmd("install")[0], 1)

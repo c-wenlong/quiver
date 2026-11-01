@@ -694,7 +694,7 @@ def mcp_findings(home: Path | None = None) -> list[DoctorFinding]:
     A broken server gets ``mcp-sync`` only when the hub (``mcp.json``)
     holds the same name, every secret it names is in the store, and its
     resolved copy passes the same checks with a command or url: then
-    ``swe mcp sync quiver <tool> --only=<name> --force`` replaces just
+    ``swe mcp sync swe <tool> --only=<name> --force`` replaces just
     that entry with the hub's, a click per finding since it overwrites.
     Anything else (no hub copy, a hub copy just as broken) keeps a
     command to look closer. A config the readers could not parse is one
@@ -748,7 +748,7 @@ def _mcp_findings(home: Path) -> list[DoctorFinding]:
                 fixable = (name in hub and not (_GLOB_CHARS & set(name))
                            and not unresolved_names(raw_hub.get(name), home=home)
                            and _mcp_local_problem(hub[name], strict=True) is None)
-                command = shlex.join(["swe", "mcp", "sync", "quiver", tool,
+                command = shlex.join(["swe", "mcp", "sync", "swe", tool,
                                       f"--only={name}", "--force"])
                 status = shlex.join(["swe", "mcp", "status", tool])
                 remedies = ({"kind": "action", "action": "mcp-sync",
@@ -800,7 +800,7 @@ def sync_mcp_server(home: Path, tool: str, server: str) -> str | None:
     backup_tree(path, home)
     said = io.StringIO()
     with redirect_stdout(said):
-        code = _sync(["quiver", tool, f"--only={server}", "--force",
+        code = _sync(["swe", tool, f"--only={server}", "--force",
                       "--no-interactive"], None)
     lines = [ln for ln in said.getvalue().strip().splitlines() if ln.strip()]
     if code:

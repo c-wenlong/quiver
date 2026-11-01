@@ -2,7 +2,7 @@
 
 The Mac app's AGENTS.md page (`AgentsMdPage.swift`, `AgentsModel`,
 `InitCheck`) as a web page. Module
-`quiver/webapp/pages/agents.py`, script `static/pages/agents.js`, styles
+`swe/webapp/pages/agents.py`, script `static/pages/agents.js`, styles
 `static/pages/agents.css` (it also uses a few pieces of `skills.css` and
 `skills.js`).
 

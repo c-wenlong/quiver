@@ -1,4 +1,4 @@
-"""Sectioned interactive setup wizard for Quiver."""
+"""Sectioned interactive setup wizard for SWE."""
 
 from __future__ import annotations
 
@@ -219,7 +219,7 @@ def _stage_providers(
     keys_dir = default_keys_dir(home).expanduser()
     rows = discover_provider_keys(providers, keys_dir)
     configured = [row["name"] for row in rows if row["masked"] != "-"]
-    print(c("dim", "  Quiver discovers provider credentials but never stores or rewrites them."))
+    print(c("dim", "  SWE discovers provider credentials but never stores or rewrites them."))
     print(f"  Credential source: {c('cyan', _display_path(keys_dir, home))}")
     if configured:
         visible = ", ".join(configured[:8])
@@ -413,7 +413,7 @@ _STAGES = {
 
 
 def _print_banner(section: str | None, quick: bool) -> None:
-    title = "Quiver Setup Wizard" if section is None else f"Quiver Setup - {SECTION_LABELS[section]}"
+    title = "SWE Setup Wizard" if section is None else f"SWE Setup - {SECTION_LABELS[section]}"
     print()
     print(c("cyan", c("bold", f"  {title}")))
     print(c("dim", "  Configure coding harnesses and the context they share."))

@@ -130,13 +130,13 @@ Ported from `Activity.swift`, `ActivityBlocks.swift` and
   "days": [{"date": "2026-10-19", "start": 1792339200.0, "end": 1792425600.0}],
   "gap_s": 1800,
   "blocks": [{
-    "id": "claude|/home/me/.claude|/home/me/dev/quiver|1792755710.7",
+    "id": "claude|/home/me/.claude|/home/me/dev/swe|1792755710.7",
     "harness": "claude", "account": "/home/me/.claude", "account_label": "Claude: Default",
-    "project": "quiver", "project_key": "/home/me/dev/quiver",
+    "project": "swe", "project_key": "/home/me/dev/swe",
     "start": 1792755710.7, "end": 1792765400.1, "responses": 369,
     "tokens": 101928159, "cost_usd": 33.59, "unpriced_tokens": 0,
     "sessions": [{"id": "8bccd4fc-…", "row": "<catalog key>", "title": "Deploy the hub",
-                  "cwd": "/home/me/dev/quiver", "start": 1792755710.7, "end": 1792765400.1,
+                  "cwd": "/home/me/dev/swe", "start": 1792755710.7, "end": 1792765400.1,
                   "responses": 167, "tokens": 41800000, "cost_usd": 13.69, "unpriced_tokens": 0,
                   "days": {"2026-10-23": {"responses": 167, "tokens": 41800000,
                                           "cost_usd": 13.69, "unpriced_tokens": 0}}}]

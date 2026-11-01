@@ -3,7 +3,7 @@ for the hub machine, at ``#/setup``.
 
 ``GET /v1/app/setup`` answers both steps the browser can do:
 
-- ``agents``: the coding agents Quiver knows (``ProviderCatalog`` in the
+- ``agents``: the coding agents SWE knows (``ProviderCatalog`` in the
   Swift, in its order), each marked found on this machine or not, the
   way ``ProviderDetection.installed`` decides it (swe's installed
   harnesses, plus each extra provider's own commands and paths), the

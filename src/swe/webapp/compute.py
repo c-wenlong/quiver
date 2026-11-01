@@ -1169,7 +1169,7 @@ def start_ticker() -> None:
     with _guard:
         if _ticker is not None:
             return
-        _ticker = threading.Thread(target=_tick_forever, name="quiver-compute", daemon=True)
+        _ticker = threading.Thread(target=_tick_forever, name="swe-compute", daemon=True)
         _ticker.start()
 
 

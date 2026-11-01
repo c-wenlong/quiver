@@ -636,11 +636,11 @@ class TestPin(_Base):
 
     def test_add_pins_githubs_spelling_and_answers_the_pins(self):
         _pin(self.home, "o/a")
-        FakeGh(self, repos={"o/quiver": "O/Quiver"})
+        FakeGh(self, repos={"o/quiver": "O/SWE"})
         body = R.post(self.ctx, "add", {"repo": "https://github.com/o/quiver/pull/3"})
-        self.assertEqual(body["repo"], "O/Quiver")
-        self.assertEqual([r["name"] for r in body["repos"]], ["o/a", "O/Quiver"])
-        self.assertEqual(self.pins(), ["o/a", "O/Quiver"])
+        self.assertEqual(body["repo"], "O/SWE")
+        self.assertEqual([r["name"] for r in body["repos"]], ["o/a", "O/SWE"])
+        self.assertEqual(self.pins(), ["o/a", "O/SWE"])
         self.assertEqual(body["machine"], "hub-box")
 
     def test_add_drops_cached_searches(self):

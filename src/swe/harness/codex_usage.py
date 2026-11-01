@@ -106,7 +106,7 @@ def fetch_codex_usage_daily(account_dir: str | None = None, *,
             proc.stdin.flush()
 
         send({"jsonrpc": "2.0", "id": 0, "method": "initialize",
-              "params": {"clientInfo": {"name": "quiver",
+              "params": {"clientInfo": {"name": "swe",
                                         "version": __version__}}})
         reply = _wait_for(proc, buffer, 0, deadline)
         if reply is None:

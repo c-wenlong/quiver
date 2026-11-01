@@ -129,7 +129,7 @@ class _FakeHome:
         return [(f.harness, f.kind) for f in self.drift(**kw)]
 
 
-class QuiverPluginsTest(_FakeHome, unittest.TestCase):
+class SwePluginsTest(_FakeHome, unittest.TestCase):
     def test_lists_local_plugins_with_version(self):
         found = swe_plugins(self.home)
         self.assertEqual(len(found), 1)

@@ -6,12 +6,12 @@ the tailnet, a certificate this machine can actually fetch, the hub
 running in the background on loopback, ``tailscale serve`` in front of
 it, and a paired device. Each link used to be a terminal step someone
 had to know about. This module checks them in order and says, for each,
-whether it is done, something Quiver can do itself (``--apply``), or
+whether it is done, something SWE can do itself (``--apply``), or
 something only a person can do, with the page to open.
 
 ``gather`` does the I/O and ``evaluate`` turns what it found into the
 report, so tests drive ``evaluate`` with made-up facts. ``apply`` loops
-gather, evaluate, act until nothing is left that Quiver can do.
+gather, evaluate, act until nothing is left that SWE can do.
 
 The certificate is checked before the hub moves behind ``tailscale
 serve``: a hub moved there without one is unreachable from every device
@@ -39,7 +39,7 @@ DEFAULT_PORT = 8477
 
 # States a step can be in.
 OK = "ok"
-TODO = "todo"            # Quiver does it with --apply
+TODO = "todo"            # SWE does it with --apply
 NEEDS_YOU = "needs_you"  # a person must act; the step names where
 FAILED = "failed"        # checked and broken, with the reason
 BLOCKED = "blocked"      # waits for an earlier step
@@ -522,7 +522,7 @@ def apply(home: Path | None = None, port: int | None = None, actions: Actions | 
           gather_fn: Callable[..., Facts] | None = None, log: Callable[[str], None] = lambda _m: None,
           max_steps: int = 8, fresh_cert: bool = False,
           record: Callable[[str], None] | None = None) -> dict:
-    """Do every step Quiver can do, in order, and return the final report.
+    """Do every step SWE can do, in order, and return the final report.
 
     Stops at the first step that needs a person or failed: later steps
     depend on it. Each action is followed by a fresh look, so a step

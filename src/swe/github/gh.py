@@ -1,6 +1,6 @@
 """The one module that spawns ``gh``.
 
-Quiver never stores GitHub tokens: every call inherits the user's own
+SWE never stores GitHub tokens: every call inherits the user's own
 ``gh auth login`` the same way the Copilot quota fetcher in
 ``harness/rate_limits.py`` does. Reads are outcome-typed — a caller can
 tell "no such PR" (``not-found``) apart from "GitHub is down"

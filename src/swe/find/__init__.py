@@ -1,4 +1,4 @@
-"""Quiver find: read-only views of the shared asset layout."""
+"""SWE find: read-only views of the shared asset layout."""
 
 from swe.find.commands import cmd_find
 

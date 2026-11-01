@@ -1,6 +1,6 @@
-# The Quiver release process
+# The SWE release process
 
-This document is the complete walkthrough of how a Quiver release ships. It
+This document is the complete walkthrough of how a SWE release ships. It
 is written to double as a narration script: each numbered section is one
 scene, with the why, the exact commands, what success looks like, and what
 can go wrong. The pipeline itself lives in
@@ -9,7 +9,7 @@ covers everything around it.
 
 ## Scene 0 — What a release ships
 
-A Quiver release delivers three products to one GitHub Release page:
+A SWE release delivers three products to one GitHub Release page:
 
 1. **The Python package** — an sdist and a wheel for the `swe` CLI, built
    from `pyproject.toml`. This is what `pip install quiver-*.whl` users get.

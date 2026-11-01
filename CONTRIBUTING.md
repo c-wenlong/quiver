@@ -1,6 +1,6 @@
-# Contributing to quiver
+# Contributing to swe
 
-Thanks for your interest in contributing! quiver is a small, stdlib-only CLI — we want to keep it fast, portable, and easy to hack on.
+Thanks for your interest in contributing! swe is a small, stdlib-only CLI — we want to keep it fast, portable, and easy to hack on.
 
 ## Getting started
 
@@ -111,7 +111,7 @@ Taking part in this project means agreeing to the [Code of Conduct](CODE_OF_COND
 
 Use the [bug report template](https://github.com/c-wenlong/quiver/issues/new?template=bug_report.yml) and include:
 
-- Your OS and Python version, plus the quiver version from `swe version`
+- Your OS and Python version, plus the swe version from `swe version`
 - The exact command that failed and its full output
 - Steps to reproduce
 

@@ -29,11 +29,11 @@ class _Base(unittest.TestCase):
 
 class TestAddRepo(_Base):
     def test_pins_the_name_github_spells(self):
-        fake = FakeGh(self, repos={"o/quiver": "O/Quiver"})
+        fake = FakeGh(self, repos={"o/quiver": "O/SWE"})
         added = manage.add_repo("o/quiver", self.home)
         self.assertEqual(added.status, "ok")
-        self.assertEqual(added.data, {"repo": "O/Quiver", "pinned": ["O/Quiver"]})
-        self.assertEqual(self.pins(), ["O/Quiver"])
+        self.assertEqual(added.data, {"repo": "O/SWE", "pinned": ["O/SWE"]})
+        self.assertEqual(self.pins(), ["O/SWE"])
         self.assertEqual(fake.calls(), [["repo", "view", "o/quiver", "--json", "nameWithOwner"]])
 
     def test_pinning_twice_keeps_one_pin(self):

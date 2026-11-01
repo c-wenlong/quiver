@@ -1,4 +1,4 @@
-"""The status pages Quiver reads, and the vocabulary of a reading.
+"""The status pages SWE reads, and the vocabulary of a reading.
 
 A port of the Mac app's ``QuiverCore/Status/ServiceStatusModels.swift``:
 the same services in the same order, with the same names, page URLs and
@@ -136,7 +136,7 @@ LEGACY_GROUPS = {"providers": "modelProviders", "infrastructure": "services"}
 
 @dataclass(frozen=True)
 class StatusService:
-    """A status page Quiver reads.
+    """A status page SWE reads.
 
     ``feed`` is ``"statuspage"`` (Atlassian Statuspage's
     ``/api/v2/summary.json``; incident.io serves the same shape) or

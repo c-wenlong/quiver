@@ -4,7 +4,7 @@ Instructions for any coding agent working in this repository. This file holds th
 
 ## What this is
 
-`quiver` is a Python package whose console entry point is `swe`. It manages the AI coding CLIs on a machine (Claude Code, Codex, Gemini, Cursor, opencode, ...): one registry, one shared instruction file and skills tree symlinked into every harness, cross-agent session history, MCP config sync, rate limits, and coding-session reports.
+`swe` is a Python package; its console entry point is also `swe`. It manages the AI coding CLIs on a machine (Claude Code, Codex, Gemini, Cursor, opencode, ...): one registry, one shared instruction file and skills tree symlinked into every harness, cross-agent session history, MCP config sync, rate limits, and coding-session reports.
 
 The core CLI is stdlib-only with no runtime dependencies. Optional extras: `server` (FastMCP session server via `python -m swe.mcp_server`) and `test` (coverage). Python floor is 3.11; never add a 3.10 compatibility shim (3.10 users get `v0.2.9`, see [docs/testing.md](docs/testing.md#interpreter-matrix)).
 
@@ -40,8 +40,8 @@ The web app stays inside the Python package because pipx installs and the `swe` 
 
 `app/mac/` replaces Switchboard, TokenTracker, AIUsage and OpenUsage ([app/mac/ROADMAP.md](app/mac/ROADMAP.md)).
 
-- **Share no data with those apps.** Never read or write `~/.switchboard`, `~/.tokentracker`, `~/.config/aiusage`, OpenUsage's Application Support folder, or their caches, settings or keychain items, not even to import. Everything Quiver keeps lives under `~/.swe`. The harnesses' own files (`~/.claude`, `~/.codex`, ...) are not another app's data; reading them is the point.
-- **Borrow ideas and code, not state.** Their source is a reference; Quiver re-implements against its own files. Keep the licence notices for any code copied.
+- **Share no data with those apps.** Never read or write `~/.switchboard`, `~/.tokentracker`, `~/.config/aiusage`, OpenUsage's Application Support folder, or their caches, settings or keychain items, not even to import. Everything SWE keeps lives under `~/.swe`. The harnesses' own files (`~/.claude`, `~/.codex`, ...) are not another app's data; reading them is the point.
+- **Borrow ideas and code, not state.** Their source is a reference; SWE re-implements against its own files. Keep the licence notices for any code copied.
 - **Never write to `~/Applications/Quiver.app` by hand.** Several sessions work on this repo at once, so the installed app is built only from `origin/main` by `app/mac/script/install-app.sh`. Check your change with your own build: `./script/build-app.sh debug` in your worktree, then `open -n build/Quiver.app`.
 - **Reinstall the app after every push to `main`**, not only `app/mac/` changes. Once your PR merges, run `app/mac/script/install-app.sh` from any checkout, `git fetch`, then confirm `git merge-base --is-ancestor <your merge commit> "$(defaults read ~/Applications/Quiver.app/Contents/Info QuiverCommit)"`. A newer commit is fine. If the script reports another install running, wait and run it again, since that one may have built an older `main`. Nothing to install after a push to a PR branch.
 
@@ -107,7 +107,7 @@ If it works with `PYTHONPATH=src python3 -m swe.cli` but not with `swe`, the ins
 [docs/backend-architecture.md](docs/backend-architecture.md) has the package map and per-extension checklists; [ARCHITECTURE.md](ARCHITECTURE.md#layering-rules) the reasons.
 
 - `cli.py` is dispatch only: `COMMANDS` maps the first argv token to a `cmd_*`. Top-level entries are shortcuts for the most-used harness verbs; everything else lives under a domain command (`harness`, `mcp`, `find`, `plugins`, `providers`, `report`, `skills`, `session`, `config`, `setup`, `init`, `hooks`, `gh`, `remote`) that owns its own sub-dispatch.
-- Six bottom-layer modules never import a domain package: `console.py`, `keys.py` and `flags.py` import nothing from the project, `paths.py` only `quiver/__init__.py` constants, `table.py` imports `console`, `configuration.py` imports `paths`. Use `paths.py`'s `*_for(home)` helpers in tests.
+- Six bottom-layer modules never import a domain package: `console.py`, `keys.py` and `flags.py` import nothing from the project, `paths.py` only `swe/__init__.py` constants, `table.py` imports `console`, `configuration.py` imports `paths`. Use `paths.py`'s `*_for(home)` helpers in tests.
 - Command modules own presentation; logic modules do not print (`setup/wizard.py` is the one exception). The one cycle, `harness <-> sessions`, stays function-local.
 - `harness/registry.py` is the only module that touches `harness.json`. `harness/stars.py` and `harness/archive.py` are compatibility shims: add no state to them.
 - **Code never hardcodes what `harness.json` can say.** `HARNESS_ROOTS` and `PLUGIN_FALLBACK` are read-only fallbacks for harnesses the registry has never heard of; a harness's `capabilities` entry always wins.

@@ -651,14 +651,14 @@ def _filter_by_patterns(servers: dict, patterns: list[str]) -> tuple[dict, list[
 # ── The hub ──────────────────────────────────────────────────────────
 #
 # ~/.swe/mcp.json is the middleman: `swe mcp discover --apply` pulls from
-# every harness into it, `swe mcp sync quiver <targets>` pushes back out. It
+# every harness into it, `swe mcp sync swe <targets>` pushes back out. It
 # is not a harness, so it has no config file of its own to read; it stores
 # canonical shape directly, which is why its format is "standard".
 
 MCP_SOURCE_KEY = "mcpServers"  # mirrors swe.mcp.discover
 
-HUB_LABEL = "quiver"
-HUB_ALIASES = ("quiver", "hub", "mcp.json", ".")
+HUB_LABEL = "swe"
+HUB_ALIASES = ("swe", "quiver", "hub", "mcp.json", ".")
 
 
 def is_hub(name: str | None) -> bool:
@@ -1620,7 +1620,7 @@ def cmd_add(args):
 
     if json_view:
         return emit(report)
-    print(f"{report['hub'].capitalize()} {name} in the Quiver hub (~/.swe/mcp.json)")
+    print(f"{report['hub'].capitalize()} {name} in the SWE hub (~/.swe/mcp.json)")
     for r in report["targets"]:
         print(f"  {r['status']} in {r['name']}")
     return 0
@@ -1708,9 +1708,9 @@ def add_plan(registry: dict, *, url: str | None, transport: str | None,
 
 
 def add_conflicts(name: str, targets: list[str]) -> list[str]:
-    """Where a server called ``name`` already is, among the hub ("quiver")
+    """Where a server called ``name`` already is, among the hub ("swe")
     and ``targets``: what ``--force`` would replace."""
-    conflicts = ["quiver"] if name in get_hub_servers() else []
+    conflicts = [HUB_LABEL] if name in get_hub_servers() else []
     return conflicts + [t for t in targets if name in get_tool_servers(t)]
 
 
@@ -1723,7 +1723,7 @@ def add_server(name: str, canonical: dict, targets: list[str], *, force: bool = 
     hub_entry = redact_secrets(canonical)
 
     hub = get_hub_servers()
-    conflicts = ["quiver"] if name in hub else []
+    conflicts = [HUB_LABEL] if name in hub else []
     target_servers = {t: get_tool_servers(t) for t in targets}
     conflicts += [t for t in targets if name in target_servers[t]]
     if conflicts and not force:
@@ -1745,7 +1745,7 @@ def add_server(name: str, canonical: dict, targets: list[str], *, force: bool = 
     results = []
     resolved_entry = resolve_secrets(canonical)
     for target in targets:
-        converted = convert_server_for_target(resolved_entry, "quiver", target)
+        converted = convert_server_for_target(resolved_entry, HUB_LABEL, target)
         servers = target_servers[target]
         status = "replaced" if name in servers else "added"
         servers[name] = (_merge_format_keys(servers[name], converted)
@@ -1764,28 +1764,28 @@ class RemoveRefused(ValueError):
 
 
 def remove_places(registry: dict, name: str, from_names: list[str]) -> list[str]:
-    """Where ``swe mcp remove <name> --from=…`` removes from: "quiver" for
+    """Where ``swe mcp remove <name> --from=…`` removes from: "swe" for
     the hub, else harness names, in order and once each. ``all`` is the hub
     plus every harness whose config names the server. Raises RemoveRefused
     for a place it can't touch."""
     places: list[str] = []
     if any(p.lower() == "all" for p in from_names):
         # The hub plus every harness whose config names the server.
-        places.append("quiver")
+        places.append(HUB_LABEL)
         for tool in get_mcp_tools(registry):
             if name in get_tool_servers(tool):
                 places.append(tool)
         return places
     for place in from_names:
         if is_hub(place):
-            resolved = "quiver"
+            resolved = HUB_LABEL
         else:
             resolved = resolve_tool_arg(registry, place)
             if _unsafe_registry_name(resolved):
                 raise RemoveRefused(f"Unsafe harness name in registry: {place}", alarming=True)
             if not resolved:
                 raise RemoveRefused(f"Unknown place: {place}")
-            if resolved != "quiver" and get_tool_saver(resolved) is None:
+            if resolved != HUB_LABEL and get_tool_saver(resolved) is None:
                 raise RemoveRefused(f"No MCP backend registered for {resolved}", alarming=True)
         if resolved not in places:
             places.append(resolved)
@@ -1799,14 +1799,14 @@ def remove_server(name: str, places: list[str]) -> tuple[list[str], list[str]]:
     removed: list[str] = []
     absent: list[str] = []
     for place in places:
-        if place == "quiver":
+        if place == HUB_LABEL:
             hub = get_hub_servers()
             if name in hub:
                 del hub[name]
                 save_hub_servers(hub)
-                removed.append("quiver")
+                removed.append(HUB_LABEL)
             else:
-                absent.append("quiver")
+                absent.append(HUB_LABEL)
             continue
         servers = get_tool_servers(place)
         if name not in servers:
@@ -2028,7 +2028,7 @@ def cmd_edit(args):
     # umask, survived a crashed editor, and sat inside the versioned
     # ~/.swe tree — a resolved-secret file one `git add -A` from a
     # commit.
-    fd, tmp_name = tempfile.mkstemp(prefix="quiver-mcp-edit-", suffix=".json")
+    fd, tmp_name = tempfile.mkstemp(prefix="swe-mcp-edit-", suffix=".json")
     tmp_file = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -2247,17 +2247,18 @@ MCP_HELP = {
     "sync": f"""\
   {c('cyan', 'swe mcp sync <source> <target...>')}   Copy MCP servers source → target(s)
   {c('cyan', 'swe mcp sync <source> --all')}          Copy MCP servers source → all other MCP tools
-  {c('cyan', 'swe mcp sync quiver <target...>')}      Copy from the hub (~/.swe/mcp.json)
-  {c('cyan', 'swe mcp sync quiver --all')}            Push the hub out to every MCP tool
+  {c('cyan', 'swe mcp sync swe <target...>')}         Copy from the hub (~/.swe/mcp.json)
+  {c('cyan', 'swe mcp sync swe --all')}               Push the hub out to every MCP tool
 
 {c('bold', 'The hub')}
   ~/.swe/mcp.json is the middleman. Everything flows through it:
 
     harness configs  --( swe mcp discover --apply )-->  mcp.json
-    mcp.json         --( swe mcp sync quiver ... )  -->  harness configs
+    mcp.json         --( swe mcp sync swe ... )     -->  harness configs
 
   It stores canonical shape, so it converts cleanly to any tool format.
-  Names: {c('cyan', 'quiver')}, {c('cyan', 'hub')}, {c('cyan', 'mcp.json')}, {c('cyan', '.')}
+  Names: {c('cyan', 'swe')}, {c('cyan', 'hub')}, {c('cyan', 'mcp.json')}, {c('cyan', '.')}
+  ({c('cyan', 'quiver')} still works from before the rename.)
   Source only. Pulling into it is discover's job, so naming it as a
   target is refused.
 
@@ -2294,8 +2295,8 @@ MCP_HELP = {
   swe mcp sync opencode --all
   swe mcp sync opencode droid
   swe mcp sync opencode myagent     # unverified target → ~/.myagent/mcp.json
-  swe mcp sync quiver --all --only='*__*'              # hub → everything
-  swe mcp sync quiver cursor --only=dv__*              # hub → one tool
+  swe mcp sync swe --all --only='*__*'              # hub → everything
+  swe mcp sync swe cursor --only=dv__*              # hub → one tool
   swe mcp sync opencode cursor --only=dv__github,dv__linear
   swe mcp sync opencode cursor --only=dv__*            # one category
   swe mcp sync opencode --all --only='*__*'            # every prefixed server
@@ -2388,7 +2389,7 @@ MCP_HELP = {
   --json              Print the result as one JSON document
 
 {c('bold', 'Examples')}
-  swe mcp remove github --from=quiver
+  swe mcp remove github --from=swe
   swe mcp remove github --from=claude,codex
   swe mcp remove github --from=all""",
 
@@ -2442,7 +2443,7 @@ MCP_HELP = {
   Every harness session starts its own copy of each stdio server it is
   configured with. The gateway starts each shared server once and serves
   it at http://127.0.0.1:{gateway_defaults.DEFAULT_PORT}/mcp/<server>; once it is installed,
-  `swe mcp sync quiver ...` writes that URL for shared servers instead of
+  `swe mcp sync swe ...` writes that URL for shared servers instead of
   the command. Claude Desktop takes local servers only, so it keeps the
   command.
 
@@ -2460,7 +2461,7 @@ MCP_HELP = {
 {c('bold', 'Examples')}
   swe mcp gateway share dv__github dv__linear sr__brave
   swe mcp gateway install
-  swe mcp sync quiver --all --force
+  swe mcp sync swe --all --force
   swe mcp gateway status --json""",
 }
 

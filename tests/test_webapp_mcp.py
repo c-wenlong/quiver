@@ -929,9 +929,9 @@ class TestRemove(_SyncHome, unittest.TestCase):
         self.assertEqual(list(json.loads(self.cursor.read_text())["mcpServers"]), ["keep"])
         self.assertNotIn("linear", [s["name"] for s in reply["page"]["servers"]])
 
-    def test_the_hub_is_quiver(self):
+    def test_the_hub_is_swe(self):
         reply = self.remove(server="notion", **{"from": ["quiver"]})
-        self.assertEqual(reply["removed"], ["quiver"])
+        self.assertEqual(reply["removed"], ["swe"])
         self.assertEqual(json.loads(self.hub.read_text())["mcpServers"], {})
 
     def test_a_place_left_off_the_confirm_keeps_it(self):

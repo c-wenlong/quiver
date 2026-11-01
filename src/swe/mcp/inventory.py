@@ -43,7 +43,7 @@ def _is_url(raw) -> bool:
     """Whether a hub definition is reached at a URL."""
     from swe.mcp.cli import get_mcp_handler
 
-    return isinstance(raw, dict) and bool(get_mcp_handler("quiver").parse(raw).get("url"))
+    return isinstance(raw, dict) and bool(get_mcp_handler("swe").parse(raw).get("url"))
 
 
 def identity_of(raw, canonical: dict) -> tuple:
@@ -85,7 +85,7 @@ def server_inventory(tool_data: dict, include_hub: bool = False) -> list[tuple[d
     # ``${NAME}`` references the store cannot satisfy.
     hub = get_hub_servers()
     gateway_settings = _gateway_settings()
-    hub_handler = get_mcp_handler("quiver")
+    hub_handler = get_mcp_handler("swe")
     seen: dict[str, dict] = {}
     for tool, servers in tool_data.items():
         handler = get_mcp_handler(tool)
@@ -136,7 +136,7 @@ def server_inventory(tool_data: dict, include_hub: bool = False) -> list[tuple[d
             secrets_missing=(unresolved_names(hub[name], secrets)
                              if name in hub else []),
             in_hub=name in hub,
-            remote_in=entry["remote"] + (["quiver"] if name in hub and _is_url(hub[name]) else []),
+            remote_in=entry["remote"] + (["quiver"] if name in hub and _is_url(hub[name]) else []),  # "quiver" is the hub's wire name until the apps flip
         )
         inventory.append((row.to_json(), entry["raw"]))
 
@@ -144,7 +144,7 @@ def server_inventory(tool_data: dict, include_hub: bool = False) -> list[tuple[d
     # row with empty harnesses/variants, built from the hub's own entry.
     # Only when every harness was listed — with a target a server merely
     # absent from that one config is not hub-only.
-    handler = get_mcp_handler("quiver")
+    handler = get_mcp_handler("swe")
     for name in sorted(set(hub) - set(seen)) if include_hub else ():
         raw = hub[name]
         canonical = handler.parse(raw) if isinstance(raw, dict) else {}
@@ -165,7 +165,7 @@ def server_inventory(tool_data: dict, include_hub: bool = False) -> list[tuple[d
             variants=[],
             secrets_missing=unresolved_names(raw, secrets),
             in_hub=True,
-            remote_in=["quiver"] if canonical.get("url") else [],
+            remote_in=["quiver"] if canonical.get("url") else [],  # wire name; see above
         )
         inventory.append((row.to_json(), raw))
     inventory.sort(key=lambda pair: pair[0]["name"])

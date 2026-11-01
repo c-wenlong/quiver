@@ -1216,7 +1216,7 @@ class CodexAppServerInjector:
 
         try:
             hello = self._call(server, "initialize", {
-                "clientInfo": {"name": "quiver", "version": __version__},
+                "clientInfo": {"name": "swe", "version": __version__},
             })
             if hello is None or "error" in hello:
                 return None

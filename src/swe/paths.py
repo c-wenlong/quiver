@@ -8,7 +8,7 @@ kinds of thing and they are separated so the whole directory can be a git repo:
   regenerable  cache/, backups/              gitignored
   credentials  secrets/                      gitignored, mode 700
 
-The root sits in ``$HOME`` rather than ``$HOME/.config`` on purpose. Quiver's
+The root sits in ``$HOME`` rather than ``$HOME/.config`` on purpose. SWE's
 job is managing coding harnesses, and 24 of the 28 harness config directories
 on a typical setup are ``$HOME/.<tool>``. Matching the neighbours it manages
 beats matching the XDG spec here.
@@ -312,9 +312,9 @@ def task_states_cache_for(home: Path | None = None) -> Path:
 
 
 def account_homes_for(vendor: str, home: Path | None = None) -> list[Path]:
-    """Each Quiver account home for ``vendor``, sorted for stable order.
+    """Each SWE account home for ``vendor``, sorted for stable order.
 
-    Quiver's extra accounts keep a harness-shaped config dir at
+    SWE's extra accounts keep a harness-shaped config dir at
     ``~/.swe/accounts/<vendor>/<id>/home`` — the same layout the
     default home has, so a harness's sessions there parse exactly like
     its own. Sessions found under one belong to that account, which the

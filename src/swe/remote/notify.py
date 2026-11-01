@@ -23,7 +23,7 @@ for iOS delivery), so two rules hold on everything placed in a body:
 Config lives at ``remote/notify.json`` (0600)::
 
     {"enabled": true, "url": "https://ntfy.example.com",
-     "topic": "quiver-alice", "ntfy_token": null}
+     "topic": "swe-alice", "ntfy_token": null}
 """
 
 from __future__ import annotations
@@ -446,7 +446,7 @@ class Notifier:
             cwd = str(row.get("cwd") or "")
             if cwd:
                 return cwd.rstrip("/").rsplit("/", 1)[-1] or cwd
-        return "Quiver"
+        return "SWE"
 
     def _action(
         self, key: str, rid: str, decision: str, label: str, token: str

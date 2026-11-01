@@ -16,7 +16,7 @@ HOME="$test_home" python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
 Tests that need a home build one themselves with `tempfile` plus the
-`*_for(home)` path helpers in `quiver/paths.py`. A test that would read or
+`*_for(home)` path helpers in `swe/paths.py`. A test that would read or
 write the real `~/.swe`, `~/.claude`, `~/.codex` or any other harness
 directory is a bug; do not add one.
 

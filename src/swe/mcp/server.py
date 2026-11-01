@@ -2,7 +2,7 @@
 """Optional FastMCP server exposing recent AI sessions as an MCP tool.
 
 Requires the optional ``mcp`` dependency: ``pip install -e ".[server]"``
-from a Quiver checkout. Not ``pip install quiver[server]``: the PyPI
+from an SWE checkout. Not ``pip install quiver[server]``: the PyPI
 package named quiver is an unrelated project.
 """
 import sys
@@ -19,7 +19,7 @@ try:
 except ImportError:
     print(
         "The 'mcp' package is required to run the MCP server. From your "
-        "Quiver checkout, run: pip install -e \".[server]\" "
+        "SWE checkout, run: pip install -e \".[server]\" "
         "(the PyPI package named quiver is a different project).",
         file=sys.stderr,
     )

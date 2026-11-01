@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Only the current minor gets fixes. Quiver is a single-binary CLI with no LTS
+Only the current minor gets fixes. SWE is a single-binary CLI with no LTS
 branch — upgrading is `pipx install --force git+https://github.com/c-wenlong/quiver.git` (the PyPI name `quiver` belongs to an unrelated project).
 
 | Version | Supported          |
@@ -30,7 +30,7 @@ We aim to acknowledge reports within 48 hours.
 
 ## Scope notes
 
-Quiver's whole job is reading and rewriting other tools' config files, several
+SWE's whole job is reading and rewriting other tools' config files, several
 of which hold credentials. The sensitive paths:
 
 - `~/.swe/mcp.json` — the MCP hub. It stores credentials as `${NAME}`
@@ -53,6 +53,6 @@ of which hold credentials. The sensitive paths:
 have a copy of the old files; `swe init --migrate` moves them rather than
 deleting them, so treat the leftovers as sensitive too.
 
-Quiver never commits any of this. This repository is the control plane (code);
+SWE never commits any of this. This repository is the control plane (code);
 `~/.swe` is the data plane (state) with its own git history, kept separate
 precisely so machine credentials cannot land here by accident.

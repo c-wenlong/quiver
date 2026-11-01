@@ -146,7 +146,7 @@ MAX(ts)           SEARCH events USING COVERING INDEX events_ts
   backup API (rows still in the WAL included), checks every table's row
   count, renames the copy into place and only then deletes the old files.
   It holds the old file in an exclusive lock throughout, so while another
-  Quiver has it open the move waits for a later launch. A failure leaves the
+  SWE has it open the move waits for a later launch. A failure leaves the
   old rows untouched, opens the old file where it is, and tries again next
   launch. When `data/ledger/ledger.sqlite` exists already the old one is
   never read. `ledger.schema-*.sqlite` archives move at every launch (a

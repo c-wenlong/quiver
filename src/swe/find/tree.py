@@ -85,7 +85,7 @@ def _lands_on(path: Path, target: Path | None, canonical: Path) -> bool:
     One hop is the common case. The chain case is Home Manager: nix links
     ~/.claude/CLAUDE.md into the store, and the store entry is itself an
     out-of-store symlink back to the quiver file. Ownership-wise that IS
-    synced — quiver holds the only real content — so judge by where the
+    synced — swe holds the only real content — so judge by where the
     chain lands, not by the first hop.
     """
     if target == canonical:

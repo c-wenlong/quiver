@@ -3,7 +3,7 @@
 Prices come from LiteLLM's list, refreshed once a day into
 ``~/.swe/cache/web-ledger/litellm.json`` like the Mac app does, with
 the trimmed snapshot shipped beside this module (a copy of the app's
-``Resources/pricing.json``) when the download is unavailable. Quiver's
+``Resources/pricing.json``) when the download is unavailable. SWE's
 supplement adds aliases and tier multipliers; the user's
 ``~/.swe/config/pricing.json`` (USD per million tokens) wins over both.
 The Mac app also keeps every past price; this port prices everything at
@@ -214,7 +214,7 @@ class PricingCatalog:
     def __init__(self, entries: dict[str, ModelRates], supplement: dict | None = None,
                  overrides: set[str] | None = None, quiver: set[str] | None = None):
         supplement = supplement or {}
-        # The keys Quiver's supplement priced, for ``source``.
+        # The keys SWE's supplement priced, for ``source``.
         self.quiver = set(quiver or ())
         self.aliases = {k.lower(): v for k, v in (supplement.get("aliases") or {}).items()
                         if isinstance(v, str)}
@@ -333,7 +333,7 @@ def _refresh_download(home: Path | None, now: float) -> None:
         # against the OS bundle, still verified, as notify and linear do.
         from swe.remote.agent import _urlopen
 
-        req = urllib.request.Request(LITELLM_URL, headers={"User-Agent": "quiver"})
+        req = urllib.request.Request(LITELLM_URL, headers={"User-Agent": "swe"})
         with _urlopen(req, 15) as resp:
             body = resp.read()
         data = json.loads(body)

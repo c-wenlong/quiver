@@ -1,7 +1,7 @@
 # The Area field shares its id and options with bug_report.yml; see the
 # note at the top of that file before renaming either.
 name: Feature request
-description: Suggest an idea for Quiver
+description: Suggest an idea for SWE
 title: "[Feature]: "
 labels: ["enhancement", "needs-triage"]
 body:
@@ -14,7 +14,7 @@ body:
     id: area
     attributes:
       label: Area
-      description: Which part of Quiver would it change?
+      description: Which part of SWE would it change?
       options:
         - Mac app
         - CLI (swe)
@@ -36,7 +36,7 @@ body:
     id: solution
     attributes:
       label: Proposed solution
-      description: How would you like Quiver to behave?
+      description: How would you like SWE to behave?
     validations:
       required: true
 

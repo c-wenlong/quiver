@@ -472,7 +472,7 @@ def _claude_handed_off(path: str) -> str:
 
 
 def _account_homes(vendor: str) -> list[str]:
-    """Each Quiver account home for ``vendor``, sorted for stable order."""
+    """Each SWE account home for ``vendor``, sorted for stable order."""
     return [str(home) for home in account_homes_for(vendor)]
 
 
@@ -499,7 +499,7 @@ def parse_claude():
             return (1, str(data.get("aiTitle") or ""), "auto")
         return None
 
-    # The default home first, then every Quiver account home: each holds
+    # The default home first, then every SWE account home: each holds
     # its own projects tree in the same layout, and sessions from one are
     # tagged with their home so their account can be named and resumed.
     roots = [(os.path.expanduser("~/.claude/projects/"), "")]
@@ -660,7 +660,7 @@ _CODEX_AUTO_TITLE_WINDOW_MS = 60_000
 def _codex_state_db(home: str = "") -> str:
     """Newest ``<home>/state_<n>.sqlite``, or "" when codex has none.
 
-    ``home`` is the codex config dir — ``~/.codex`` by default, a Quiver
+    ``home`` is the codex config dir — ``~/.codex`` by default, an SWE
     account home for an extra profile. The number in the filename is a
     schema version codex bumps on migration and the old file is left
     behind, so the highest one is the live store.
@@ -857,7 +857,7 @@ def parse_codex():
             return ""
         return extract_user_text(payload.get("content"))
 
-    # Like claude, every Quiver account home holds its own dated rollout
+    # Like claude, every SWE account home holds its own dated rollout
     # tree; sessions from one are tagged with it as their account home.
     roots = [(os.path.expanduser("~/.codex/sessions/"), "")]
     roots += [

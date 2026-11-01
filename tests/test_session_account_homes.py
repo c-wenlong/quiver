@@ -1,6 +1,6 @@
-"""Sessions in Quiver's extra account homes are listed too.
+"""Sessions in SWE's extra account homes are listed too.
 
-Quiver's extra Claude and Codex accounts keep a harness-shaped config dir
+SWE's extra Claude and Codex accounts keep a harness-shaped config dir
 at ``~/.swe/accounts/<vendor>/<id>/home`` — a ``projects`` or ``sessions``
 tree inside parses exactly like the default home's. A session found there
 is tagged with its ``account_home`` so the listing can name the account

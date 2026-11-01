@@ -438,7 +438,7 @@
       } else if (l.state === "untracked") {
         out.push(`<div class="gh-note"><span class="gh-note-link tk-still">
           ${ico("question", "gh-muted")}
-          <span class="gh-row-main"><span class="gh-note-title">${esc(Fmt.harnessName(l.harness) || l.harness || "Harness")} started; Quiver can't read its sessions</span>
+          <span class="gh-row-main"><span class="gh-note-title">${esc(Fmt.harnessName(l.harness) || l.harness || "Harness")} started; SWE can't read its sessions</span>
           <span class="caption gh-muted gh-ellipsis">It keeps running under tmux on the hub.</span></span></span></div>`);
       }
       // A "started" launch whose key is already a session row is that
@@ -679,7 +679,7 @@
       }
       if (launch.state === "untracked") {
         return say({ phase: null, started: true,
-          note: "Started. Quiver can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the hub." });
+          note: "Started. SWE can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the hub." });
       }
       if (launch.state === "failed") {
         return say({ phase: null, error: launch.note ? `The session didn't start: ${launch.note}` : "The session didn't start." });

@@ -41,7 +41,7 @@ STALE_AFTER = 3600.0   # a reading older than this is not shown
 TIMEOUT = 8.0          # one request
 WAIT = 10.0            # all of a load's requests together
 DOWNLOAD_LIMIT_FACTOR = 2  # a whole download, in timeouts
-USER_AGENT = "Quiver (hub)"
+USER_AGENT = "SWE (hub)"
 # Google Cloud's incidents.json holds a year of incidents; nothing real
 # comes near this, and a runaway body must not fill the hub's memory.
 MAX_BODY = 32 * 1024 * 1024

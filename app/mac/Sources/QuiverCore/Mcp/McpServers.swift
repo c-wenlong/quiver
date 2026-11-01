@@ -541,7 +541,7 @@ extension SweClient {
         return try await call(args)
     }
 
-    /// Removes `name` from each place; swe reports `quiver` for the hub.
+    /// Removes `name` from each place; swe reports `swe` for the hub.
     public func mcpRemove(name: String, from places: [String]) async throws -> McpRemoveResult {
         try await call(["mcp", "remove", name, "--from=" + places.joined(separator: ","), "--json"])
     }

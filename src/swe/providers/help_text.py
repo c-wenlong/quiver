@@ -31,7 +31,7 @@ def print_providers_help() -> None:
   or a directory with one file per provider named by its slug —
   e.g. {c('cyan', 'DIR/openai')} holding the OpenAI key as a single line.
 
-  {c('bold', 'quiver NEVER stores the key string')} — only the filename pointer
+  {c('bold', 'SWE NEVER stores the key string')} — only the filename pointer
   and provider metadata. Mask format:
     {c('dim', 'long key  (>12 chars):')} {c('bold', 'first8')} + {c('dim', '***')} + {c('bold', 'last4')} + {c('dim', '(len=N)')}
     {c('dim', 'short key (<=12):')}     {c('bold', 'first3')} + {c('dim', '***')} + {c('dim', '(len=N)')}

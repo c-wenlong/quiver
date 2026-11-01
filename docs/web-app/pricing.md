@@ -17,7 +17,7 @@ Files: `src/swe/webapp/pages/pricing.py`, `src/swe/webapp/pages/_brands.py`
   Cache read and Cache write per 1M tokens, the Source mark and the tokens.
   Each card shows four rows and folds the rest behind "Show N more".
 - Source: the biller's logo for a harness-billed row (every event logged its
-  own charge; Grok Bot's charges are Cursor's), LiteLLM's mark, Quiver's icon
+  own charge; Grok Bot's charges are Cursor's), LiteLLM's mark, SWE's icon
   for the supplement, a person for your own price, a gift for a free model,
   and a warning for no price. Hovering it gives the app's sentence on whose
   price the spend uses. A harness-billed row's rates are dimmed.

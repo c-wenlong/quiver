@@ -150,7 +150,7 @@ def _validate_extra_args(harness: str, args: Sequence[str]) -> None:
         short = flag[:2] if not flag.startswith("--") else flag
         managed = _MANAGED_FLAGS.get(harness, set())
         if flag in _UNSAFE_FLAGS or flag in managed or short in managed:
-            raise ValueError(f"Report runner argument is managed by Quiver: {flag}")
+            raise ValueError(f"Report runner argument is managed by SWE: {flag}")
         is_config = harness == "codex" and flag in {"-c", "--config"}
         if is_config and eq:
             _check_codex_config(value)
@@ -162,7 +162,7 @@ def _check_codex_config(override: str) -> None:
     """Refuse a codex ``-c key=value`` that would lift the sandbox."""
     key = override.split("=", 1)[0].strip().strip("\"'").lower()
     if key.startswith(_UNSAFE_CODEX_CONFIG):
-        raise ValueError(f"Report runner argument is managed by Quiver: -c {key}")
+        raise ValueError(f"Report runner argument is managed by SWE: -c {key}")
 
 
 def build_argv(spec: RunnerSpec) -> list[str]:

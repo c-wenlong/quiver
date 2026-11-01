@@ -15,7 +15,7 @@ def codex_resume_args(session_id: str) -> list[str]:
     """``codex resume <uuid>``, or nothing when there is no uuid to pass.
 
     Codex resumes through a subcommand rather than a flag, and its argument
-    is the thread uuid or a thread name. Quiver's session id is the rollout
+    is the thread uuid or a thread name. SWE's session id is the rollout
     file's stem, which is neither, so the uuid has to be lifted out of it: a
     ``--resume rollout-2026-09-09T14-52-42-<uuid>`` never resumed anything.
     """
@@ -51,7 +51,7 @@ LIMITED_RESUME = frozenset(
 )
 
 # The env var each account-aware harness reads for its config home, so a
-# session in a Quiver account home resumes under that account, not the
+# session in an SWE account home resumes under that account, not the
 # default home.
 ACCOUNT_HOME_ENV = {
     "claude": "CLAUDE_CONFIG_DIR",
@@ -60,7 +60,7 @@ ACCOUNT_HOME_ENV = {
 
 
 def account_env(session) -> dict | None:
-    """``{VAR: account_home}`` for a session in a Quiver account home, else None."""
+    """``{VAR: account_home}`` for a session in an SWE account home, else None."""
     variable = ACCOUNT_HOME_ENV.get(session.tool_name)
     if variable and session.account_home:
         return {variable: session.account_home}

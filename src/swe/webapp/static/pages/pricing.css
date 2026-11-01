@@ -53,7 +53,7 @@
 .qp-symbol { display: grid; place-items: center; width: 16px; height: 16px; color: var(--text-secondary); }
 .qp-symbol svg, .qp-warn svg { width: 15px; height: 15px; }
 .qp-symbol.warn { color: var(--warning-text); }
-.qp-quiver { width: 18px; height: 18px; border-radius: 4px; }
+.qp-swe { width: 18px; height: 18px; border-radius: 4px; }
 .qp-expand { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%;
   border-top: 1px solid var(--row-divider); padding: 10px; }
 

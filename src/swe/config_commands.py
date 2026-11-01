@@ -1,4 +1,4 @@
-"""CLI integration for Quiver's general configuration."""
+"""CLI integration for SWE's general configuration."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def _setup_report() -> int:
 
 
 def cmd_config(args: list[str]) -> int:
-    """View and update credential-free Quiver configuration."""
+    """View and update credential-free SWE configuration."""
 
     if not args or args[0] in ("show", "list"):
         _print_json(load_resolved_config())

@@ -294,7 +294,7 @@ class AgentServiceTest(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         path = self.home / ".config/systemd/user/quiver-remote-agent.service"
         text = path.read_text()
-        self.assertIn("Description=Quiver remote agent (swe remote agent)", text)
+        self.assertIn("Description=SWE remote agent (swe remote agent)", text)
         self.assertIn("ExecStart=/home/dev/.local/bin/swe remote agent", text)
         self.assertIn("agent.log", text)
         self.assertFalse(systemd.unit_path(self.home).exists())

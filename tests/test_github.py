@@ -1098,7 +1098,7 @@ class TestCommands(unittest.TestCase):
         return _gh_run(handlers)
 
     def test_sync_writes_catalog_and_emits_summary(self):
-        run = self._sync_run({"octocat": ["quiver"], "org-one": ["sdk"]})
+        run = self._sync_run({"octocat": ["swe"], "org-one": ["sdk"]})
         rc, out, _ = self._run_cli(["sync", "--json"], run=run)
         self.assertEqual(rc, 0)
         data = json.loads(out)["data"]
@@ -1110,7 +1110,7 @@ class TestCommands(unittest.TestCase):
         self.assertGreater(status["synced_at"], 0)
 
     def test_sync_failed_owner_returns_1_and_keeps_rows(self):
-        run = self._sync_run({"octocat": ["quiver"], "org-one": ["sdk"]})
+        run = self._sync_run({"octocat": ["swe"], "org-one": ["sdk"]})
         self._run_cli(["sync"], run=run)
         handlers = {
             "user/orgs": _Proc(stdout="org-one\n"),
@@ -1140,7 +1140,7 @@ class TestCommands(unittest.TestCase):
         self.assertIn("brew install gh", out)
 
     def test_sync_account_switch_wipes_previous_rows(self):
-        run = self._sync_run({"octocat": ["quiver"]}, orgs="")
+        run = self._sync_run({"octocat": ["swe"]}, orgs="")
         self._run_cli(["sync"], run=run)
         other = gh.GhEnv(installed=True, authenticated=True,
                          login="someone-else")
@@ -1168,7 +1168,7 @@ class TestCommands(unittest.TestCase):
 
     def test_sync_nonlist_response_counts_as_failure(self):
         self._run_cli(["sync"], run=self._sync_run(
-            {"octocat": ["quiver"], "org-one": ["sdk"]}))
+            {"octocat": ["swe"], "org-one": ["sdk"]}))
         handlers = {
             "user/orgs": _Proc(stdout="org-one\n"),
             # gh exits 0 but prints junk — must not prune the old rows.

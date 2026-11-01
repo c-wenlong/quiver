@@ -1,4 +1,4 @@
-/* Quiver web app: the Mac app's pages, served by the hub at its root.
+/* SWE web app: the Mac app's pages, served by the hub at its root.
  * No build step, no deps. Data comes from /v1/app/*. The hub owner's own
  * tailnet devices need no pairing (the hub knows them from Tailscale);
  * any other browser uses the device credential its #pair= link minted,
@@ -258,7 +258,7 @@ function pairMeta() {
   else if ((m = ua.match(/Windows NT ([\d.]+)/))) os = "Windows NT " + m[1];
   // Desktop-mode iPadOS: the UA is all lies; the touchscreen isn't.
   if (kind === "ipad" && !/iPad/.test(ua)) os = "iPadOS";
-  return { kind, client: "Quiver Web", os };
+  return { kind, client: "SWE Web", os };
 }
 
 /* One pair flow at a time: a new request or navigation bumps the

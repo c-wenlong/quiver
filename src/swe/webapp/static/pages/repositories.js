@@ -1580,7 +1580,7 @@ const PrFilter = (() => {
         return;
       }
       if (launch.state === "untracked") {
-        return say({ phase: null, started: true, note: "Started. Quiver can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the hub." });
+        return say({ phase: null, started: true, note: "Started. SWE can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the hub." });
       }
       if (launch.state === "failed") {
         return say({ phase: null, error: launch.note ? `The session didn't start: ${launch.note}` : "The session didn't start." });

@@ -56,7 +56,7 @@ def _login_rows(name: str, command: str, how: str) -> dict[str, dict]:
             "kind": "relogin",
             "title": f"Sign in to {name} again",
             "summary": f"{name}'s stored login was rejected",
-            "steps": [f"{how} to renew the login Quiver reads, then refresh."],
+            "steps": [f"{how} to renew the login SWE reads, then refresh."],
             "command": command,
         },
     }
@@ -84,7 +84,7 @@ REMEDIES: dict[str, dict[str, dict]] = {
             "title": "Refresh Cursor's session",
             "summary": "Cursor's stored login is stale",
             "steps": [
-                "Run `cursor-agent` once — it renews the login Quiver reads.",
+                "Run `cursor-agent` once — it renews the login SWE reads.",
                 "If that does not help, sign in again in the Cursor app.",
             ],
             "command": "cursor-agent status",

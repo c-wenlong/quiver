@@ -149,7 +149,7 @@ class McpAddRemoveTest(unittest.TestCase):
         self.run_mcp("add", "s", "--to=claude", "--", "c")
         r = self.run_mcp("remove", "s", "--from=claude,quiver", "--json")
         doc = json.loads(r.stdout)
-        self.assertEqual(sorted(doc["data"]["removed"]), ["claude", "quiver"])
+        self.assertEqual(sorted(doc["data"]["removed"]), ["claude", "swe"])
         self.assertNotIn("s", self.hub())
         self.assertNotIn("s", self.claude())
 
@@ -250,7 +250,7 @@ class McpAddRemoveTest(unittest.TestCase):
     def test_plain_output_paths(self):
         self.run_mcp("add", "s", "--to=claude", "--", "c")
         r = self.run_mcp("remove", "s", "--from=quiver")
-        self.assertIn("Removed s from: quiver", r.stdout)
+        self.assertIn("Removed s from: swe", r.stdout)
         r = self.run_mcp("remove", "s", "--from=codex")
         self.assertIn("not in: codex", r.stdout)
         # Adding again while claude still holds it needs --force.

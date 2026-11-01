@@ -1,8 +1,8 @@
-"""The hub's MCP servers merged into Quiver's extra account homes (#888).
+"""The hub's MCP servers merged into SWE's extra account homes (#888).
 
 ``accounts.sync.mcp`` in config.json, off by default. When on, ``swe init``
 writes each server in ``~/.swe/mcp.json`` into every extra account,
-rendered the way ``swe mcp sync quiver`` renders it for the default home
+rendered the way ``swe mcp sync swe`` renders it for the default home
 (secrets resolved, shared servers as the gateway URL):
 
 - Claude: the top-level ``mcpServers`` member of ``<home>/.claude.json``.
@@ -149,7 +149,7 @@ def _digest(key: bytes | None, entry) -> str | None:
 def hub_entries(home: Path, fmt: str) -> tuple[dict[str, dict], dict[str, str]]:
     """``({name: entry in fmt}, {name: why skipped})`` from the hub.
 
-    The same rendering ``swe mcp sync quiver`` uses for the default home.
+    The same rendering ``swe mcp sync swe`` uses for the default home.
     Raises AccountSyncUnavailable when mcp.json can't be read, which must
     not read as "no servers" (that would remove every synced one).
     """
