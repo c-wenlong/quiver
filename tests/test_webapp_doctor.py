@@ -85,7 +85,7 @@ class TestReport(_TempHome, unittest.TestCase):
         self.assertIsInstance(report["launchable"], list)
         want = doctor_report(self.home).to_json()
         self.assertEqual({k: v for k, v in report.items()
-                          if k not in ("machine", "home", "launchable")}, want)
+                          if k not in ("machine", "home", "launchable", "fixable")}, want)
         self.assertEqual(report["findings"][0]["check"], "setup.hub")
         self.assertEqual(report["findings"][0]["action"], "setup")
         self.assertTrue(report["ok"])
@@ -294,6 +294,40 @@ class TestRun(_TempHome, unittest.TestCase):
             self.assertEqual(self.fix(finding)["error"], "cannot read .linkignore")
 
 
+class TestFixAll(_TempHome, unittest.TestCase):
+    """Fix all: swe doctor --fix's batch, one at a time with the Runs."""
+
+    def test_fix_all_runs_the_batch_and_rereads(self):
+        report = doctor_page.get(self.ctx, {})
+        self.assertEqual(report["fixable"], 1)
+        reply = doctor_page.post(self.ctx, "fix-all", {})
+        self.assertEqual(reply["ran"], "fix-all")
+        self.assertEqual([s["action"] for s in reply["result"]["ran"]][:1], ["setup"])
+        self.assertIn({"check": "setup.hub", "message": report["findings"][0]["message"]},
+                      reply["result"]["fixed"])
+        self.assertNotIn("setup.hub", self.checks(reply["report"]))
+
+    def test_fix_all_never_runs_an_install(self):
+        report = DoctorReport([DoctorFinding(
+            "off-path", "error", "codex", "swe install codex --via=npm",
+            harness="codex", action="install", via="npm")])
+        with patch("quiver.harness.commands.doctor_report", return_value=report), \
+                patch("quiver.harness.commands.install_harness") as install:
+            reply = doctor_page.post(self.ctx, "fix-all", {})
+        install.assert_not_called()
+        self.assertEqual(reply["result"]["ran"], [])
+        self.assertEqual(reply["result"]["skipped"][0]["actions"], ["install"])
+
+    def test_fix_all_waits_for_a_run(self):
+        doctor_page._RUN_LOCK.acquire()
+        try:
+            with self.assertRaises(PageError) as caught:
+                doctor_page.post(self.ctx, "fix-all", {})
+            self.assertEqual(caught.exception.status, 409)
+        finally:
+            doctor_page._RUN_LOCK.release()
+
+
 class TestInstall(_TempHome, unittest.TestCase):
     """An off-PATH harness gets Run: swe install <name> --via=<method>."""
 
@@ -479,6 +513,27 @@ class TestFindingIds(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         first, second = json.loads(done.stdout)
         self.assertNotEqual(first, second)
+
+    def test_the_fix_all_summary_says_what_is_left(self):
+        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/doctor.js"
+        body = ("doctorPage.data = {machine: 'box', fixable: 2};\n"
+                "doctorPage.fixAll = {ran: [{action: 'setup', fix: 'swe setup --apply', error: null},"
+                " {action: 'init', fix: 'swe init', error: '<disk> full'}],"
+                " fixed: [{check: 'setup.hub', message: 'm'}],"
+                " not_cleared: [{check: 'setup.registry', message: 'r'}], skipped: []};\n"
+                "const done = doctorFixAllCard();\n"
+                "doctorPage.fixAll = null; doctorPage.confirmingFixAll = true;\n"
+                "process.stdout.write(JSON.stringify([done, doctorFixAllCard()]));\n")
+        stubs = ("function registerPage() {}\n"
+                 "const esc = (s) => String(s == null ? '' : s).replace(/</g, '&lt;');\n")
+        done = subprocess.run(["node", "-e", stubs + page.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        summary, confirm = json.loads(done.stdout)
+        self.assertIn("Fixed 1 finding, 1 fix failed; 1 left for you below.", summary)
+        self.assertIn("&lt;disk&gt; full".replace("&gt;", ">"), summary)
+        self.assertIn("the 2 local fixes in order", confirm)
+        self.assertIn('data-doctor="fixall-go"', confirm)
 
 
 if __name__ == "__main__":

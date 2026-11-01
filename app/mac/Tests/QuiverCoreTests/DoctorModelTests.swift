@@ -152,6 +152,76 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         #expect(report.findings.map(\.action) == [.discover, nil, nil])
     }
 
+    /// A drop or a broken link names its action only on a remedy; the
+    /// row still gets Run, and only the batch-safe ones count for Fix all.
+    @Test func remedyActionsDecodeAndOnlyLocalRepairsAreBatch() throws {
+        let json = Data(#"""
+        {"schema": 1, "data": {"ok": true, "findings": [
+          {"check": "drift.symlinks", "severity": "warning", "message": "broken", "fix": "rm x",
+           "remedies": [{"kind": "steps", "title": "t"},
+                        {"kind": "action", "action": "dangling-link", "path": "/x"}]},
+          {"check": "plugins.unregistered", "severity": "warning", "message": "mk",
+           "fix": "claude plugin marketplace add /m", "action": "plugin-fix"},
+          {"check": "mcp.server", "severity": "warning", "message": "m", "fix": "f",
+           "action": "mcp-sync"},
+          {"check": "x", "severity": "warning", "message": "y", "fix": null,
+           "remedies": [{"kind": "action", "action": "teleport"}]}
+        ]}}
+        """#.utf8)
+        let report = try JSONDecoder().decode(Envelope<DoctorReport>.self, from: json).data
+        #expect(report.findings.map(\.action) == [.danglingLink, .pluginFix, .mcpSync, nil])
+        #expect(DoctorModel.batchCount(report) == 1)
+        #expect(DoctorReport.Finding.Action.allCases.filter(\.isBatch)
+                == [.setup, .`init`, .discover, .pluginFix])
+    }
+
+    @Test func aNewActionRunsThroughSweDoctorFix() async throws {
+        let fixed = Data(#"""
+        {"schema": 1, "data": {"dry_run": false, "ran": [{"action": "mcp-sync", "fix": "f",
+          "findings": [], "error": "hub copy is gone"}], "fixed": [], "still_failing": [],
+          "skipped": [], "not_cleared": [], "fixable_left": []}}
+        """#.utf8)
+        let runner = ScriptedRunner([
+            (["doctor", "--fix=mcp.server"], .init(status: 1, stdout: fixed, stderr: "")),
+            (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        let finding = DoctorReport.Finding(check: "mcp.server", severity: .warning,
+                                           message: "claude: tool: binary not found",
+                                           fix: "f", action: .mcpSync)
+        await model.run(finding)
+        #expect(runner.calls.contains(["doctor", "--fix=mcp.server",
+                                       "--message=claude: tool: binary not found",
+                                       "--action=mcp-sync", "--json"]))
+        #expect(model.runErrors[finding.id] == "hub copy is gone")
+        #expect(runner.calls.last == ["doctor", "--json"])
+    }
+
+    @Test func fixAllRunsTheBatchAndRereads() async throws {
+        let result = Data(#"""
+        {"schema": 1, "data": {"dry_run": false,
+          "ran": [{"action": "setup", "fix": "swe setup --apply", "findings": [], "error": null},
+                  {"action": "init", "fix": "swe init", "findings": [], "error": "disk full"}],
+          "fixed": [{"check": "setup.hub", "message": "m"}], "still_failing": [],
+          "skipped": [{"check": "off-path", "message": "codex", "actions": ["install"]}],
+          "not_cleared": [], "fixable_left": []}}
+        """#.utf8)
+        let runner = ScriptedRunner([
+            (["doctor", "--fix"], .init(status: 1, stdout: result, stderr: "")),
+            (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        await model.fixAll()
+        #expect(runner.calls.first == ["doctor", "--fix", "--json"])
+        #expect(runner.calls.last == ["doctor", "--json"])
+        #expect(model.fixAllResult?.fixed.count == 1)
+        #expect(model.fixAllResult?.firstError == "disk full")
+        #expect(model.fixAllResult?.skipped.count == 1)
+        #expect(model.running.isEmpty)
+        model.dismissFixAll()
+        #expect(model.fixAllResult == nil)
+    }
+
     @Test func runCallsTheActionsSweCommand() async throws {
         let runner = ScriptedRunner([
             (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
