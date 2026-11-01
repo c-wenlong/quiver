@@ -10,6 +10,8 @@ struct OtherMachinesGroup: View {
     /// The hub's pin, name and fork flag for a key, with the choices made
     /// here since; nil offers no hub actions.
     var meta: (String) -> HubSessionMeta?
+    /// Whether a key's row shows the unread dot.
+    var unread: (String) -> Bool = { _ in false }
     var open: (OtherMachines.Row) -> Void
     var act: (SessionMenuAction, OtherMachines.Row) -> Void
     /// Rows a machine shows before folding behind a Show more row.
@@ -39,7 +41,7 @@ struct OtherMachinesGroup: View {
                 Divider().overlay(Theme.border)
                 let isOpen = opened.contains(machine.id)
                 ForEach(RowFold.visible(machine.rows, limit: foldLimit, expanded: isOpen)) { row in
-                    OtherMachineRow(row: row, meta: meta(row.key),
+                    OtherMachineRow(row: row, meta: meta(row.key), unread: unread(row.key),
                                     open: { open(row) }, act: { act($0, row) })
                     Divider().overlay(Theme.border)
                 }
@@ -79,6 +81,7 @@ struct OtherMachinesGroup: View {
 private struct OtherMachineRow: View {
     var row: OtherMachines.Row
     var meta: HubSessionMeta?
+    var unread = false
     var open: () -> Void
     var act: (SessionMenuAction) -> Void
     @State private var hovering = false
@@ -99,6 +102,7 @@ private struct OtherMachineRow: View {
                     .hoverTip(HarnessMark(harness).name)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
+                        if unread { UnreadDot() }
                         Text(title)
                             .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                         if meta?.pinned == true {

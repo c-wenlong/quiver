@@ -493,6 +493,17 @@ struct HubClient: Sendable {
         try await send(request("POST", "/v1/sessions/\(Self.encodeKey(key))/pin", body: ["pinned": pinned]))
     }
 
+    /// `POST /v1/sessions/{key}/read {}`: moves this device's last-read
+    /// cursor for the session to now, stamped by the hub's own clock
+    /// rather than the phone's. Answers the cursor stored.
+    func markRead(_ key: String) async throws -> ReadAck {
+        try await send(markReadRequest(key))
+    }
+
+    func markReadRequest(_ key: String) -> URLRequest {
+        request("POST", "/v1/sessions/\(Self.encodeKey(key))/read", body: [:])
+    }
+
     /// An empty title clears the name, so the harness's own shows again.
     func rename(_ key: String, title: String) async throws -> SessionMeta {
         try await send(request("POST", "/v1/sessions/\(Self.encodeKey(key))/title", body: ["title": title]))
