@@ -80,8 +80,12 @@ previews and settings, the chosen kind stored in `desktopWidgetTab`).
 
 The sidebar's first row is the machine switcher (`MachineSwitcherButton`,
 #681): "This Mac" shows the native pages, and another machine's hub
-replaces the panel with `HubWebPage`, a `WKWebView` on that hub's web app
-at `/`. `SWECore`'s `MachineSwitcher` keeps the list and the pick in
+takes over the whole window with `HubWebPage`, a `WKWebView` on that
+hub's web app at `/` — the native sidebar included, since the web app
+brings its own. Its title-bar strip holds the machine menu
+(`StripSwitcher`, an `NSButton` like the sidebar toggle: a SwiftUI
+button in that row never fires), the way back to This Mac. `SWECore`'s
+`MachineSwitcher` keeps the list and the pick in
 the app's preferences (`remoteHubs`, `remoteHubAgent`,
 `remoteHubSelected`): the hub `swe remote agent --status --json` names
 (this Mac's `agent.json`, refreshed when the window opens) plus hubs added
