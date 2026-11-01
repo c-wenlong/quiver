@@ -283,6 +283,59 @@ struct YoloField: View {
     }
 }
 
+/// The Provider row a launch sheet shows next to its Model row: a menu
+/// of Harness default (sends nothing) and each provider the harness
+/// takes whose key is set on the machine. The row hides on a machine
+/// row too old to carry `providers_at_launch` and for a harness with
+/// none on offer. `selection` is a slug, nil for the harness default;
+/// the sheet clears it when a harness or machine change drops the slug.
+struct ProviderField: View {
+    let machine: Machine
+    let harness: String?
+    @Binding var selection: String?
+    /// A launch in flight locks the menu with the sheet's other inputs.
+    var disabled = false
+
+    private var label: String {
+        selection.map { NewSessionOptions.providerName($0, on: machine) } ?? "Harness default"
+    }
+
+    var body: some View {
+        if NewSessionOptions.showsProviderField(harness, on: machine) {
+            GroupLabel(text: "Provider")
+            Menu {
+                Picker("Provider", selection: $selection) {
+                    Text("Harness default").tag(String?.none)
+                    ForEach(NewSessionOptions.providers(harness, on: machine), id: \.self) { slug in
+                        Text(NewSessionOptions.providerName(slug, on: machine)).tag(String?.some(slug))
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                HStack(spacing: 8) {
+                    Text(label)
+                        .font(Theme.body)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(Theme.font(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.textMuted)
+                }
+                .padding(.horizontal, 12)
+                .scaledMinHeight(Theme.fieldHeight)
+                .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+                .contentShape(.rect)
+            }
+            .disabled(disabled)
+            .accessibilityLabel("Provider")
+            .accessibilityValue(label)
+            .accessibilityIdentifier("provider-menu")
+        }
+    }
+}
+
 /// A folder path as an Identifiable, for card lists of folders.
 struct FolderPath: Identifiable {
     let path: String
