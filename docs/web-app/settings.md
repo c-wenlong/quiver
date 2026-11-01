@@ -82,7 +82,7 @@ badge where its control would be.
 ### Providers › Inference
 
 The Mac app's Keys and plans table, read from the API keys file
-(`quiver.providers.keyfile`, a port of the app's `APIKeysFile`): every
+(`swe.providers.keyfile`, a port of the app's `APIKeysFile`): every
 `export` in file order under its `# Provider` heading ("Other" before the
 first one), the variable, the value masked as the app's `APIKeyMask` does
 (`sk-ant-••••••••WXYZ`: the vendor prefix up to a dash in the first eight
@@ -229,7 +229,7 @@ starts a pass when the index stays on — a 409 `busy` while a pass holds
 bad_enabled` when `enabled` isn't a boolean.
 
 `POST /v1/app/settings/sync`, body `{}`: Integrations › GitHub › Sync
-now, `swe gh sync --json` in process (`quiver.github.manage.sync_catalog`)
+now, `swe gh sync --json` in process (`swe.github.manage.sync_catalog`)
 with the hub's `gh` login, into the hub's catalog. It probes `gh` afresh
 first. Answers `{"github": {"env", "catalog"}, "failed": [{"owner",
 "error"}]}`: the GitHub card read again, and the owners whose listing

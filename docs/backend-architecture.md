@@ -1,6 +1,6 @@
 # Backend architecture
 
-How `src/quiver` is organised: the controller / service / model split inside
+How `src/swe` is organised: the controller / service / model split inside
 each domain package, the bottom layer, and where every `--json` payload is
 defined. For the data model itself (stores, caches, schemas) see
 [docs/data-model.md](data-model.md); for the app's view of the JSON shapes
@@ -59,7 +59,7 @@ An example per layer, from the harness domain:
 The remaining packages sit outside that convention:
 
 - `history/`: a compatibility shim that re-exports `Session` and
-  `get_all_sessions`; new code imports `quiver.sessions`.
+  `get_all_sessions`; new code imports `swe.sessions`.
 - `ledger/`: the usage ledger (scan, SQLite store, pricing, Overview
   figures), a port of `QuiverCore/Ledger`. `models.py` holds
   `UsageEvent` and `LedgerRecord`.
@@ -86,7 +86,7 @@ The same packages by responsibility, with the ownership rules that go with them 
 | `reports/` | daily/weekly session reports: transcripts, triage, batching, model runners, follow-up ledger |
 | `providers/` | LLM provider metadata and API key file lookup |
 | `setup/` | interactive onboarding wizard (the one logic module allowed to print) |
-| `history/` | backward-compatible re-exports; prefer `quiver.sessions` |
+| `history/` | backward-compatible re-exports; prefer `swe.sessions` |
 | `ledger/` | the web app's usage ledger: a Python port of the Mac app's `QuiverCore/Ledger` (log parsers, dedup store, LiteLLM pricing, Overview figures). Keep its rules in step with the Swift ones |
 | `webapp/` | the web app the hub serves at `/` (`static/`; old `/app/` links redirect there) and its page data at `/v1/app/*` (`api.py`, `pages/`); see [web-app.md](web-app.md) |
 | `remote/` | `swe remote`: the hub (`hub.py`, every `/v1/*` route), the satellite agent, pairing, devices and the session tailers; see [remote-control.md](remote-control.md) |
@@ -176,7 +176,7 @@ every `--json` command emits exactly one `{schema, data}` document.
 
 ### Adding, removing or renaming a command
 
-The `swe autocomplete` feature relies on hardcoded tables in `src/quiver/completion.py`: `_PRIMARY_COMMANDS` (top-level candidates), `_TOOL_TARGET_COMMANDS` (commands whose first positional is a tool name), `_COMMAND_FLAGS` (per-command or `"<domain> <sub>"` flag lists), `_SUBCOMMANDS` (second-level candidates), `_NESTED_FLAGS` (cmd → sub → `_COMMAND_FLAGS` key), `_NESTED_TOOL_TARGETS` / `_NESTED_MULTI_TOOL` / `_NESTED_PROVIDER_TARGETS` (subcommand positional completion), and `_NESTED_SUBCOMMANDS` (third level, e.g. `report followup`). `swe doctor` warns when these drift from `cli.py`'s `COMMANDS` via `check_completion_drift` in `harness/drift.py`.
+The `swe autocomplete` feature relies on hardcoded tables in `src/swe/completion.py`: `_PRIMARY_COMMANDS` (top-level candidates), `_TOOL_TARGET_COMMANDS` (commands whose first positional is a tool name), `_COMMAND_FLAGS` (per-command or `"<domain> <sub>"` flag lists), `_SUBCOMMANDS` (second-level candidates), `_NESTED_FLAGS` (cmd → sub → `_COMMAND_FLAGS` key), `_NESTED_TOOL_TARGETS` / `_NESTED_MULTI_TOOL` / `_NESTED_PROVIDER_TARGETS` (subcommand positional completion), and `_NESTED_SUBCOMMANDS` (third level, e.g. `report followup`). `swe doctor` warns when these drift from `cli.py`'s `COMMANDS` via `check_completion_drift` in `harness/drift.py`.
 
 **When you add a new command to `COMMANDS` in `cli.py`:**
 
@@ -224,7 +224,7 @@ The `swe autocomplete` feature relies on hardcoded tables in `src/quiver/complet
 
 ## Gotchas
 
-Non-obvious decisions and traps in `src/quiver`, recorded so they are not re-learned. Read the entry for a module before changing it. The macOS app's entries are in [app-architecture.md](app-architecture.md#gotchas).
+Non-obvious decisions and traps in `src/swe`, recorded so they are not re-learned. Read the entry for a module before changing it. The macOS app's entries are in [app-architecture.md](app-architecture.md#gotchas).
 
 - **Session engines** (`sessions/engines/`): three family engines (SQLite, JSONL, JSON) with declarative `*ParserConfig` dataclasses. Adapters in `parsers.py` are thin configs over these engines.
 - **Title provenance** (`Session.title_source`): "" = first user prompt, "rename" = user-set name, "auto" = harness-generated. `swe session` renders "rename" bright italic and everything else dim. Only harnesses with an on-disk discriminator ever emit "rename": Claude (`custom-title` event in the transcript tail), Copilot (`user_named:` in `session-state/<id>/workspace.yaml`), Grok (`summary.json` `title_is_manual`), Droid (`session_start.isSessionTitleManuallySet`), Pi (`session_info` event), Devin (an inline `/rename <name>` or `/rename-chat <name>` in `prompt_history` whose argument equals the title; a name typed into the interactive rename prompt is never recorded, so that session reads as auto), Codex (inferred, see below). opencode, Forge, Continue and Cursor write a rename into the same field as their auto-titler with no marker, so they can never be told apart; do not invent heuristics for them. Cline, Freebuff and Gemini have no rename at all.
@@ -257,4 +257,4 @@ Non-obvious decisions and traps in `src/quiver`, recorded so they are not re-lea
 - **Interactive alias collision** (`harness/commands.py:_edit_interactive`): when the user types `save` with a colliding alias, the loop shows a yellow warning and continues instead of exiting. The collision check runs inside the save handler (not in `_apply_edits`) so the user stays in the editor and can fix it. `_apply_edits` retains its own check as a safety net for the flag-based path.
 - **Table renderer** (`table.py`): declarative, pluggable component replacing hand-rolled `f"{...:<{w}}"` string interpolation. Three width-fit modes: `fixed` (ignore content), `content` (grow to longest cell), `bounded` (grow to longest cell up to `max_width`). Six built-in column kinds: `text` (plain string, strips ANSI on input to prevent mid-escape slicing across column gaps), `number` (right-aligned int, optional `thousands=True`), `count_threshold` (right-aligned int, green when above `threshold`), `list` (CSV-joined, color via `attrs["color"]`, uses `cpad` for color+pad consistency), `timestamp` (column-level `formatter` callable), and `preformatted` (cells ship their own ANSI; the table pads them to the settled column width, or `right=True` pads on the left — `trust_cell_width=True` is the verbatim opt-out for cells that pre-pad themselves). Third-party kinds register via `@register_kind("name")`. Header is dim ANSI; separator is `─` repeated; both share the table's total visible width via `visible_len`. Contract tests live in `tests/test_table.py`.
 - **cmd_check -> Table migration pattern**: `cmd_check` migrated after `cmd_list` validated that Table scales beyond the 9-column / mixed-kind case. cmd_check is intentionally simpler: 4 columns (STATUS | NAME | ALIASES | INFO), all `kind` values are `preformatted`+`trust_cell_width` or `text`/`list`. Status column is `kind="preformatted"` width=2, glyph is `c("green", "✓") + " "` (or red/yellow for the footer marker); info column is `kind="preformatted"` with explicit pre-pad `c("dim", text) + " " * max(0, INFO_COL_WIDTH - visible_len(text))` so variable-width version strings keep the grid intact. The off-PATH diagnostic block stays as plain print() BELOW the table because each orphan has a multi-line fix recipe that doesn't fit a single grid row. The heal side-effect (`live_version -> tools[name]["version"]`) MUST run BEFORE the table row is constructed so the displayed version reflects what was just probed and saved. When migrating similar cmd_* handlers, follow this pattern: pre-compute everything outside the loop, build the Table once with columns pinned, then `table.add_row(...)` per item, then `table.render()`.
-- **Web ledger reads must end their transaction** (`src/quiver/ledger/store.py`, `src/quiver/webapp/api.py`): the pages share one connection while the Cursor feed round writes on a second. Python's sqlite3 opens an implicit transaction before any DML, temp tables included, so a read that writes first (`_load_thresholds`) stays inside it and pins a WAL snapshot. After the other connection commits, this connection's next write fails at once with `database is locked` (SQLite never retries a stale snapshot), and with the transaction left open every later scan fails until restart. Commit after such writes, and roll back when a scan raises `sqlite3.Error`.
+- **Web ledger reads must end their transaction** (`src/swe/ledger/store.py`, `src/swe/webapp/api.py`): the pages share one connection while the Cursor feed round writes on a second. Python's sqlite3 opens an implicit transaction before any DML, temp tables included, so a read that writes first (`_load_thresholds`) stays inside it and pins a WAL snapshot. After the other connection commits, this connection's next write fails at once with `database is locked` (SQLite never retries a stale snapshot), and with the transaction left open every later scan fails until restart. Commit after such writes, and roll back when a scan raises `sqlite3.Error`.

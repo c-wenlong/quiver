@@ -45,7 +45,7 @@ Always run it against the throwaway `HOME` above. Integration tests launch
 Conventions that keep the suite working:
 
 - Session parser tests mock `os.path.expanduser` in
-  `quiver.sessions.parsers` to redirect `~/.tool/` paths into temp dirs.
+  `swe.sessions.parsers` to redirect `~/.tool/` paths into temp dirs.
 - Engine tests use `expand_path()`, which expands only `~` prefixes.
 - Completion tests mock `load_registry` for tool/tag completion and
   `SHELL_CONFIGS` for script generation.
@@ -54,7 +54,7 @@ Conventions that keep the suite working:
 - A test's temp folder comes from `temp_dir(self)` in `tests/_tempdir.py` (or `self.enterContext(tempfile.TemporaryDirectory())`), never a bare `tempfile.mkdtemp()`, which leaves the folder behind on every run.
 - The syntax floor is Python 3.11: no PEP 701 nested f-strings.
   `tests/test_syntax_floor.py` enforces it.
-- Width-asserting tests patch `quiver.console.terminal_width`; nothing else
+- Width-asserting tests patch `swe.console.terminal_width`; nothing else
   pins terminal size under unittest.
 - A test module's `if __name__ == "__main__": unittest.main()` goes at the
   very end of the file. Anything below it is skipped when the file is run
@@ -68,16 +68,16 @@ Python floor is 3.11 and CI runs the endpoints, 3.11 and 3.13. No version-gated 
 
 **Every e2e feature must be verified against the installed `swe` binary, not just unit tests.**
 
-The `swe` command is a pip-installed console entry point (declared in `[project.scripts]` in `pyproject.toml`). New Python files added to `src/quiver/` are **not** available to the installed `swe` until you reinstall. Unit tests with `PYTHONPATH=src` can pass while the installed binary silently fails because it doesn't see the new module.
+The `swe` command is a pip-installed console entry point (declared in `[project.scripts]` in `pyproject.toml`). New Python files added to `src/swe/` are **not** available to the installed `swe` until you reinstall. Unit tests with `PYTHONPATH=src` can pass while the installed binary silently fails because it doesn't see the new module.
 
 Required steps for any feature that adds files or changes `cmd_*` handlers:
 
 1. **Write tests** and run `HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_*.py'`.
 2. **Reinstall the package** with `pip install -e .` (or `pipx install --force git+...` for pipx installs). With an editable install new files are picked up automatically, but a stale non-editable install won't see them until you reinstall.
-3. **Verify e2e** by running the actual `swe <command>` against a temp HOME, not just `PYTHONPATH=src python -m quiver.cli <command>`. CI does the same on every PR (the editable install on Linux), and `release.yml` repeats it on a tag for a built wheel in a clean venv on Linux and macOS, the Nix derivation's output and the bundled app, each against a `mktemp -d` home. The native-only checks that used to sit on the PR path — the macOS install smoke test, the app unit tests and the Nix build — run nightly, on merge_group and on demand in `native.yml`. Read `.github/workflows/ci.yml` and `release.yml` for the exact commands rather than assuming; that list gets trimmed from time to time.
+3. **Verify e2e** by running the actual `swe <command>` against a temp HOME, not just `PYTHONPATH=src python -m swe.cli <command>`. CI does the same on every PR (the editable install on Linux), and `release.yml` repeats it on a tag for a built wheel in a clean venv on Linux and macOS, the Nix derivation's output and the bundled app, each against a `mktemp -d` home. The native-only checks that used to sit on the PR path — the macOS install smoke test, the app unit tests and the Nix build — run nightly, on merge_group and on demand in `native.yml`. Read `.github/workflows/ci.yml` and `release.yml` for the exact commands rather than assuming; that list gets trimmed from time to time.
 4. **Open a PR**, one concern per PR, with a clear description of what changed and why.
 
-Common pitfall: if a feature works with `PYTHONPATH=src python -m quiver.cli` but not with the installed `swe` command, the installed copy is stale (likely a non-editable install). Re-run `pip install -e .` to switch to editable mode and sync with the source tree.
+Common pitfall: if a feature works with `PYTHONPATH=src python -m swe.cli` but not with the installed `swe` command, the installed copy is stale (likely a non-editable install). Re-run `pip install -e .` to switch to editable mode and sync with the source tree.
 
 ### Web app tests
 
@@ -86,7 +86,7 @@ through a real hub on a free port (`HubBase` in `tests/test_remote_hub.py`).
 Give that hub `WebApp(home, download_prices=False)` so no test downloads
 the LiteLLM price list.
 
-Behaviour in `src/quiver/webapp/static/` is tested by running the page
+Behaviour in `src/swe/webapp/static/` is tested by running the page
 scripts under `node` with the browser stubbed (`STUB` in
 `tests/test_webapp_launch_sheets.py` is the complete prelude). Those tests
 skip when `node` is not on PATH, so a machine without it silently runs
@@ -163,7 +163,7 @@ fixture session. To refresh or add one:
 3. Run `HOME=$test_home swe <command> --json > app/mac/Tests/QuiverCoreTests/Fixtures/<name>.json`.
 4. Where a command needs a live harness CLI or a provider (`--fix`,
    plugin actions, `swe list --usage` rate readings), build the fixture to
-   the shape `src/quiver` emits instead, and say so in the test file's
+   the shape `src/swe` emits instead, and say so in the test file's
    header comment, as `SweContractTests.swift` does.
 
 `SweContractTests` decodes every fixture through the same `SweClient` /

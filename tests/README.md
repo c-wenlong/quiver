@@ -13,8 +13,8 @@ add `PYTHONPATH=src`, or the editable install imports the main checkout's
 code instead.
 
 Files are named after the package they test: `test_harness_*.py` covers
-`quiver.harness`, `test_remote_*.py` the hub and satellite in
-`quiver.remote`, `test_webapp_*.py` the web app's pages, and so on.
+`swe.harness`, `test_remote_*.py` the hub and satellite in
+`swe.remote`, `test_webapp_*.py` the web app's pages, and so on.
 [docs/testing.md](../docs/testing.md) has the conventions (mocking
 harness homes, node-run web app scripts, width-asserting tests) and the
 coverage commands; [docs/COVERAGE.md](../docs/COVERAGE.md) has the latest

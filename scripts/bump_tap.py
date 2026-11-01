@@ -51,7 +51,7 @@ def bump_formula(text: str, version: str, sha256: str) -> str:
     """The formula spells the version out in its url, so rewrite the url."""
     text = _sub_once(
         r"(/releases/download/)v[^/\"]+/quiver-[^/\"]+-py3-none-any\.whl",
-        rf"\g<1>v{version}/quiver-{version}-py3-none-any.whl",
+        rf"\g<1>v{version}/swe-{version}-py3-none-any.whl",
         text,
         "formula wheel url",
     )

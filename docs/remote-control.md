@@ -155,7 +155,7 @@ looks idle (no transcript append in ~5s, status not running), and the
 hub re-checks at execution time: killing a terminal mid-keystroke is
 the failure mode. `LIMITED_RESUME` harnesses stay observed.
 
-## New domain: `src/quiver/remote/`
+## New domain: `src/swe/remote/`
 
 Stdlib-only — SSE is a held HTTP GET, no WebSocket dependency needed
 (POST upstream + SSE downstream covers the protocol). If a later phase
@@ -1445,7 +1445,7 @@ that hub's persistent web data store. The switcher lists the hub this
 Mac's `agent.json` names and hubs added by address in Settings ›
 Integrations › Remote › Other hubs.
 
-Two clients. The web app (`src/quiver/webapp/`, served by the hub under
+Two clients. The web app (`src/swe/webapp/`, served by the hub under
 `/`; older `/app/` links redirect there, query and fragment intact) works in any browser over
 Tailscale: its `#pair=` fragment trades a pair token for the credential
 it keeps in localStorage, and pending pair requests are decided inline

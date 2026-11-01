@@ -9,9 +9,9 @@ configured.
 
 | File | What |
 |---|---|
-| `src/quiver/webapp/pages/tasks.py` | `GET /v1/app/tasks` — `quiver.remote.tasks.list_view` in process, plus the page's session and launch joins; `?harnesses=1` answers what the hub can start |
-| `src/quiver/webapp/static/pages/tasks.js` | The page. Shares `GhUI` (icons, setup card, poll, POST helper, `hashParams`, `keepFocus`) with the other GitHub pages |
-| `src/quiver/webapp/static/pages/tasks.css` | The state stepper, chips, rail mark and detail layout on the `gh-*`/`styles.css` vocabulary |
+| `src/swe/webapp/pages/tasks.py` | `GET /v1/app/tasks` — `swe.remote.tasks.list_view` in process, plus the page's session and launch joins; `?harnesses=1` answers what the hub can start |
+| `src/swe/webapp/static/pages/tasks.js` | The page. Shares `GhUI` (icons, setup card, poll, POST helper, `hashParams`, `keepFocus`) with the other GitHub pages |
+| `src/swe/webapp/static/pages/tasks.css` | The state stepper, chips, rail mark and detail layout on the `gh-*`/`styles.css` vocabulary |
 
 Reads stay in process: the module calls `tasks.list_view(ctx.state,
 args)` — the same builder `GET /v1/tasks` serves — so the page and the

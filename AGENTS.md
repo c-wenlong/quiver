@@ -74,7 +74,7 @@ python3 -m swe.mcp list
 python3 scripts/docs_site.py  # or: --check to verify freshness
 ```
 
-There is no linter or formatter, and no pytest: `tests/conftest.py` pins terminal width to 200 columns but only fires under pytest, so a unittest test that asserts on rendered width patches `quiver.console.terminal_width` itself.
+There is no linter or formatter, and no pytest: `tests/conftest.py` pins terminal width to 200 columns but only fires under pytest, so a unittest test that asserts on rendered width patches `swe.console.terminal_width` itself.
 
 ### Rules a test or CI already enforces
 
@@ -129,7 +129,7 @@ If it works with `PYTHONPATH=src python3 -m swe.cli` but not with `swe`, the ins
 
 - A test's temp folder comes from `temp_dir(self)` in `tests/_tempdir.py` (or `self.enterContext(tempfile.TemporaryDirectory())`), never a bare `tempfile.mkdtemp()`.
 - A test that mutates nested keys of a class-level JSON fixture must `copy.deepcopy` it first.
-- Session parser tests mock `os.path.expanduser` in `quiver.sessions.parsers`; completion tests mock `load_registry` and `SHELL_CONFIGS`.
+- Session parser tests mock `os.path.expanduser` in `swe.sessions.parsers`; completion tests mock `load_registry` and `SHELL_CONFIGS`.
 
 ## Gotchas
 

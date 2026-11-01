@@ -590,9 +590,9 @@ jobs:
           dir="$RUNNER_TEMP/assets"
           gh release download "$RELEASE_TAG" --dir "$dir" \
             --pattern "Quiver-$version.dmg" \
-            --pattern "quiver-$version-py3-none-any.whl"
+            --pattern "swe-$version-py3-none-any.whl"
           echo "dmg=$(sha256sum "$dir/Quiver-$version.dmg" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-          echo "wheel=$(sha256sum "$dir/quiver-$version-py3-none-any.whl" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "wheel=$(sha256sum "$dir/swe-$version-py3-none-any.whl" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Push the bump to the tap
         env:
