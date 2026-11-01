@@ -129,7 +129,9 @@ final class ShareInboxTests: XCTestCase {
     func testTextLinksAndFilesAreRead() async throws {
         let out = dir.appendingPathComponent("out")
         let pdf = try XCTUnwrap(NSItemProvider(contentsOf: try file("spec.pdf", Data("%PDF-1.4".utf8))))
-        let photo = try XCTUnwrap(NSItemProvider(contentsOf: try file("shot.png", png(width: 8, height: 8))))
+        let photo = try XCTUnwrap(NSItemProvider(contentsOf: try file("IMG_1.png", png(width: 8, height: 8))))
+        // As Photos names one; the file it hands over can be "PNG image.png".
+        photo.suggestedName = "shot"
         let providers = [
             NSItemProvider(object: "a quote" as NSString),
             NSItemProvider(object: URL(string: "https://example.com")! as NSURL),
