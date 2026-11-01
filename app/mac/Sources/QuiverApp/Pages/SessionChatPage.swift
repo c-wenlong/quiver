@@ -171,6 +171,11 @@ private struct ChatTranscript: View {
                         }
                     }
                 }
+                // Replies still being written, newest text last; each one's
+                // final message takes its place in the transcript above.
+                ForEach(model.streaming) { item in
+                    ChatEntry(item: item) { _, _ in }
+                }
                 if model.working {
                     WorkingDots().accessibilityLabel("Agent is working")
                 }

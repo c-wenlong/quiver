@@ -197,6 +197,24 @@ public final class SessionChatModel {
         var text: String
     }
 
+    // MARK: Live reply text
+
+    /// Replies still being written (`message.delta`, #1444), drawn after
+    /// `items` until their final message takes their place. Rendered with
+    /// the same Markdown as the final message: the text only grows, so a
+    /// half-written block (an unclosed fence, a `**` not yet closed) is
+    /// the only flicker, and switching to Markdown at the end would
+    /// reflow the whole reply at once instead.
+    public private(set) var streaming: [HubChatItem] = []
+    @ObservationIgnored private var replies = ReplyStreams()
+    /// The pending repaint while text streams in: one per `repaintEvery`.
+    @ObservationIgnored private(set) var repaintTask: Task<Void, Never>?
+    static let repaintEvery: Duration = .milliseconds(80)
+    /// How long a bubble outlives its session going idle: the final
+    /// message comes from the transcript, which can land a poll later.
+    static let idleGrace: Duration = .seconds(3)
+    var streamSleep: @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+
     public init(key: String, hub: LocalHub) {
         self.key = key
         self.hub = hub
@@ -306,6 +324,7 @@ public final class SessionChatModel {
         }
         modelTask?.cancel()
         modelTask = nil
+        clearStreams()
         connection = .connecting
         // The prompt box's menu may still be open from before stop();
         // the kept list fills it again at once on the next open.
@@ -353,7 +372,10 @@ public final class SessionChatModel {
             for await event in client.events(key, last: last) {
                 guard let self, gen == self.generation else { return }
                 switch event {
-                case .connected: self.connection = .live
+                case .connected:
+                    self.connection = .live
+                    // A dropped stream may have lost deltas and finals alike.
+                    self.clearStreams()
                 case .disconnected: self.connection = .reconnecting
                 case .unauthorized:
                     // Pairs again and reloads; a task of its own, since
@@ -422,6 +444,7 @@ public final class SessionChatModel {
         toolCards = [:]
         orphanResults = [:]
         replayFloor = 0
+        clearStreams()
         // Before the messages: whether a result without its call can still
         // find it on an older page.
         hasEarlier = page.hasMore ?? false
@@ -545,9 +568,20 @@ public final class SessionChatModel {
             cursor = max(cursor, seq)
         }
         switch env.type {
+        case "message.delta":
+            // Live only: history never holds one, and a replay's are stale.
+            guard !replaying, let delta = env.decode(ReplyDelta.self) else { return }
+            receive(delta)
         case "message.appended":
             if let msg = env.decode(HubMessage.self) {
+                // The final message takes the oldest open bubble of its
+                // kind, in the same update, so nothing jumps.
+                let replaced = replaying ? nil : replies.claim(kind: msg.kind)
                 append(msg, seq: env.seq ?? 0)
+                if let replaced {
+                    replies.release(replaced)
+                    repaintStreams()
+                }
                 showOrphans()
                 noteActivity(msg.ts)
                 // Seen live on screen: the row stays read.
@@ -559,6 +593,7 @@ public final class SessionChatModel {
             // The turn ended (or stopped to ask) without a message to show.
             if !replaying, !status.isEmpty, status != "active" {
                 awaiting.removeAll()
+                sweepStreams()
                 // A reply just finished: the header's model may be new.
                 refreshModel()
             }
@@ -641,6 +676,43 @@ public final class SessionChatModel {
         default:
             break
         }
+    }
+
+    private func receive(_ delta: ReplyDelta) {
+        guard replies.apply(delta), repaintTask == nil else { return }
+        let sleep = streamSleep
+        repaintTask = Task { [weak self] in
+            await sleep(Self.repaintEvery)
+            guard let self, !Task.isCancelled else { return }
+            self.repaintTask = nil
+            self.repaintStreams()
+        }
+    }
+
+    /// Draws the bubbles as they are now.
+    func repaintStreams() {
+        repaintTask?.cancel()
+        repaintTask = nil
+        let shown = replies.shown.map { HubChatItem(id: "live-\($0.id)", kind: .assistant($0.text)) }
+        if shown != streaming { streaming = shown }
+    }
+
+    /// The session went idle: bubbles open now whose final message never
+    /// came (a dropped stream) go after `idleGrace`.
+    private func sweepStreams() {
+        let ids = replies.openIds
+        guard !ids.isEmpty else { return }
+        let gen = generation, sleep = streamSleep
+        Task { [weak self] in
+            await sleep(Self.idleGrace)
+            guard let self, gen == self.generation else { return }
+            if self.replies.sweep(ids) { self.repaintStreams() }
+        }
+    }
+
+    private func clearStreams() {
+        replies.clear()
+        repaintStreams()
     }
 
     private func append(_ msg: HubMessage, seq: Int) {

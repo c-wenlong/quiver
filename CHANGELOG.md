@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Live reply text on iPhone, web and Mac.** The chat draws a reply
+  word by word while a Codex app-server, opencode serve or headless
+  Claude session writes it: `message.delta` text grows a bubble at the
+  end of the transcript, rendered with the same Markdown as the final
+  message and repainted at most every 80 ms. The next live
+  `message.appended` of the same kind takes the oldest open bubble's
+  place; on iPhone and web it is matched as it arrives and swaps in
+  when the reveal queue shows it, without the arrival animation or
+  pause. A missed delta stops drawing that bubble until its final
+  lands, and a bubble whose final never comes goes 3 seconds after the
+  session goes idle, or when the stream reconnects. The rules live in
+  `ReplyStreams.swift` (the Mac's and iPhone's copies are identical)
+  and its port in `pages/chat.js`. Closes
+  [#1444](https://github.com/c-wenlong/quiver/issues/1444).
 - **Unread dots on session rows: iPhone, web and Mac.** A session row
   shows a small dot when the agent said something since you last opened
   that chat on this device, from the hub's per-device `unread` flag.
@@ -51,8 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaces the streamed text. Satellites coalesce their own and relay
   them only to a hub that advertises `message_delta`. tmux sessions
   stay record-by-record. Part of
-  [#1444](https://github.com/c-wenlong/quiver/issues/1444); the client
-  bubbles follow.
+  [#1444](https://github.com/c-wenlong/quiver/issues/1444).
 - **iPhone: the paired hubs move to an App Group and a shared Keychain
   group.** The hub list now lives in `group.com.quiver.remote` and each
   hub's credential in the `<team>.com.quiver.remote.shared` Keychain

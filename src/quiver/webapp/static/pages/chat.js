@@ -28,6 +28,10 @@ const SessionChat = (() => {
     // The last journal seq shown in this view; a dropped stream resumes
     // from here.
     seq: 0,
+    // Replies still being written (message.delta, #1444): the bubbles'
+    // state, the timer of the next repaint, and the box at the log's end
+    // that holds them.
+    replies: null, streamPaint: null, streamBox: null,
     toolCards: new Map(), // call_id -> tool card
     // While set, the stream is replaying events the backfill already
     // showed, looking for one waiting approval (restoreApproval).
@@ -42,11 +46,90 @@ const SessionChat = (() => {
     rail: { loading: false, error: "" }, railData: null,
   };
 
+  chat.replies = replyStreams();
+
   const STATUS = { active: "Active", done: "Done", followup: "Waiting", error: "Error",
     interrupted: "Interrupted", approval: "Approval needed" };
   const DECISIONS = { allow: "Allowed", always: "Always allowed", deny: "Denied" };
 
   const $ = (id) => document.getElementById(id);
+
+  /* ------------------------------------------------------ live reply text
+     message.delta (#1444, docs/json-contracts.md): live text for a reply
+     still being written. A port of ReplyStreams.swift (the Mac's and the
+     iPhone's copy); keep the three in step.
+     - Deltas append per id in seq order. A gap, or a stream first heard
+       mid-way, stops drawing that bubble, but it keeps its place in line
+       so its final message still finds it.
+     - A live message.appended claims the oldest open bubble of its kind
+       (the transcript doesn't carry the channel's id). Deltas for a
+       claimed id are dropped; the bubble stays drawn until the final is
+       shown in its place (release), since the reveal queue may hold it.
+     - done closes the id; the bubble still waits for its final. One that
+       never comes goes when the session goes idle (sweep) or the stream
+       reconnects (clear). */
+
+  function replyStreams() {
+    let bubbles = [];
+    const ended = [];
+    const end = (id) => {
+      if (ended.includes(id)) return;
+      ended.push(id);
+      if (ended.length > 256) ended.splice(0, ended.length - 256);
+    };
+    const shown = () => bubbles.filter((b) => !b.broken && b.kind === "assistant" && b.text);
+    const key = () => shown().map((b) => `${b.id}\u0000${b.text}`).join("\u0001");
+    return {
+      shown,
+      openIds: () => bubbles.filter((b) => !b.claimed).map((b) => b.id),
+      /* One delta's data; whether what's drawn changed. */
+      apply(d) {
+        const id = d && typeof d.id === "string" ? d.id : "";
+        const seq = d && Number.isInteger(d.seq) ? d.seq : 0;
+        if (!id || ended.includes(id)) return false;
+        const before = key();
+        const b = bubbles.find((x) => x.id === id);
+        if (b) {
+          if (d.done === true) b.done = true;
+          if (b.broken) return false;
+          if (seq !== b.seq + 1) { b.broken = true; b.text = ""; }
+          else { b.text += d.text || ""; b.seq = seq; }
+        } else {
+          bubbles.push({ id, kind: d.kind || "assistant", text: seq === 1 ? d.text || "" : "", seq,
+            done: d.done === true, broken: seq !== 1, claimed: false });
+        }
+        return key() !== before;
+      },
+      /* A live final of ``kind``: the id of the bubble it replaces, or "". */
+      claim(kind) {
+        const b = bubbles.find((x) => !x.claimed && x.kind === (kind || "assistant"));
+        if (!b) return "";
+        b.claimed = true;
+        end(b.id);
+        return b.id;
+      },
+      release(id) {
+        const before = key();
+        bubbles = bubbles.filter((b) => b.id !== id);
+        return key() !== before;
+      },
+      /* The session went idle: of ``ids`` (open when it did), the ones no
+       * final claimed go. */
+      sweep(ids) {
+        const before = key();
+        const gone = new Set(ids);
+        for (const b of bubbles) if (gone.has(b.id) && !b.claimed) end(b.id);
+        bubbles = bubbles.filter((b) => !(gone.has(b.id) && !b.claimed));
+        return key() !== before;
+      },
+      clear() {
+        const had = shown().length > 0;
+        for (const b of bubbles) end(b.id);
+        bubbles = [];
+        return had;
+      },
+    };
+  }
 
   /* ------------------------------------------------------------ requests */
 
@@ -488,6 +571,89 @@ const SessionChat = (() => {
   function scrollBottom() {
     const log = $("chat-log");
     if (log) log.scrollTop = log.scrollHeight;
+  }
+
+  /* The log's entries go above the streaming bubbles, which stay the
+   * newest thing in it until their final messages take their place. */
+  function logAppend(log, el) {
+    const box = chat.streamBox;
+    if (box && box.parentNode === log) log.insertBefore(el, box);
+    else log.appendChild(el);
+  }
+
+  function lastEntry(log) {
+    const last = log.lastElementChild;
+    return last && last === chat.streamBox ? last.previousElementSibling : last;
+  }
+
+  /* Draws the bubbles as they are now. Streaming text gets the same
+   * Markdown as the final message: it only grows, so a half-written block
+   * (an unclosed fence, a ** not yet closed) is the only flicker, and
+   * switching to Markdown at the end would reflow the whole reply at once.
+   * Only a bubble whose text changed is drawn again. */
+  function paintStreams() {
+    clearTimeout(chat.streamPaint);
+    chat.streamPaint = null;
+    const log = $("chat-log");
+    const shown = chat.replies.shown();
+    let box = chat.streamBox;
+    if (!log || !shown.length) {
+      if (box) box.remove();
+      chat.streamBox = null;
+      return;
+    }
+    const stick = nearBottom();
+    if (!box || box.parentNode !== log) {
+      box = document.createElement("div");
+      box.className = "chat-streams";
+      chat.streamBox = box;
+      log.appendChild(box);
+    }
+    const keep = new Set(shown.map((b) => b.id));
+    for (const el of [...box.children]) if (!keep.has(el.dataset.streamId)) el.remove();
+    for (const b of shown) {
+      let el = [...box.children].find((x) => x.dataset.streamId === b.id);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "msg assistant streaming arrive";
+        el.dataset.streamId = b.id;
+        box.appendChild(el);
+      }
+      if (el.dataset.text !== b.text) {
+        el.dataset.text = b.text;
+        el.innerHTML = `<div class="text">${md(b.text)}</div>`;
+      }
+    }
+    if (stick) scrollBottom();
+  }
+
+  const STREAM_MS = {
+    // The hub sends at most one delta per reply every 100 ms; repaints
+    // are coalesced on top of that, across replies.
+    paint: 80,
+    // How long a bubble outlives its session going idle: the final
+    // message comes from the transcript, which can land a poll later.
+    idleGrace: 3000,
+  };
+
+  function receiveDelta(d) {
+    if (!chat.replies.apply(d) || chat.streamPaint !== null) return;
+    chat.streamPaint = setTimeout(paintStreams, STREAM_MS.paint);
+  }
+
+  function sweepStreams() {
+    const ids = chat.replies.openIds();
+    if (!ids.length) return;
+    const gen = chat.gen;
+    setTimeout(() => {
+      if (gen === chat.gen && chat.replies.sweep(ids)) paintStreams();
+    }, STREAM_MS.idleGrace);
+  }
+
+  /* Reconnect, resync or close: every bubble goes. */
+  function clearStreams() {
+    chat.replies.clear();
+    paintStreams();
   }
 
   /* ------------------------------------------------- syntax highlighting
@@ -1954,7 +2120,15 @@ const SessionChat = (() => {
     const stick = live && nearBottom();
     const d = ev.data || {};
     if (ev.type === "message.appended") {
-      appendMessage(d, live, ev.seq);
+      // A final taking its bubble's place swaps in as it is: no arrival.
+      // The bubble goes even if the final can't be drawn.
+      chat.replacing = !!ev.replaces;
+      try {
+        appendMessage(d, live, ev.seq);
+      } finally {
+        chat.replacing = false;
+        if (ev.replaces && chat.replies.release(ev.replaces)) paintStreams();
+      }
       // A hidden tab isn't reading: its read waits for the tab to show.
       if (live && document.visibilityState !== "hidden") unreadHook("activity", chat.key, d.ts);
     } else if (ev.type === "session.status") {
@@ -1963,7 +2137,7 @@ const SessionChat = (() => {
       if (ev.session === chat.key && status && status !== "active") {
         chat.awaitingReply = false;
         // A reply just finished: the header's model may be new.
-        if (live) refreshModel();
+        if (live) { refreshModel(); sweepStreams(); }
       }
       if (chat.row && ev.session === chat.key) {
         chat.row.status = status;
@@ -2093,7 +2267,7 @@ const SessionChat = (() => {
     if (!log) return;
     const put = (el) => {
       if (seq) el.dataset.seq = String(seq);
-      if (!at) { log.appendChild(el); return; }
+      if (!at) { logAppend(log, el); return; }
       for (const c of log.children) {
         if (Number(c.dataset.seq || 0) > at) { log.insertBefore(el, c); return; }
         // A folded run has no seq of its own: the point may fall inside
@@ -2104,7 +2278,7 @@ const SessionChat = (() => {
           }
         }
       }
-      log.appendChild(el);
+      logAppend(log, el);
     };
     const loading = $("chat-loading");
     if (loading) loading.remove();
@@ -2149,7 +2323,7 @@ const SessionChat = (() => {
       // with "@path ", hence the endsWith). Backfill never dedupes: history
       // replay must not erase a queued bubble.
       const hit = [...log.querySelectorAll(".msg.user[data-client-id]:not(.failed)")].find((b) => echoesBubble(msg, b));
-      if (hit && hit === log.lastElementChild) {
+      if (hit && hit === lastEntry(log)) {
         // Still the newest entry: settle the bubble where it is, so it doesn't
         // leave and come back in. Dropping .pending also tells a late POST
         // reply or command.result it's already delivered.
@@ -2204,7 +2378,7 @@ const SessionChat = (() => {
     } else {
       div.innerHTML = `<div class="role">${esc(kind)}</div><div class="text">${md(msg.text)}</div>`;
     }
-    if (live) div.classList.add("arrive");
+    if (live && !chat.replacing) div.classList.add("arrive");
     put(div);
   }
 
@@ -2341,11 +2515,13 @@ const SessionChat = (() => {
     if (delay === null) { flushPending(); return; }
     const log = $("chat-log");
     const before = log ? log.childElementCount : 0;
-    showLive(chat.pending.shift());
+    const ev = chat.pending.shift();
+    showLive(ev);
     updateWorking();
     // Only a new entry earns a pause; a status change or a result landing
-    // on its card goes straight through.
-    const added = log ? log.childElementCount > before : false;
+    // on its card goes straight through, and so does a final taking its
+    // bubble's place (its text was already on screen).
+    const added = log && !ev.replaces ? log.childElementCount > before : false;
     if (added) chat.lastRevealAt = performance.now();
     if (chat.pending.length) chat.revealTimer = setTimeout(revealNext, added ? delay : 0);
   }
@@ -2406,6 +2582,8 @@ const SessionChat = (() => {
 
   function openStream(gen, after) {
     closeStream();
+    // A dropped stream may have lost deltas and finals alike.
+    clearStreams();
     const key = chat.key;
     const ctrl = new AbortController();
     const mine = { ctrl };
@@ -2463,6 +2641,12 @@ const SessionChat = (() => {
   function handleFrame(key, frame) {
     const ev = parseFrame(frame);
     if (!ev || key !== chat.key) return;
+    // Live only and never journaled: not held through a resync (its
+    // redraw clears the bubbles) or taken from a replay.
+    if (ev.type === "message.delta") {
+      if (!chat.held && !chat.history) receiveDelta(ev.data || {});
+      return;
+    }
     // A resync is reading the transcript again: what streams meanwhile
     // waits for it, so nothing lands above the history it redraws.
     if (chat.held) {
@@ -2490,6 +2674,12 @@ const SessionChat = (() => {
       if (ev.seq && !chat.pending.length) remember(ev.seq);
       return;
     }
+    // A final is matched to its bubble as it arrives (the contract's order
+    // is the wire's) and takes its place when the reveal shows it.
+    if (ev.type === "message.appended" && typeof ev.seq === "number" && ev.seq > chat.seq) {
+      const id = chat.replies.claim((ev.data || {}).kind);
+      if (id) ev.replaces = id;
+    }
     // The cursor advances as each event is shown (showLive), so events
     // still waiting when the stream drops are replayed on reconnect.
     enqueue(ev);
@@ -2506,6 +2696,7 @@ const SessionChat = (() => {
   async function resync(head) {
     const gen = chat.gen, key = chat.key;
     dropPending();
+    clearStreams();
     chat.held = [];
     chat.history = null;
     chat.seq = typeof head === "number" && head >= 0 ? head : 0;
@@ -2534,6 +2725,7 @@ const SessionChat = (() => {
       const shown = [...log.querySelectorAll(".msg.user[data-text]")]
         .filter((b) => !b.dataset.clientId).map((b) => b.dataset.text);
       log.innerHTML = "";
+      chat.streamBox = null;
       chat.toolCards.clear();
       const messages = data.messages || [];
       for (const ev of messages) appendSafely(ev, false);
@@ -2549,9 +2741,9 @@ const SessionChat = (() => {
       for (const b of sends) {
         const i = b.classList.contains("failed") ? -1 : echoed.findIndex((m) => echoesBubble(m, b));
         if (i >= 0) echoed.splice(i, 1);
-        else log.appendChild(b);
+        else logAppend(log, b);
       }
-      for (const card of open) log.appendChild(card);
+      for (const card of open) logAppend(log, card);
       scrollBottom();
     }
     // Status, ownership, command results and approvals aren't in the
@@ -2566,6 +2758,8 @@ const SessionChat = (() => {
 
   function closeStream() {
     dropPending();
+    clearTimeout(chat.streamPaint);
+    chat.streamPaint = null;
     clearTimeout(chat.retryTimer);
     chat.retryTimer = null;
     const s = chat.stream;
@@ -2853,6 +3047,8 @@ const SessionChat = (() => {
     chat.awaitingReply = false;
     chat.seq = 0;
     chat.history = null;
+    chat.replies = replyStreams();
+    chat.streamBox = null;
     // Set once the opening reads are done and the stream is started; a
     // reconnect before that would replay what the backfill is drawing.
     chat.opened = false;
@@ -3241,7 +3437,7 @@ const SessionChat = (() => {
     div.innerHTML = `<div class="text">${md(text)}</div>` +
       (names.length ? `<div class="msg-files">${names.map((n) => `<span>${esc(n)}</span>`).join("")}</div>` : "") +
       `<div class="send-note">Sending…</div>`;
-    $("chat-log").appendChild(div);
+    logAppend($("chat-log"), div);
     scrollBottom();
     return div;
   }
@@ -4397,7 +4593,8 @@ const SessionChat = (() => {
       mentionToken, insertMention, splitPath, filesError, files, FILES, searchFiles, trackMenus, menu,
       echoes, sendsToTray, mergeQueue, queueNote, trayHtml, posted, takeQueued, echoLeavesTray, sendText,
       sendNow, removeQueued, removeAllQueued, beginEdit, cancelEdit, saveEdit, loadQueue, commandResult, appendMessage,
-      backfill, showLive, cancelDetach, loadRail },
+      backfill, showLive, cancelDetach, loadRail,
+      replyStreams, receiveDelta, paintStreams, clearStreams, revealNext, enqueue, STREAM_MS },
   };
 })();
 
