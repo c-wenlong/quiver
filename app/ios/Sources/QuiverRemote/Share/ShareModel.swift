@@ -62,10 +62,14 @@ final class ShareModel {
     @ObservationIgnored private let client: (PairedHub) -> ShareHub
     /// Turns an image file into the JPEG that's uploaded; tests swap it.
     @ObservationIgnored var convert: @Sendable (URL) -> Data? = { PhotoPrep.jpeg(at: $0) }
-    /// Refs already staged for the selected session, by payload index,
-    /// so a retry after a failed send doesn't upload them again.
+    /// Refs already staged for the selected hub and session, by payload
+    /// index, so a retry after a failed send doesn't upload them again.
     @ObservationIgnored private var staged: [Int: String] = [:]
     @ObservationIgnored private var stagedFor: String?
+    /// The client id of a message whose answer never came, kept while the
+    /// same message goes to the same place: a retry the hub still holds
+    /// answers `duplicate_client_id` instead of queueing a second copy.
+    @ObservationIgnored private var attempt: (target: String, text: String, refs: [String], clientId: String)?
 
     init(store: HubStore, client: @escaping (PairedHub) -> ShareHub) {
         self.store = store
@@ -74,6 +78,8 @@ final class ShareModel {
 
     static let notPairedNote = "Pair this phone with a hub in Quiver Remote first."
     static let noSessionsNote = "No attached sessions on this hub. Attach one in Quiver Remote, then share again."
+    /// A message whose POST got no answer may have reached the hub.
+    static let unconfirmedNote = "Can't reach the hub, so the message may not have gone. Check the session before sending again."
 
     var hub: PairedHub? { hubs.active }
     var selected: SessionRow? { sessions.first { $0.key == selectedKey } }
@@ -136,9 +142,10 @@ final class ShareModel {
         let api = client(hub)
         let text = outgoingText
         sendError = nil
-        if stagedFor != row.key {
+        let target = "\(hub.id) \(row.key)"
+        if stagedFor != target {
             staged = [:]
-            stagedFor = row.key
+            stagedFor = target
         }
         let files = payloads.enumerated().filter { $0.element.isUpload }
         var refs: [String] = []
@@ -153,17 +160,35 @@ final class ShareModel {
                 staged[i] = ref
                 refs.append(ref)
             }
-            phase = .sending("Sending")
-            _ = try await api.sendMessage(row.key, text: text, mode: ShareTargets.mode(for: row),
-                                          clientId: UUID().uuidString, attachments: refs)
-            phase = .sent
-            return true
         } catch {
-            sendError = (error as? HubError).map { $0.code == "network" ? HubError.networkMessage : $0.message }
-                ?? (error as? ShareInbox.Refusal)?.message ?? "Send failed."
-            phase = .ready
-            return false
+            return failed(error)
         }
+        phase = .sending("Sending")
+        if let a = attempt, a.target != target || a.text != text || a.refs != refs { attempt = nil }
+        let clientId = attempt?.clientId ?? UUID().uuidString
+        attempt = (target, text, refs, clientId)
+        do {
+            _ = try await api.sendMessage(row.key, text: text, mode: ShareTargets.mode(for: row),
+                                          clientId: clientId, attachments: refs)
+        } catch let error as HubError where error.code == "duplicate_client_id" {
+            // The first try reached the hub, which still holds it.
+        } catch let error as HubError where error.code == "network" {
+            return failed(error, note: Self.unconfirmedNote)
+        } catch {
+            // The hub answered no: nothing is waiting under this id.
+            attempt = nil
+            return failed(error)
+        }
+        attempt = nil
+        phase = .sent
+        return true
+    }
+
+    private func failed(_ error: Error, note: String? = nil) -> Bool {
+        sendError = note ?? (error as? HubError).map { $0.code == "network" ? HubError.networkMessage : $0.message }
+            ?? (error as? ShareInbox.Refusal)?.message ?? "Send failed."
+        phase = .ready
+        return false
     }
 
     private func upload(_ payload: SharedPayload, to key: String, api: ShareHub) async throws -> StagedAttachment {

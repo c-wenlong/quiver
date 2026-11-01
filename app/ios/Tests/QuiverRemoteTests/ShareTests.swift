@@ -162,6 +162,11 @@ final class ShareInboxTests: XCTestCase {
         try handle.truncate(atOffset: UInt64(AttachmentRules.maxBytes + 1))
         try handle.close()
         XCTAssertEqual(ShareInbox.checked(big), .failure(.init(message: "huge.pdf is too big (21 MB): files can be up to 20 MB.")))
+        // Turned down from the source, before anything is copied.
+        XCTAssertEqual(ShareInbox.precheck(big, name: "huge.pdf")?.message,
+                       "huge.pdf is too big (21 MB): files can be up to 20 MB.")
+        XCTAssertNotNil(ShareInbox.precheck(zip, name: "bundle.zip"))
+        XCTAssertNil(ShareInbox.precheck(big, name: "huge.heic"))
         // A big photo is fine: it goes up as a downscaled JPEG.
         let heic = try file("IMG_1.HEIC", Data([1]))
         XCTAssertEqual(ShareInbox.checked(heic), .success(.image(name: "IMG_1.jpg", file: heic)))
@@ -177,6 +182,7 @@ private final class FakeShareHub: ShareHub, @unchecked Sendable {
     var sendError: Error?
     private(set) var calls: [String] = []
     private(set) var sent: [(key: String, text: String, mode: String, refs: [String])] = []
+    private(set) var clientIds: [String] = []
     private var inFlight = 0
     private(set) var maxInFlight = 0
 
@@ -209,6 +215,7 @@ private final class FakeShareHub: ShareHub, @unchecked Sendable {
     func sendMessage(_ key: String, text: String, mode: String, clientId: String,
                      attachments: [String]) async throws -> SendAccepted {
         record("send \(key)")
+        clientIds.append(clientId)
         if let sendError { throw sendError }
         sent.append((key, text, mode, attachments))
         return SendAccepted(ok: true, waiting: false)
@@ -307,7 +314,7 @@ final class ShareModelTests: XCTestCase {
         XCTAssertEqual(sent.refs, ["ref-shot.jpg", "ref-spec.pdf", "ref-image.jpg"])
     }
 
-    func testAFailedSendKeepsTheSheetAndRetryReusesStagedFiles() async {
+    func testAnUnansweredSendKeepsTheSheetAndRetryReusesFilesAndItsId() async {
         let hub = FakeShareHub()
         hub.rows = [row("a", ago: 1)]
         hub.sendError = HubError.network(URLError(.notConnectedToInternet))
@@ -317,12 +324,54 @@ final class ShareModelTests: XCTestCase {
         let first = await m.send()
         XCTAssertFalse(first)
         XCTAssertEqual(m.phase, .ready)
-        XCTAssertEqual(m.sendError, HubError.networkMessage)
-        hub.sendError = nil
+        XCTAssertEqual(m.sendError, ShareModel.unconfirmedNote)
+        // The first POST reached the hub after all, which still holds it.
+        hub.sendError = HubError(status: 409, code: "duplicate_client_id", message: "That message is already queued.")
         let second = await m.send()
         XCTAssertTrue(second)
+        XCTAssertEqual(m.phase, .sent)
         XCTAssertEqual(hub.calls.filter { $0.hasPrefix("file") }.count, 1)
-        XCTAssertEqual(hub.sent.first?.refs, ["ref-spec.pdf"])
+        XCTAssertEqual(hub.clientIds.count, 2)
+        XCTAssertEqual(Set(hub.clientIds).count, 1)
+    }
+
+    func testARefusedSendOrAChangedMessageGetsANewId() async {
+        let hub = FakeShareHub()
+        hub.rows = [row("a", ago: 1)]
+        hub.sendError = HubError(status: 429, code: "backlog_full", message: "Too many messages are waiting. Try again shortly.")
+        let m = model(hub)
+        await m.start(payloads: [.text("hi")], notices: [])
+        _ = await m.send()
+        XCTAssertEqual(m.sendError, "Too many messages are waiting. Try again shortly.")
+        hub.sendError = HubError.network(URLError(.timedOut))
+        _ = await m.send()
+        m.message = "edited"
+        hub.sendError = nil
+        _ = await m.send()
+        XCTAssertEqual(hub.clientIds.count, 3)
+        XCTAssertEqual(Set(hub.clientIds).count, 3)
+        XCTAssertEqual(hub.sent.first?.text, "edited\n\nhi")
+    }
+
+    func testStagedFilesDontFollowASwitchToAnotherHub() async {
+        let first = pairedHub("mac.tail.ts.net"), second = pairedHub("server.tail.ts.net")
+        let hubA = FakeShareHub(), hubB = FakeShareHub()
+        hubA.rows = [row("same", ago: 1)]
+        hubB.rows = [row("same", ago: 1)]
+        hubA.sendError = HubError.network(URLError(.timedOut))
+        var list = HubList()
+        list.adopt(first)
+        list.adopt(second)
+        list.activeId = first.id
+        let m = ShareModel(store: MemoryHubStore(list)) { $0.id == first.id ? hubA : hubB }
+        await m.start(payloads: [.file(name: "spec.pdf", file: URL(fileURLWithPath: "/tmp/x"), size: 1)], notices: [])
+        m.message = "look"
+        _ = await m.send()
+        await m.selectHub(second.id)
+        let ok = await m.send()
+        XCTAssertTrue(ok)
+        XCTAssertEqual(hubB.calls.filter { $0.hasPrefix("file") }.count, 1)
+        XCTAssertEqual(hubB.sent.first?.refs, ["ref-spec.pdf"])
     }
 
     func testAnImageThatWontDecodeFailsTheSendWithItsName() async {

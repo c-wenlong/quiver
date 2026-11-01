@@ -36,14 +36,20 @@ struct ShareSheet: View {
         case .loading:
             ProgressView("Loading sessions")
         case .notPaired(let why):
-            ContentUnavailableView("Not paired", systemImage: "link.badge.plus", description: Text(why))
+            VStack {
+                hubMenu
+                ContentUnavailableView("Not paired", systemImage: "link.badge.plus", description: Text(why))
+            }
         case .unreachable(let why):
-            ContentUnavailableView {
-                Label("Can't reach the hub", systemImage: "wifi.exclamationmark")
-            } description: {
-                Text(why)
-            } actions: {
-                Button("Try again") { Task { await model.refresh() } }
+            VStack {
+                hubMenu
+                ContentUnavailableView {
+                    Label("Can't reach the hub", systemImage: "wifi.exclamationmark")
+                } description: {
+                    Text(why)
+                } actions: {
+                    Button("Try again") { Task { await model.refresh() } }
+                }
             }
         case .sent:
             ContentUnavailableView("Sent", systemImage: "checkmark.circle")
@@ -52,16 +58,25 @@ struct ShareSheet: View {
         }
     }
 
+    private var hubPicker: some View {
+        Picker("Hub", selection: Binding(
+            get: { model.hub?.id ?? "" },
+            set: { id in Task { await model.selectHub(id) } })) {
+            ForEach(model.hubs.hubs) { Text(model.hubs.name(of: $0)).tag($0.id) }
+        }
+    }
+
+    /// On an error, another paired hub is still one tap away.
+    @ViewBuilder private var hubMenu: some View {
+        if model.hubs.hubs.count > 1 {
+            hubPicker.pickerStyle(.menu).padding(.top)
+        }
+    }
+
     private var form: some View {
         Form {
             if model.hubs.hubs.count > 1 {
-                Section("Hub") {
-                    Picker("Hub", selection: Binding(
-                        get: { model.hub?.id ?? "" },
-                        set: { id in Task { await model.selectHub(id) } })) {
-                        ForEach(model.hubs.hubs) { Text(model.hubs.name(of: $0)).tag($0.id) }
-                    }
-                }
+                Section("Hub") { hubPicker }
             }
             Section("Message") {
                 TextField("Add a message (optional)", text: $model.message, axis: .vertical)

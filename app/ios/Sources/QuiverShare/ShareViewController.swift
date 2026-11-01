@@ -9,6 +9,8 @@ final class ShareViewController: UIViewController {
     private let folder = FileManager.default.temporaryDirectory
         .appendingPathComponent("share-\(UUID().uuidString)", isDirectory: true)
     private var model: ShareModel?
+    /// Reading the shared items; Cancel stops it before it copies more.
+    private var loading: Task<Void, Never>?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -30,14 +32,23 @@ final class ShareViewController: UIViewController {
         let providers = (extensionContext?.inputItems as? [NSExtensionItem] ?? [])
             .flatMap { $0.attachments ?? [] }
         let folder = self.folder
-        Task {
+        loading = Task {
             let read = await ShareInbox.load(providers, into: folder)
+            guard !Task.isCancelled else { return }
             await model.start(payloads: read.payloads, notices: read.notices)
         }
     }
 
     private func finish(sent: Bool) {
+        // A copy already under way finishes after the cancel, so the
+        // folder goes again once the reading has stopped.
+        let loading = self.loading, folder = self.folder
+        loading?.cancel()
         try? FileManager.default.removeItem(at: folder)
+        Task.detached {
+            await loading?.value
+            try? FileManager.default.removeItem(at: folder)
+        }
         if sent {
             extensionContext?.completeRequest(returningItems: nil)
         } else {

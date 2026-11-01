@@ -102,6 +102,8 @@ enum ShareInbox {
         var payloads: [SharedPayload] = []
         var notices: [String] = []
         for (i, provider) in providers.enumerated() {
+            // Cancel while reading: nothing more is copied in.
+            guard !Task.isCancelled else { break }
             switch await load(provider, index: i, into: folder) {
             case .success(let payload): payloads.append(payload)
             case .failure(let refusal): notices.append(refusal.message)
@@ -116,7 +118,7 @@ enum ShareInbox {
         let fallbackName = provider.suggestedName ?? "item-\(index + 1)"
         switch SharedKind.of(provider.registeredTypeIdentifiers) {
         case .image(let type):
-            if let url = await copyFile(provider, type: type, into: folder, index: index) {
+            if case .success(let url) = await copyFile(provider, type: type, into: folder, index: index, check: false) {
                 return .success(.image(name: AttachmentRules.jpegName(url.lastPathComponent), file: url))
             }
             // Some apps share a decoded image, its bytes or a file URL
@@ -155,10 +157,8 @@ enum ShareInbox {
             default: return .failure(Refusal(message: "That text couldn't be read."))
             }
         case .file(let type):
-            guard let url = await copyFile(provider, type: type, into: folder, index: index) else {
-                return .failure(Refusal(message: "\(fallbackName) couldn't be read."))
-            }
-            return checked(url)
+            return await copyFile(provider, type: type, into: folder, index: index, check: true)
+                .flatMap(checked)
         case .unsupported:
             return .failure(Refusal(message: "\(fallbackName) can't be attached: images, PDFs and text files only."))
         }
@@ -178,11 +178,22 @@ enum ShareInbox {
         return .success(.file(name: name, file: url, size: size))
     }
 
+    /// Why the hub would refuse a file that isn't an image yet, from its
+    /// name and size alone, so a big PDF or an archive is never copied
+    /// just to be turned down. Images are always taken (they shrink).
+    static func precheck(_ url: URL, name: String) -> Refusal? {
+        let ext = AttachmentRules.ext(name)
+        if AttachmentRules.readableImages.contains(ext) || AttachmentRules.needsConversion(name) { return nil }
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 1
+        return AttachmentRules.refusal(name: name, size: size).map(Refusal.init)
+    }
+
     /// Copies a file URL another app shared into `folder`.
     private static func copyLocal(_ url: URL, into folder: URL, index: Int) -> Result<SharedPayload, Refusal> {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let copy = copy(url, into: folder, index: index) else {
+        if let why = precheck(url, name: url.lastPathComponent) { return .failure(why) }
+        guard !Task.isCancelled, let copy = copy(url, into: folder, index: index) else {
             return .failure(Refusal(message: "\(url.lastPathComponent) couldn't be read."))
         }
         return checked(copy)
@@ -203,15 +214,20 @@ enum ShareInbox {
         }
     }
 
-    private static func copyFile(_ provider: NSItemProvider, type: String, into folder: URL, index: Int) async -> URL? {
-        guard provider.hasItemConformingToTypeIdentifier(type) else { return nil }
+    /// The provider's file copied into `folder`. With `check`, a file the
+    /// hub would refuse is turned down before it's copied.
+    private static func copyFile(_ provider: NSItemProvider, type: String, into folder: URL, index: Int,
+                                 check: Bool) async -> Result<URL, Refusal> {
         let suggested = provider.suggestedName
+        let unread = Refusal(message: "\(suggested ?? "item-\(index + 1)") couldn't be read.")
+        guard provider.hasItemConformingToTypeIdentifier(type), !Task.isCancelled else { return .failure(unread) }
         return await withCheckedContinuation { done in
             _ = provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
                 // The provider deletes `url` once this returns: copy now.
-                guard let url else { return done.resume(returning: nil) }
-                done.resume(returning: copy(url, into: folder, index: index,
-                                            name: fileName(suggested: suggested, provided: url, type: type)))
+                guard let url else { return done.resume(returning: .failure(unread)) }
+                let name = fileName(suggested: suggested, provided: url, type: type)
+                if check, let why = precheck(url, name: name) { return done.resume(returning: .failure(why)) }
+                done.resume(returning: copy(url, into: folder, index: index, name: name).map { .success($0) } ?? .failure(unread))
             }
         }
     }
