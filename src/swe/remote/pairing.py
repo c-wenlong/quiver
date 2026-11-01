@@ -230,8 +230,8 @@ def client_meta(user_agent: str) -> dict:
                 if m:
                     meta["client"] = f"Safari {m.group(1)}"
     # A bare Darwin version says only "some Apple OS". Quiver Remote
-    # is the iOS app; the Mac app's own Quiver/x token — and every other
-    # Darwin product — reads as macOS.
+    # is the iOS app; the Mac app's own SWE/x token (Quiver/x before the
+    # rename) — and every other Darwin product — reads as macOS.
     if "os" not in meta:
         m = re.search(r"Darwin/(\d+)", ua)
         if m:

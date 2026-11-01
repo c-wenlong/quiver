@@ -31,8 +31,8 @@ CASK = f'''cask "quiver" do
   version "1.1.1"
   sha256 "{OLD_DMG}"
 
-  url "https://github.com/c-wenlong/quiver/releases/download/v#{{version}}/Quiver-#{{version}}.dmg"
-  name "Quiver"
+  url "https://github.com/c-wenlong/quiver/releases/download/v#{{version}}/SWE-#{{version}}.dmg"
+  name "SWE"
 
   livecheck do
     url "https://github.com/c-wenlong/quiver/releases/latest/download/appcast.xml"
@@ -42,7 +42,7 @@ CASK = f'''cask "quiver" do
   auto_updates true
   depends_on macos: :tahoe
 
-  app "Quiver.app"
+  app "SWE.app"
 end
 '''
 
@@ -71,7 +71,7 @@ class TestBumpCask(unittest.TestCase):
         expected = CASK.replace('version "1.1.1"', 'version "1.2.0"').replace(OLD_DMG, NEW_DMG)
         self.assertEqual(out, expected)
         # The url keeps its interpolation; Homebrew fills the version in.
-        self.assertIn("v#{version}/Quiver-#{version}.dmg", out)
+        self.assertIn("v#{version}/SWE-#{version}.dmg", out)
 
     def test_same_version_is_a_no_op(self):
         self.assertEqual(bump_tap.bump_cask(CASK, "1.1.1", OLD_DMG), CASK)

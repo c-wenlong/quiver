@@ -980,6 +980,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Mac app is SWE.app now** (SWE Wraps Everything — the product
+  takes the `swe` command's name and Quiver is decommissioned). The
+  bundle is `SWE.app` with bundle id `com.cwenlong.swe`, its Swift
+  modules are `SWECore`/`SWEApp`/`SWEWidgets`/`SWEWidgetsUI`/`SWEFanHelper`,
+  the DMG is `SWE-<version>.dmg`, and its launchd jobs, keychain
+  service and fan helper moved to `com.cwenlong.swe.*` names. On
+  install, the old Quiver.app is quit and removed, its `~/.quiver` data
+  root moves to `~/.swe` (with a `~/.quiver` symlink left behind), its
+  LaunchAgents are renamed onto the new labels, its keychain items move
+  to the new service on first read, and its preferences carry over to
+  the new defaults domain. Sparkle cannot update across a bundle id
+  change, so a Quiver.app install must move to SWE.app once, manually;
+  the release checklist covers it.
 - **New icon and logo everywhere; the pixel-art mascot is gone.** The
   Mac and iPhone app icons, the web app's icons, the landing site and
   the README now use the new mark: three arrowheads above `swe` on a

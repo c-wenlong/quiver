@@ -59,11 +59,59 @@ class LaunchdTest(unittest.TestCase):
         self.assertTrue(launchd.plist_path(self.home).exists())
 
     def test_bundled_swe_is_found_in_applications(self):
-        shim = self.home / "Applications/Quiver.app/Contents/Resources/swe/bin/swe"
+        shim = self.home / "Applications/SWE.app/Contents/Resources/swe/bin/swe"
         shim.parent.mkdir(parents=True)
         shim.write_text("#!/bin/sh\n")
         shim.chmod(0o755)
         self.assertEqual(launchd.bundled_swe(self.home), shim)
+
+    def test_bundled_swe_falls_back_to_quiver_app(self):
+        old = self.home / "Applications/Quiver.app/Contents/Resources/swe/bin/swe"
+        old.parent.mkdir(parents=True)
+        old.write_text("#!/bin/sh\n")
+        old.chmod(0o755)
+        self.assertEqual(launchd.bundled_swe(self.home), old)
+        # Both installed: SWE.app wins.
+        new = self.home / "Applications/SWE.app/Contents/Resources/swe/bin/swe"
+        new.parent.mkdir(parents=True)
+        new.write_text("#!/bin/sh\n")
+        new.chmod(0o755)
+        self.assertEqual(launchd.bundled_swe(self.home), new)
+
+    def test_install_clears_the_legacy_label(self):
+        old_plist = self.home / "Library/LaunchAgents" / f"{launchd.OLD_LABEL}.plist"
+        old_plist.parent.mkdir(parents=True)
+        old_plist.write_bytes(plistlib.dumps({"Label": launchd.OLD_LABEL}))
+        run = FakeLaunchctl()
+        launchd.install(["/x/swe"], self.log, "", home=self.home, run=run,
+                        old_label=launchd.OLD_LABEL)
+        self.assertFalse(old_plist.exists())
+        self.assertEqual(run.calls, ["bootout", "bootstrap", "bootout"])
+
+    def test_uninstall_removes_the_legacy_plist(self):
+        launchd.install(["/x/swe"], self.log, "", home=self.home, run=FakeLaunchctl())
+        old_plist = self.home / "Library/LaunchAgents" / f"{launchd.OLD_LABEL}.plist"
+        old_plist.write_bytes(plistlib.dumps({"Label": launchd.OLD_LABEL}))
+        self.assertTrue(launchd.uninstall(home=self.home, run=FakeLaunchctl(),
+                                    old_label=launchd.OLD_LABEL))
+        self.assertFalse(old_plist.exists())
+
+    def test_status_falls_back_to_the_legacy_label(self):
+        args, running = launchd.status(home=self.home, run=FakeLaunchctl(),
+                                       old_label=launchd.OLD_LABEL)
+        self.assertIsNone(args)
+        old_plist = self.home / "Library/LaunchAgents" / f"{launchd.OLD_LABEL}.plist"
+        old_plist.parent.mkdir(parents=True)
+        old_plist.write_bytes(plistlib.dumps(
+            {"Label": launchd.OLD_LABEL, "ProgramArguments": ["/old/swe", "remote", "serve"]}))
+        args, running = launchd.status(home=self.home, run=FakeLaunchctl(),
+                                       old_label=launchd.OLD_LABEL)
+        self.assertEqual(args, ["/old/swe", "remote", "serve"])
+        # The new label wins when both are installed.
+        launchd.install(["/x/swe"], self.log, "", home=self.home, run=FakeLaunchctl())
+        args, _ = launchd.status(home=self.home, run=FakeLaunchctl(),
+                                 old_label=launchd.OLD_LABEL)
+        self.assertEqual(args, ["/x/swe"])
 
     def test_protected_dir(self):
         self.assertEqual(launchd.protected_dir(self.home / "Desktop/p/.venv/bin/swe", self.home), "Desktop")

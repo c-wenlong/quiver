@@ -1,8 +1,8 @@
-# dmgbuild settings for Quiver's install window: the app on the left, an
+# dmgbuild settings for SWE's install window: the app on the left, an
 # Applications link on the right, the background from
 # make-dmg-background.swift behind them. make-dmg.sh passes the paths:
 #
-#   dmgbuild -s dmg-settings.py -D app=... -D background=... Quiver out.dmg
+#   dmgbuild -s dmg-settings.py -D app=... -D background=... SWE out.dmg
 #
 # The window and icon geometry must match make-dmg-background.swift.
 import os.path

@@ -232,7 +232,7 @@ HELP = {
   {c('cyan', '--agent=<name>')}               Filter by agent (claude, codex, opencode, droid, ...)
   {c('cyan', '--here')}                       Filter to current directory only
   {c('cyan', '--search=<text>')}              Filter title/path/agent/session id, and transcript
-                                            content when a search index exists (the Quiver
+                                            content when a search index exists (the SWE
                                             app's, or swe session index) (alias: -q, --grep)
   {c('cyan', '-d N, --days=<N>')}             Include today and the preceding N-1 calendar dates
   {c('cyan', '-w N, --weeks=<N>')}            Include the latest N times 7 calendar dates

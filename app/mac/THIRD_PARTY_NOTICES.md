@@ -2,7 +2,7 @@
 
 ## LiteLLM model prices
 
-`Sources/QuiverCore/Resources/pricing.json` is a trimmed copy of
+`Sources/SWECore/Resources/pricing.json` is a trimmed copy of
 [`model_prices_and_context_window.json`](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)
 from LiteLLM, made with `script/trim-litellm-pricing.py`. The daily refresh
 downloads the same file. It is used under the MIT License:
@@ -64,18 +64,18 @@ SOFTWARE.
 
 ## Geist and Geist Mono
 
-`Sources/QuiverCore/Resources/Geist.ttf`, `Geist-Italic.ttf`, `GeistMono.ttf`
+`Sources/SWECore/Resources/Geist.ttf`, `Geist-Italic.ttf`, `GeistMono.ttf`
 and `GeistMono-Italic.ttf` are the variable fonts from
 [Geist](https://github.com/vercel/geist-font) v1.7.2 (`Geist[wght].ttf`,
 `Geist-Italic[wght].ttf`, `GeistMono[wght].ttf` and
 `GeistMono-Italic[wght].ttf`, renamed). They are the app's
 typefaces. Copyright 2024 The Geist Project Authors, used under the SIL Open
 Font License 1.1, whose full text ships beside them as
-`Sources/QuiverCore/Resources/Geist-OFL.txt`.
+`Sources/SWECore/Resources/Geist-OFL.txt`.
 
 ## Orca
 
-The session search index (`Sources/QuiverCore/Search/`) ports Orca's
+The session search index (`Sources/SWECore/Search/`) ports Orca's
 agent-source table, transcript merge and scan rules — the comment `Orca's`
 marks those spots. Orca is used under the MIT License:
 
@@ -105,7 +105,7 @@ SOFTWARE.
 
 ## Switchboard
 
-`Sources/QuiverCore/Usage/UsageSupport.swift` ports Switchboard's
+`Sources/SWECore/Usage/UsageSupport.swift` ports Switchboard's
 `describePlan`, and the profile model (one config home and one desktop data
 folder per profile) follows it. Switchboard is used under the MIT License:
 
@@ -135,7 +135,7 @@ SOFTWARE.
 
 ## Stats
 
-The SMC sensor key map in `Sources/QuiverCore/Compute/Temperature.swift`
+The SMC sensor key map in `Sources/SWECore/Compute/Temperature.swift`
 follows Stats (github.com/exelban/stats), used under the MIT License:
 
 ```
@@ -220,8 +220,8 @@ the design. No code was copied from either.
 
 ## Harness logos
 
-`Sources/QuiverCore/Resources/harness-*.svg` are the logos of the coding
-harnesses and providers Quiver lists, imported by
+`Sources/SWECore/Resources/harness-*.svg` are the logos of the coding
+harnesses and providers SWE lists, imported by
 `script/import-harness-icons.py`: Claude, Codex, Gemini, OpenCode, Qwen,
 Mistral, Antigravity, Command Code, Qoder CN and Ark keep their brand colours
 (`harness-<id>-color.svg`), the rest are single-colour marks. Every logo is a trademark of its owner

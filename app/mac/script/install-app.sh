@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build origin/main and install it as ~/Applications/Quiver.app.
+# Build origin/main and install it as ~/Applications/SWE.app.
 #
 #   app/mac/script/install-app.sh [debug|release]   # default: release
 #
@@ -9,16 +9,16 @@
 # origin/main in a worktree of its own under ~/.swe/cache/install,
 # kept between runs so each build is incremental, then swaps the bundle
 # in and relaunches it. Sessions check their own changes with a separate
-# `open -n app/mac/build/Quiver.app` and never write to the installed copy.
+# `open -n app/mac/build/SWE.app` and never write to the installed copy.
 #
 # A failed fetch or build stops before anything is touched: the old app
 # keeps running. One install runs at a time, and one stopped mid-swap
 # puts the old app back.
 #
 # Overrides:
-#   QUIVER_INSTALL_REF   what to build (default origin/main)
-#   QUIVER_INSTALL_DIR   where Quiver.app goes (default ~/Applications)
-#   QUIVER_INSTALL_CACHE the worktree, lock and build output (default
+#   SWE_INSTALL_REF      what to build (default origin/main)
+#   SWE_INSTALL_DIR      where SWE.app goes (default ~/Applications)
+#   SWE_INSTALL_CACHE the worktree, lock and build output (default
 #                        ~/.swe/cache/install)
 set -euo pipefail
 
@@ -30,19 +30,19 @@ esac
 # Run under a power assertion, so a build driven over SSH isn't killed
 # when the Mac idles to sleep after the session ends. Once only: the
 # variable stops the re-exec from looping.
-if [ "$(uname)" = Darwin ] && [ -z "${QUIVER_INSTALL_CAFFEINATED:-}" ] &&
+if [ "$(uname)" = Darwin ] && [ -z "${SWE_INSTALL_CAFFEINATED:-${QUIVER_INSTALL_CAFFEINATED:-}}" ] &&
    command -v caffeinate >/dev/null 2>&1; then
-  export QUIVER_INSTALL_CAFFEINATED=1
+  export SWE_INSTALL_CAFFEINATED=1
   exec caffeinate -i "$BASH" "$0" "$@"
 fi
 repo="$(cd "$(dirname "$0")/../../.." && pwd)"
-ref="${QUIVER_INSTALL_REF:-origin/main}"
-dest="${QUIVER_INSTALL_DIR:-$HOME/Applications}/Quiver.app"
-cache="${QUIVER_INSTALL_CACHE:-$HOME/.swe/cache/install}"
+ref="${SWE_INSTALL_REF:-${QUIVER_INSTALL_REF:-origin/main}}"
+dest="${SWE_INSTALL_DIR:-${QUIVER_INSTALL_DIR:-$HOME/Applications}}/SWE.app"
+cache="${SWE_INSTALL_CACHE:-${QUIVER_INSTALL_CACHE:-$HOME/.swe/cache/install}}"
 src="$cache/src"
 out="$cache/out"
 staged="$dest.installing"
-binary="$dest/Contents/MacOS/Quiver"
+binary="$dest/Contents/MacOS/SWE"
 
 # Two locks: the cache's guards its worktree and build output, the
 # destination's guards the swap, so installs that share either one wait
@@ -107,18 +107,18 @@ echo "install-app: building $ref ($commit), $config"
 
 # Stamp the user's checkout as the source, as a build from it would be:
 # Settings > Updates compares against it and rebuilds from it.
-# A QUIVER_INSTALL_REF from before the app moved to app/mac has its build
+# A SWE_INSTALL_REF from before the app moved to app/mac has its build
 # script at app/script.
 builder="$src/app/mac/script/build-app.sh"
 [ -f "$builder" ] || builder="$src/app/script/build-app.sh"
 rm -rf "$out"
-QUIVER_BUILD_DIR="$out" QUIVER_SOURCE_PATH="$repo" \
+SWE_BUILD_DIR="$out" SWE_SOURCE_PATH="$repo" \
   "$builder" "$config" >/dev/null
 
 # Stage next to the destination first, so the swap below is two renames
 # on one volume and the running app is down only for the restart.
 rm -rf "$staged"
-ditto "$out/Quiver.app" "$staged"
+ditto "$out/SWE.app" "$staged"
 
 # Processes running the installed binary, matched as a literal path.
 # Only the installed copy: dev builds share the bundle id, so quitting by
@@ -139,7 +139,7 @@ if [ -n "$running" ]; then
     sleep 0.2
   done
   if [ -n "$(installed_pids)" ]; then
-    echo "install-app: Quiver did not quit (unsaved edits waiting on its Quit alert?); nothing was replaced" >&2
+    echo "install-app: SWE did not quit (unsaved edits waiting on its Quit alert?); nothing was replaced" >&2
     exit 1
   fi
 fi
@@ -150,20 +150,69 @@ if [ -e "$dest" ]; then
 fi
 mv "$staged" "$dest"
 # A remote hub or satellite LaunchAgent (swe remote serve|agent --install)
-# runs this bundle's swe: restart it so it runs the new code rather than a
-# mix of both.
+# runs this bundle's swe. Labels were com.cwenlong.quiver.remote-* while the
+# app was Quiver.app: an old plist is moved onto the new label, repointing
+# it at this bundle when it ran an app-bundle swe.
 for role in hub agent; do
-  label="com.cwenlong.quiver.remote-$role"
-  plist="$HOME/Library/LaunchAgents/$label.plist"
+  new_label="com.cwenlong.swe.remote-$role"
+  old_plist="$HOME/Library/LaunchAgents/com.cwenlong.quiver.remote-$role.plist"
+  plist="$HOME/Library/LaunchAgents/$new_label.plist"
+  if [ -f "$old_plist" ]; then
+    launchctl bootout "gui/$(id -u)/com.cwenlong.quiver.remote-$role" >/dev/null 2>&1 || true
+    if [ -f "$plist" ]; then
+      rm -f "$old_plist"
+    else
+      cp "$old_plist" "$plist"
+      /usr/libexec/PlistBuddy -c "Set :Label $new_label" "$plist" 2>/dev/null || true
+      i=0
+      while arg="$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:$i" "$plist" 2>/dev/null)"; do
+        case "$arg" in
+          *.app/Contents/*)
+            /usr/libexec/PlistBuddy -c "Set :ProgramArguments:$i $dest${arg#*.app}" "$plist" 2>/dev/null || true ;;
+        esac
+        i=$((i + 1))
+      done
+      rm -f "$old_plist"
+      launchctl bootstrap "gui/$(id -u)" "$plist" >/dev/null 2>&1 \
+        && echo "install-app: moved the remote $role agent to $new_label" || true
+    fi
+  fi
   [ -f "$plist" ] || continue
   program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist" 2>/dev/null || true)"
   case "$program" in
     "$dest"/*)
-      launchctl kickstart -k "gui/$(id -u)/$label" >/dev/null 2>&1 \
+      launchctl kickstart -k "gui/$(id -u)/$new_label" >/dev/null 2>&1 \
         && echo "install-app: restarted the remote $role on the new bundle" || true
       ;;
   esac
 done
 rm -rf "$dest.old"
+# The Quiver.app this replaces: quit it and drop the bundle so the Dock
+# and LaunchServices see one SWE.app. A copy that will not quit stays; the
+# next install retries.
+install_dir="${SWE_INSTALL_DIR:-${QUIVER_INSTALL_DIR:-$HOME/Applications}}"
+old_app="$install_dir/Quiver.app"
+pids_of() {
+  ps -axo pid=,comm= | B="$1" awk '{
+    pid = $1; sub(/^[ \t]*[0-9]+[ \t]+/, "")
+    if ($0 == ENVIRON["B"]) print pid
+  }'
+}
+if [ -e "$old_app" ] && [ "$old_app" != "$dest" ]; then
+  old_binary="$old_app/Contents/MacOS/Quiver"
+  old_pids="$(pids_of "$old_binary")"
+  if [ -n "$old_pids" ]; then
+    kill -TERM $old_pids
+    for _ in $(seq 1 50); do
+      [ -z "$(pids_of "$old_binary")" ] && break
+      sleep 0.2
+    done
+  fi
+  if [ -z "$(pids_of "$old_binary")" ]; then
+    rm -rf "$old_app" && echo "install-app: removed $old_app"
+  else
+    echo "install-app: $old_app is still running; remove it after it quits" >&2
+  fi
+fi
 open "$dest"
 echo "install-app: installed $commit at $dest"

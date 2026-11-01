@@ -79,7 +79,10 @@ def detected_harnesses() -> list[str]:
 # provider order and the ones switched off here. Resolved at each read
 # under the current home (None); tests set a path.
 APP_PREFS: Path | None = None
-_APP_PREFS_REL = "Library/Preferences/com.cwenlong.quiver.plist"
+# The app's defaults follow its bundle id; Quiver.app's plist is the
+# fallback until LegacyDefaults has carried it over.
+_APP_PREFS_REL = "Library/Preferences/com.cwenlong.swe.plist"
+_OLD_APP_PREFS_REL = "Library/Preferences/com.cwenlong.quiver.plist"
 
 
 def _provider_visibility() -> tuple[list[str], set[str]]:
@@ -87,11 +90,15 @@ def _provider_visibility() -> tuple[list[str], set[str]]:
     empty when the app has never run here (a Linux hub)."""
     import plistlib
 
-    try:
-        with open(APP_PREFS or Path.home() / _APP_PREFS_REL, "rb") as fh:
-            prefs = plistlib.load(fh)
-    except (OSError, ValueError, plistlib.InvalidFileException):
-        return [], set()
+    prefs: dict = {}
+    for rel in (APP_PREFS,) if APP_PREFS else (
+            Path.home() / _APP_PREFS_REL, Path.home() / _OLD_APP_PREFS_REL):
+        try:
+            with open(rel, "rb") as fh:
+                prefs = plistlib.load(fh)
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            continue
+        break
     order = prefs.get("providerOrder")
     disabled = prefs.get("providerDisabled")
     return (

@@ -7,7 +7,7 @@
 # runner it has frozen outright: no output for hours until GitHub's job
 # limit killed it, with nothing in the log saying which test held the
 # process. This builds first, so the build's own time does not count, then
-# gives the run QUIVER_TEST_LIMIT seconds (default 600). A run past that
+# gives the run SWE_TEST_LIMIT seconds (default 600). A run past that
 # prints the stack of every thread in the test process, so the log names
 # what blocked, then is killed and the script exits 124.
 #
@@ -18,7 +18,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
-limit="${QUIVER_TEST_LIMIT:-600}"
+limit="${SWE_TEST_LIMIT:-600}"
 
 swift build --build-tests
 

@@ -17,7 +17,7 @@ remembering CLI commands.
 | Accounts page | Limits merged with Switchboard-style profiles: each account card has its limit bars, when they were fetched, and Open app / Terminal buttons |
 | Kept from TokenTracker | Sessions and Limits (the most important), menu bar and widgets, Skills (built on quiver hub), Service Status (extended to more services), Settings, Tokens overview. Claude IP Check at low priority. |
 | Out of scope | Leaderboard, Achievements, Pet. Cloud sync narrowed by M9: syncing app state stays out, remote access to sessions is in. |
-| Other apps' data | None shared. Quiver replaces Switchboard, TokenTracker, AIUsage and OpenUsage, which get deleted, so it never reads or writes their files, settings or caches, not even to import. |
+| Other apps' data | None shared. SWE replaces Switchboard, TokenTracker, AIUsage and OpenUsage, which get deleted, so it never reads or writes their files, settings or caches, not even to import. |
 | Profile store | Switchboard's model (one config home and one desktop data folder per profile, launched with the env var and `--user-data-dir`), kept under `~/.swe/accounts` |
 
 ## Borrowed code
@@ -57,11 +57,11 @@ remembering CLI commands.
   and expire stale readings instead of showing them as current
 - [x] Account cards with bars, plan badge, reset time and "fetched N min ago"
 - [x] Menu bar panel shows the same bars
-- [x] Ask `swe` only for the harnesses Quiver has no account for (`--exclude`, #131), so Claude and Codex are not polled twice
+- [x] Ask `swe` only for the harnesses SWE has no account for (`--exclude`, #131), so Claude and Codex are not polled twice
 
 ### M3. Overview
 - [x] Incremental scanner for Claude and Codex JSONL, sqlite for OpenCode and Devin
-  (`QuiverCore/Ledger`, persisted to `~/.swe/data/ledger/ledger.sqlite`)
+  (`SWECore/Ledger`, persisted to `~/.swe/data/ledger/ledger.sqlite`)
 - [x] Pricing from a bundled LiteLLM snapshot, refreshed daily before a scan
   (`PricingStore`, kept with every past price in `~/.swe/data/catalog/catalog.sqlite`)
 - [x] Overview page: total tokens and cost, harness split, daily table, heatmap
@@ -100,7 +100,7 @@ Modelled on TokenTracker's Sessions page.
 
 ### M7. Service status
 - [x] Status of the services the harnesses depend on (Anthropic, OpenAI, GitHub, Cursor and more), from their public status pages
-  (`QuiverCore/Status`: Statuspage feeds plus Google Cloud's for Gemini, cached at `~/.swe/cache/service-status.json`)
+  (`SWECore/Status`: Statuspage feeds plus Google Cloud's for Gemini, cached at `~/.swe/cache/service-status.json`)
 - [x] Incidents surfaced in the menu bar when a service is degraded
 
 ### M8. Download and first run (DMG)
@@ -142,11 +142,11 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 - [x] Services: Sessions and Models say when a Devin or Artificial Analysis key is needed, and link to Settings › Services and the token page. ([#406](https://github.com/c-wenlong/quiver/pull/406))
 
 **Phase 4. Release pipeline**
-- [x] Prod builds hide the channel picker and Rebuild ([#409](https://github.com/c-wenlong/quiver/pull/409)). Releases build with `QUIVER_CHANNEL=prod` once the release job below exists.
-- [x] Sign with Developer ID, hardened runtime and `--timestamp`, then notarize and staple ([#414](https://github.com/c-wenlong/quiver/pull/414)). Prod signs Developer ID with runtime+timestamp; `QUIVER_NOTARY_PROFILE=quiver-notary` zips+submits+staples — a local prod build was notarized `Accepted` and passes `spctl` as Notarized Developer ID.
+- [x] Prod builds hide the channel picker and Rebuild ([#409](https://github.com/c-wenlong/quiver/pull/409)). Releases build with `SWE_CHANNEL=prod` once the release job below exists.
+- [x] Sign with Developer ID, hardened runtime and `--timestamp`, then notarize and staple ([#414](https://github.com/c-wenlong/quiver/pull/414)). Prod signs Developer ID with runtime+timestamp; `SWE_NOTARY_PROFILE=quiver-notary` zips+submits+staples — a local prod build was notarized `Accepted` and passes `spctl` as Notarized Developer ID.
 - [x] A macOS 26 release job that builds, signs, notarizes, makes the DMG and attaches it to the GitHub release ([#415](https://github.com/c-wenlong/quiver/pull/415), [#417](https://github.com/c-wenlong/quiver/pull/417)). Runs unsigned until the `MACOS_CERTIFICATE`, `NOTARY_*` and `SPARKLE_PRIVATE_KEY` secrets land. `script/make-dmg.sh` owns the post-build path (notarize the .app, stage, sign, notarize and staple the DMG) and runs locally too; prod builds refuse non-arm64 hosts, a dirty checkout and a missing version tag.
 - [x] Version stamps come from `git describe`, which reads `0.0.0` on a shallow CI checkout. Fetch tags or pass the version in. ([#411](https://github.com/c-wenlong/quiver/pull/411))
-- [x] Universal build or Apple Silicon only: Apple Silicon only, decided. macOS 26 is the floor; release notes and the download page should say so. `build-app.sh` refuses a `QUIVER_CHANNEL=prod` build on other hosts, and release.yml compiles the release config and smoke-tests the bundled swe and the app binary on every tag (PRs run `swift test` only).
+- [x] Universal build or Apple Silicon only: Apple Silicon only, decided. macOS 26 is the floor; release notes and the download page should say so. `build-app.sh` refuses a `SWE_CHANNEL=prod` build on other hosts, and release.yml compiles the release config and smoke-tests the bundled swe and the app binary on every tag (PRs run `swift test` only).
 - [x] In-app updates (Sparkle and an appcast). Sparkle 2.10.0 bundled + signed ([#416](https://github.com/c-wenlong/quiver/pull/416)); prod Info.plist carries SUFeedURL + SUPublicEDKey; the release job signs `appcast.xml` with `SPARKLE_PRIVATE_KEY` ([#417](https://github.com/c-wenlong/quiver/pull/417)).
 - [x] `NSAppleEventsUsageDescription` (Sign in, Resume and Run in Terminal use `osascript`). ([#412](https://github.com/c-wenlong/quiver/pull/412))
 - [x] Keychain writes pass the secret on `security`'s argv (`UsageProduction.swift`). Use stdin or the Security framework. ([#410](https://github.com/c-wenlong/quiver/pull/410))
@@ -156,7 +156,7 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 - [x] First ledger scan: show files done out of total, and partial results. A heavy user waits minutes behind a spinner.
 - [ ] Explain the Desktop and Documents folder prompt before it appears (first Sessions or Calendar load).
 - [ ] Don't start the Cursor, Devin cloud and Codex daily pollers for users without those harnesses.
-- [ ] Fan helper: offer it only on Macs with fans, remove it when Quiver is removed, and reinstall a stale helper binary after an update.
+- [ ] Fan helper: offer it only on Macs with fans, remove it when SWE is removed, and reinstall a stale helper binary after an update.
 - [ ] Menu bar incidents: show only the providers this Mac uses.
 
 ### M9. Remote control

@@ -1,7 +1,7 @@
 # Skills
 
 The Mac app's Skills page (`SkillsPage.swift`, `SkillDetailView` in
-`PrimitiveDetail.swift`, `SkillsModel` in `QuiverCore/Primitives/Skills.swift`)
+`PrimitiveDetail.swift`, `SkillsModel` in `SWECore/Primitives/Skills.swift`)
 as a web page. It links and unlinks harness skills folders as the app's
 Harness links popover does, and writes a new skill as the app's New skill
 sheet does; everything else is read only. Module

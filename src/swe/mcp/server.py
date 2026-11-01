@@ -38,7 +38,7 @@ def get_recent_sessions(limit: int = 10, agent: str = None, directory_path: str 
         limit: Number of sessions to return (default 10)
         agent: Filter by a specific agent (e.g., 'claude', 'opencode', 'gemini')
         directory_path: Filter to only show sessions that occurred within this absolute directory path or its subdirectories.
-        search: Optional text filter. When the Quiver app's search index exists it matches transcript content and each
+        search: Optional text filter. When the SWE app's search index exists it matches transcript content and each
                 matched session carries a 'match:' snippet line; otherwise it filters title/path/agent/session id.
     """
     sessions = get_all_sessions(

@@ -294,19 +294,21 @@ class Service:
     unit: str         # systemd
     description: str  # systemd Description=
     log_name: str     # under ~/.swe/data/remote/
+    old_label: str    # launchd label the pre-rename app installed under
 
 
 HUB = Service("hub", "serve", launchd.LABEL, systemd.UNIT,
-              systemd.HUB_DESCRIPTION, "serve.log")
+              systemd.HUB_DESCRIPTION, "serve.log", launchd.OLD_LABEL)
 AGENT = Service("agent", "agent", launchd.AGENT_LABEL, systemd.AGENT_UNIT,
-                "SWE remote agent (swe remote agent)", "agent.log")
+                "SWE remote agent (swe remote agent)", "agent.log",
+                launchd.OLD_AGENT_LABEL)
 
 
 def _service_swe(service: Service) -> tuple[str, str | None]:
     """The ``swe`` a background service runs, or an error saying why it
     can't run.
 
-    On a Mac it runs Quiver.app's bundled swe when the app is installed,
+    On a Mac it runs SWE.app's bundled swe when the app is installed,
     else this swe, unless that sits where macOS keeps launchd agents out.
     """
     darwin = sys.platform == "darwin"
@@ -320,7 +322,7 @@ def _service_swe(service: Service) -> tuple[str, str | None]:
         if folder:
             return "", (f"{swe} is in ~/{folder}, which macOS blocks a LaunchAgent "
                         f"from reading, so the {service.name} would fail at every start. "
-                        "Install Quiver.app (app/mac/script/install-app.sh) and run "
+                        "Install SWE.app (app/mac/script/install-app.sh) and run "
                         "--install again: the agent then runs the app's bundled swe.")
     return swe, None
 
@@ -372,7 +374,8 @@ def service_status(service: Service = HUB, home: Path | None = None,
                    run=subprocess.run) -> tuple[list[str] | None, bool]:
     """(installed command line or None, running) for ``service``."""
     if sys.platform == "darwin":
-        return launchd.status(home, run=run, label=service.label)
+        return launchd.status(home, run=run, label=service.label,
+                              old_label=service.old_label)
     return systemd.status(home, run=run, unit=service.unit)
 
 
@@ -420,7 +423,8 @@ def install_service(program: list[str], log_path: Path, home: Path | None = None
     if sys.platform == "darwin":
         try:
             return launchd.install(program, log_path, path_env, home=home, run=run,
-                                   label=service.label), ""
+                                   label=service.label,
+                                   old_label=service.old_label), ""
         except RuntimeError as exc:
             raise RuntimeError(f"launchctl could not load the {service.name}: {exc}") from exc
     try:
@@ -436,7 +440,8 @@ def install_service(program: list[str], log_path: Path, home: Path | None = None
 def _cmd_uninstall_service(service: Service) -> int:
     darwin = sys.platform == "darwin"
     try:
-        removed = (launchd.uninstall(label=service.label) if darwin
+        removed = (launchd.uninstall(label=service.label,
+                                     old_label=service.old_label) if darwin
                    else systemd.uninstall(unit=service.unit))
     except RuntimeError as exc:
         print(c("red", f"could not stop the {service.name}: {exc}"), file=sys.stderr)

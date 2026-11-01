@@ -8,7 +8,7 @@ it whenever it exits. The agent runs ``serve --tailnet``, which exits
 instead of falling back to localhost while Tailscale is still coming up,
 so launchd retries until the tailnet address exists.
 
-The agent runs Quiver.app's bundled ``swe`` when the app is installed.
+The agent runs SWE.app's bundled ``swe`` when the app is installed.
 macOS privacy protection blocks a launchd agent from reading ~/Desktop,
 ~/Documents and ~/Downloads, so a repo checkout's ``.venv/bin/swe`` there
 dies at startup ("Operation not permitted" on ``pyvenv.cfg``). The
@@ -29,10 +29,15 @@ import time
 from pathlib import Path
 from typing import Callable
 
-LABEL = "com.cwenlong.quiver.remote-hub"
+LABEL = "com.cwenlong.swe.remote-hub"
 # The satellite (``swe remote agent --install``) runs as its own agent,
 # so installing one never reloads or stops the other.
-AGENT_LABEL = "com.cwenlong.quiver.remote-agent"
+AGENT_LABEL = "com.cwenlong.swe.remote-agent"
+# The labels Quiver.app installed under before the app was renamed:
+# install clears them so a renamed-away job cannot keep an old bundle
+# alive, and status still reports one that is all a machine has.
+OLD_LABEL = "com.cwenlong.quiver.remote-hub"
+OLD_AGENT_LABEL = "com.cwenlong.quiver.remote-agent"
 # Seconds launchd waits before restarting a hub that exited, so a hub
 # waiting on Tailscale retries a few times a minute, not in a hot loop.
 THROTTLE_S = 15
@@ -48,11 +53,16 @@ def plist_path(home: Path | None = None, label: str = LABEL) -> Path:
 
 
 def bundled_swe(home: Path | None = None) -> Path | None:
-    """Quiver.app's ``swe`` shim, from ~/Applications or /Applications."""
+    """SWE.app's ``swe`` shim, from ~/Applications or /Applications.
+
+    Quiver.app is the fallback for the span between the rename and the
+    old bundle's removal.
+    """
     for apps in ((home or Path.home()) / "Applications", Path("/Applications")):
-        shim = apps / "Quiver.app" / "Contents" / "Resources" / "swe" / "bin" / "swe"
-        if os.access(shim, os.X_OK):
-            return shim
+        for app in ("SWE.app", "Quiver.app"):
+            shim = apps / app / "Contents" / "Resources" / "swe" / "bin" / "swe"
+            if os.access(shim, os.X_OK):
+                return shim
     return None
 
 
@@ -114,8 +124,13 @@ def install(program: list[str], log_path: Path, path_env: str,
             home: Path | None = None,
             run: Runner = subprocess.run,
             sleep: Callable[[float], None] = time.sleep,
-            label: str = LABEL, process_type: str = "Background") -> Path:
+            label: str = LABEL, old_label: str | None = None,
+            process_type: str = "Background") -> Path:
     """Write the plist and (re)load it. Reinstalling restarts the hub.
+
+    ``old_label``, the name the pre-rename app installed under, is
+    cleared once the new job loads: a Quiver.app agent left behind would
+    keep running a bundle the rename removed.
 
     Raises RuntimeError with launchctl's message when loading fails.
     """
@@ -132,6 +147,10 @@ def install(program: list[str], log_path: Path, path_env: str,
         res = run(["launchctl", "bootstrap", _domain(), str(path)],
                   capture_output=True, text=True, stdin=subprocess.DEVNULL)
         if res.returncode == 0:
+            if old_label and old_label != label:
+                run(["launchctl", "bootout", f"{_domain()}/{old_label}"],
+                    capture_output=True, text=True, stdin=subprocess.DEVNULL)
+                plist_path(home, old_label).unlink(missing_ok=True)
             return path
         msg = (res.stderr or res.stdout or "").strip()
         if "input/output error" not in msg.lower() or attempt == BOOTSTRAP_TRIES - 1:
@@ -141,8 +160,11 @@ def install(program: list[str], log_path: Path, path_env: str,
 
 
 def uninstall(home: Path | None = None, run: Runner = subprocess.run,
-              label: str = LABEL) -> bool:
+              label: str = LABEL, old_label: str | None = None) -> bool:
     """Stop the hub and remove the plist. False when none was installed.
+
+    ``old_label`` clears the pre-rename job too, so an uninstall really
+    leaves nothing behind.
 
     Raises RuntimeError, keeping the plist, when launchctl fails to stop
     a job that is still loaded; a failed bootout of an absent job is
@@ -157,6 +179,13 @@ def uninstall(home: Path | None = None, run: Runner = subprocess.run,
     existed = path.exists()
     if existed:
         path.unlink()
+    if old_label and old_label != label:
+        old = plist_path(home, old_label)
+        run(["launchctl", "bootout", f"{_domain()}/{old_label}"],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if old.exists():
+            old.unlink()
+            existed = True
     return existed or res.returncode == 0
 
 
@@ -171,12 +200,21 @@ def loaded_pid(run: Runner = subprocess.run, label: str = LABEL) -> tuple[bool, 
 
 
 def status(home: Path | None = None, run: Runner = subprocess.run,
-           label: str = LABEL) -> tuple[list[str] | None, bool]:
+           label: str = LABEL, old_label: str | None = None
+           ) -> tuple[list[str] | None, bool]:
     """(ProgramArguments, running): the installed agent's command line,
-    or None without a plist, and whether launchd runs it now."""
-    try:
-        args = plistlib.loads(plist_path(home, label).read_bytes()).get("ProgramArguments")
-    except (OSError, ValueError, plistlib.InvalidFileException):
-        return None, False
-    loaded, pid = loaded_pid(run, label)
-    return (list(args) if isinstance(args, list) else None), bool(loaded and pid)
+    or None without a plist, and whether launchd runs it now.
+
+    A machine the rename never reached reports its ``old_label`` job, so
+    status does not call a still-running Quiver.app agent absent.
+    """
+    args: list[str] | None = None
+    for name in (label,) + ((old_label,) if old_label and old_label != label else ()):
+        try:
+            read = plistlib.loads(plist_path(home, name).read_bytes()).get("ProgramArguments")
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            continue
+        args = list(read) if isinstance(read, list) else None
+        loaded, pid = loaded_pid(run, name)
+        return args, bool(loaded and pid)
+    return None, False

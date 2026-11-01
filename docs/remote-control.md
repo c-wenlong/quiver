@@ -1243,7 +1243,7 @@ every word of it); then its details (title, harness, folder, id
 together) do; then its transcript holds the exact phrase, all the words,
 or any word. The transcript tiers come from the FTS5 index at
 `~/.swe/data/search/search.sqlite` when it exists on the hub machine.
-The Quiver app writes it on a Mac; anywhere else, `swe session index --on`
+The SWE app writes it on a Mac; anywhere else, `swe session index --on`
 makes the hub index agent transcripts every two minutes
 (`sessions/search_writer.py`; [data-model.md](data-model.md) lists the harnesses).
 Details match as case-insensitive text (the Mac app's Sessions match;
@@ -1346,9 +1346,9 @@ phone out), and `500 ssh_key_left` when the device is out but its
 
 A hub started from a shell dies with the login session, and nothing
 restarts it. `swe remote serve --install` writes
-`~/Library/LaunchAgents/com.cwenlong.quiver.remote-hub.plist` with
+`~/Library/LaunchAgents/com.cwenlong.swe.remote-hub.plist` with
 `RunAtLoad` and `KeepAlive`, so the hub starts at login and launchd
-restarts it 15 s after it exits. The agent runs Quiver.app's bundled
+restarts it 15 s after it exits. The agent runs SWE.app's bundled
 `swe` when the app is installed, and otherwise the `swe` that installed
 it. macOS privacy protection blocks a launchd agent from reading
 `~/Desktop`, `~/Documents` and `~/Downloads`, so a checkout's
@@ -1378,7 +1378,7 @@ under its own init system.
 `swe remote agent --install` does the same for a satellite, through the
 same code (`commands.Service`: one record per service with its launchd
 label, systemd unit and log). It writes its own
-`~/Library/LaunchAgents/com.cwenlong.quiver.remote-agent.plist` on a
+`~/Library/LaunchAgents/com.cwenlong.swe.remote-agent.plist` on a
 Mac and `~/.config/systemd/user/quiver-remote-agent.service` on Linux,
 so installing, restarting or removing it never touches the hub's
 service. It runs `swe remote agent` (the app's bundled `swe` on a Mac,
@@ -1458,7 +1458,7 @@ APNs. It replaced an earlier WKWebView wrapper around the SPA once the
 webview's scrolling, keyboard handling and blank offline launch showed.
 Push comes from ntfy for now. A device paired in a browser and the
 app pair separately; each holds its own credential. Share only protocol
-DTOs with QuiverCore: decoding stays server-side and most of QuiverCore
+DTOs with SWECore: decoding stays server-side and most of SWECore
 is AppKit-bound.
 
 Screens:
@@ -1530,7 +1530,7 @@ Screens:
   `review_requested`/`assignee`/`mention`/`ci_fail` — comments on
   subscribed threads stay inbox-only. No phone replies to threads.
 - **Machine** — per-device strip; the MacBook satellite can ride
-  QuiverCore's Compute samplers (CPU/GPU/temps) along this view.
+  SWECore's Compute samplers (CPU/GPU/temps) along this view.
 
 Beyond remote control, nearly free on this architecture: push for
 needs-you/finished/error/limit via the self-hosted ntfy (iOS background

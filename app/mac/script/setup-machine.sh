@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set up a Mac for Quiver development, end to end.
+# Set up a Mac for SWE development, end to end.
 #
 #   app/mac/script/setup-machine.sh [--dry-run] [--only=STEP,...]
 #
@@ -15,7 +15,7 @@
 #             already origin/main.
 #   hub       `swe remote serve --install`, unless the hub LaunchAgent is
 #             already loaded.
-#   app       which Quiver is running vs installed: quits this checkout's
+#   app       which SWE is running vs installed: quits this checkout's
 #             own app/mac/build dev copy and opens the installed app.
 #
 # --dry-run prints the plan and changes nothing (no fetch either, so the
@@ -24,7 +24,7 @@
 # Overrides:
 #   SWE_SETUP_REPO   the checkout to set up (default: the one holding
 #                       this script)
-#   QUIVER_INSTALL_DIR  where Quiver.app is installed (default ~/Applications)
+#   SWE_INSTALL_DIR     where SWE.app is installed (default ~/Applications)
 set -euo pipefail
 
 # Everything runs from main(), so bash has read the whole file before the
@@ -49,7 +49,7 @@ main() {
   done
 
   repo="${SWE_SETUP_REPO:-$(cd "$(dirname "$0")/../../.." && pwd)}"
-  dest="${QUIVER_INSTALL_DIR:-$HOME/Applications}/Quiver.app"
+  dest="${SWE_INSTALL_DIR:-${QUIVER_INSTALL_DIR:-$HOME/Applications}}/SWE.app"
   if [ "$(uname)" != Darwin ] && [ "$only" != checkout ]; then
     echo "setup-machine: only the checkout step runs off macOS (--only=checkout)" >&2
     return 1
@@ -85,7 +85,7 @@ step_xcode() {
     *.app/Contents/Developer)
       if [ ! -e "$dev/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
         say "xcode-select points at $dev, but it has no SwiftUIMacros plugin"
-        say "update Xcode (Quiver needs Xcode 26 or newer), then run this again"
+        say "update Xcode (SWE needs Xcode 26 or newer), then run this again"
         return 1
       fi
       say "ok: $dev"
@@ -98,7 +98,7 @@ step_xcode() {
     say "  sudo xcode-select -s $xcode/Contents/Developer"
   else
     say "Xcode is not installed (${dev:-no developer tools} is selected)."
-    say "Command Line Tools cannot build Quiver: SwiftUIMacros ships with Xcode only."
+    say "Command Line Tools cannot build SWE: SwiftUIMacros ships with Xcode only."
     say "install Xcode from the App Store, then:"
     say "  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
   fi
@@ -227,12 +227,12 @@ step_checkout() {
 }
 
 step_install() {
-  echo "[install] Quiver.app at $dest"
+  echo "[install] SWE.app at $dest"
   local want have="" plist="$dest/Contents/Info.plist"
   want="$(git -C "$repo" rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}' || true)"
   # PlistBuddy reports a missing file on stdout, so check first.
   if [ -f "$plist" ]; then
-    have="$(/usr/libexec/PlistBuddy -c 'Print :QuiverCommit' "$plist" 2>/dev/null || true)"
+    have="$(/usr/libexec/PlistBuddy -c 'Print :SWECommit' "$plist" 2>/dev/null || true)"
   fi
   if [ -n "$want" ] && [ "$have" = "$want" ]; then
     say "already installed at origin/main (${want:0:12})"
@@ -244,8 +244,9 @@ step_install() {
 
 step_hub() {
   echo "[hub] remote hub LaunchAgent"
-  local label=com.cwenlong.quiver.remote-hub swe
-  if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+  local label=com.cwenlong.swe.remote-hub old=com.cwenlong.quiver.remote-hub swe
+  if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 ||
+     launchctl print "gui/$(id -u)/$old" >/dev/null 2>&1; then
     say "already loaded ($label)"
     return 0
   fi
@@ -254,21 +255,21 @@ step_hub() {
   swe="$dest/Contents/Resources/swe/bin/swe"
   if [ ! -x "$swe" ] && [ "$dry" = 0 ]; then
     if ! swe="$(command -v swe)"; then
-      say "no swe: install Quiver.app first (the install step)"; return 1
+      say "no swe: install SWE.app first (the install step)"; return 1
     fi
   fi
   act "$swe" remote serve --install
 }
 
 step_app() {
-  echo "[app] running vs installed Quiver"
-  local binary="$dest/Contents/MacOS/Quiver" installed_running=0 quit="" lines pid path _
-  # Every running Quiver binary, as "pid path" lines.
+  echo "[app] running vs installed SWE"
+  local binary="$dest/Contents/MacOS/SWE" installed_running=0 quit="" lines pid path _
+  # Every running SWE binary, as "pid path" lines.
   lines="$(ps -axo pid=,comm= | awk '{
     pid = $1; sub(/^[ \t]*[0-9]+[ \t]+/, "")
-    if ($0 ~ /\/Quiver\.app\/Contents\/MacOS\/Quiver$/) print pid, $0
+    if ($0 ~ /\/(Quiver|SWE)\.app\/Contents\/MacOS\/(Quiver|SWE)$/) print pid, $0
   }')"
-  if [ -z "$lines" ]; then say "no Quiver is running"; fi
+  if [ -z "$lines" ]; then say "no SWE is running"; fi
   while read -r pid path; do
     [ -n "$pid" ] || continue
     if [ "$path" = "$binary" ]; then

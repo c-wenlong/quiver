@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalise harness logos into QuiverCore's resources.
+"""Normalise harness logos into SWECore's resources.
 
     app/mac/script/import-harness-icons.py SOURCES.tsv
 
@@ -32,7 +32,7 @@ from pathlib import Path
 
 SVG = "http://www.w3.org/2000/svg"
 ET.register_namespace("", SVG)
-OUT = Path(__file__).resolve().parent.parent / "Sources" / "QuiverCore" / "Resources"
+OUT = Path(__file__).resolve().parent.parent / "Sources" / "SWECore" / "Resources"
 # Internal references (href="#gradient") are fine; anything else is not.
 UNSAFE = re.compile(r"<script|\son[a-z]+\s*=|href\s*=\s*[\"'](?!#)|<foreignObject|<image|url\((?!\s*#)", re.I)
 PAINTS = ("fill", "stroke")

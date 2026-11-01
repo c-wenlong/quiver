@@ -1,8 +1,8 @@
 # Settings
 
 Sidebar id `settings`. A port of the Mac app's `SettingsPage`
-(`app/mac/Sources/QuiverApp/Pages/SettingsPage.swift`, the sections in
-`QuiverCore/App/SettingsSection.swift`, and `RemoteSection.swift`,
+(`app/mac/Sources/SWEApp/Pages/SettingsPage.swift`, the sections in
+`SWECore/App/SettingsSection.swift`, and `RemoteSection.swift`,
 `ProvidersSection.swift`, `SidebarSection.swift`,
 `ExperimentalSection.swift`). Files: `webapp/pages/settings.py`,
 `webapp/pages/_qr.py`, `static/pages/settings.js` and `.css`.
@@ -66,7 +66,7 @@ badge where its control would be.
   in, and any device paired from it is signed out, until a pairing from
   it is approved again.
 - **Pair a device** mints a token and opens a sheet like the app's: the
-  QR code, a Browser / Quiver app switch (the `/#pair=` link or the
+  QR code, a Browser / SWE app switch (the `/#pair=` link or the
   `quiver://pair` deep link), the app's instructions, the link, Copy
   link, and a countdown that turns into "Expired — mint a new code".
   Closing the sheet reloads the list, so a phone that paired shows up.

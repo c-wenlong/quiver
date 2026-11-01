@@ -5,7 +5,7 @@ The app reads `swe` only through `--json`. Every response is the envelope
 `.convertFromSnakeCase` and `.secondsSince1970` dates, and refuses a schema
 other than 1. Each command below names the Swift type that decodes `data`
 and the fixture that pins the shape. Fixtures live under
-`app/mac/Tests/QuiverCoreTests/Fixtures/` and run through
+`app/mac/Tests/SWECoreTests/Fixtures/` and run through
 `SweContractTests`.
 
 | Command | `data` decodes to | Fixture |

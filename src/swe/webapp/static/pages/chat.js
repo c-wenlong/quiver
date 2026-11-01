@@ -664,7 +664,7 @@ const SessionChat = (() => {
      bodies and fenced blocks — tokenised by a small hand-rolled scanner
      (the web app has no build step, so no highlighter library). The same
      rules live, in Swift, in
-     app/mac/Sources/QuiverCore/Syntax/SyntaxHighlight.swift; keep the
+     app/mac/Sources/SWECore/Syntax/SyntaxHighlight.swift; keep the
      two in step. Token classes live in chat.css, their colours in
      styles.css's --tk-* variables (Theme.swift's syntax* colours). */
 
