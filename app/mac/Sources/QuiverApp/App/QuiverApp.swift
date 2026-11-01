@@ -142,13 +142,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     /// A GitHub banner click routes to the repo's board, or the Inbox
-    /// when it isn't pinned. Limit banners carry no `gh` marker and are
+    /// when it isn't pinned; a service status banner opens Service
+    /// status. Limit banners carry no `gh` marker and are
     /// left to the OS default.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse) async {
         // Only the click routes — dismissing a banner must not open a window.
         guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
         let info = response.notification.request.content.userInfo
+        if info["serviceStatus"] as? Bool == true {
+            await MainActor.run { AppModel.shared.openServiceStatus() }
+            return
+        }
         guard info["gh"] as? Bool == true else { return }
         let repo = info["repo"] as? String ?? ""
         let type = info["type"] as? String ?? ""

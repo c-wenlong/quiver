@@ -124,6 +124,17 @@ final class AppModel {
         }
     }
 
+    /// A service status banner's click.
+    func openServiceStatus() {
+        NSApp.activate()
+        if let open = openMainWindow {
+            open()
+        } else if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
+            window.makeKeyAndOrderFront(nil)
+        }
+        selection = .serviceStatus
+    }
+
     private func routeGitHub(repo: String, type: String) {
         if github.pins.contains(where: { $0.name == repo }) {
             github.selected = repo
@@ -477,6 +488,9 @@ final class AppModel {
     /// open — and turns new notifications into banners plus board
     /// invalidations. Assigned in init, where `~/.quiver` is known.
     let githubNotify: GitHubNotifier
+    /// Banners provider incidents from the Service status poll, which it
+    /// also drives. Assigned in init, where `~/.quiver` is known.
+    let serviceNotify: ServiceStatusNotifier
     /// The MCP servers page's "Server folders" section.
     let mcpRepo = McpServerRepoModel()
     /// The Settings > General Updates card's build and release state.
@@ -532,6 +546,7 @@ final class AppModel {
             snapshotFile: quiver.appending(path: "cache/github-snapshot.json"),
             historyFile: quiver.appending(path: "cache/github-history.db"))
         githubNotify = GitHubNotifier(quiver: quiver, model: github)
+        serviceNotify = ServiceStatusNotifier(quiver: quiver)
         let usage = UsageService(
             transport: URLSessionTransport(),
             secrets: KeychainCLI(),
@@ -890,7 +905,9 @@ final class AppModel {
     /// One set of loops serves the window, the menu bar and the widgets.
     func start() {
         if statusPolling == nil {
-            statusPolling = Task { [serviceStatus] in await serviceStatus.keepFresh() }
+            statusPolling = Task { [serviceStatus, serviceNotify] in
+                await serviceNotify.keepFresh(model: serviceStatus)
+            }
         }
         guard watchers.isEmpty else { return }
         if FirstRun.shouldOffer(
