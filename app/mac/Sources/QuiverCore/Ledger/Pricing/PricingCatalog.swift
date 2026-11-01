@@ -140,7 +140,7 @@ public struct PricingCatalog: Sendable {
         for (key, value) in supplement.prices {
             if let rates = Self.rates(from: value) {
                 entries[key] = rates
-                sources[key] = .swe
+                sources[key] = .quiver
             }
         }
         // Snapshot before the user's prices replace any keys: this is the

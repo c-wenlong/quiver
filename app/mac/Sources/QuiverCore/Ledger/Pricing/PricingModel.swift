@@ -60,7 +60,7 @@ public final class PricingModel {
             if isFree { return .free }
             return switch source {
             case .yours: .yours
-            case .swe: .swe
+            case .quiver: .quiver
             case .liteLLM: .liteLLM
             case nil: .unpriced
             }

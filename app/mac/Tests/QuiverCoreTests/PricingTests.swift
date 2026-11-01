@@ -51,7 +51,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
 
         #expect(catalog.lookup("codex-mini-latest")?.source == .yours)
         #expect(catalog.lookup("codex-mini-latest")?.rates.input == 0.000001)
-        #expect(catalog.lookup("provider/my-model")?.source == .swe)
+        #expect(catalog.lookup("provider/my-model")?.source == .quiver)
         let other = try #require(catalog.lookup("gpt-4o"))
         #expect(other.source == .liteLLM && other.entry == "gpt-4o")
         #expect(catalog.lookup("nonexistent-model") == nil)
@@ -314,7 +314,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(model.unpriced.map(\.model) == ["swe-2-max", "swe-2-medium"])
         #expect(model.groups.first { $0.id == "cognition" }?.models.first?.source == nil)
         let sonnet = model.groups.flatMap(\.models).first { $0.model == "claude-sonnet-4-6" }
-        #expect(sonnet?.source == .swe)
+        #expect(sonnet?.source == .quiver)
         #expect(model.coveredBy("swe-2") == ["swe-2-max", "swe-2-medium"])
         withExtendedLifetime(temp) {}
     }
@@ -382,7 +382,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
                 unpricedTokens: 0, listPrice: nil)
         }
         #expect(row(source: .liteLLM).spendSource == .liteLLM)
-        #expect(row(source: .swe).spendSource == .swe)
+        #expect(row(source: .quiver).spendSource == .quiver)
         #expect(row(source: .yours).spendSource == .yours)
         #expect(row(source: nil).spendSource == .unpriced)
         #expect(row(source: nil, free: true).spendSource == .free)

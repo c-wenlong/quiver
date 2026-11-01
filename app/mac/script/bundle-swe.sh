@@ -44,6 +44,13 @@ archive="cpython-${python_version}+${release}-${triple}-install_only_stripped.ta
 url="https://github.com/astral-sh/python-build-standalone/releases/download/${release}/${archive//+/%2B}"
 
 cache="${SWE_PYTHON_CACHE:-${QUIVER_PYTHON_CACHE:-$HOME/.swe/cache/build/python}}"
+# See install-app.sh: creating the cache under ~/.swe would block the
+# ~/.quiver -> ~/.swe move, so it runs here first too.
+if [ ! -e "$HOME/.swe" ] && [ ! -L "$HOME/.swe" ] \
+    && [ -d "$HOME/.quiver" ] && [ ! -L "$HOME/.quiver" ]; then
+  mv "$HOME/.quiver" "$HOME/.swe" 2>/dev/null \
+    && ln -s .swe "$HOME/.quiver" 2>/dev/null
+fi
 mkdir -p "$cache"
 tarball="$cache/$archive"
 verify() { [ "$(shasum -a 256 "$1" | cut -d' ' -f1)" = "$sha256" ]; }

@@ -51,6 +51,16 @@ cache_lock="$cache/lock"
 dest_lock="$dest.lock"
 held_cache=0
 held_dest=0
+
+# The cache lives under ~/.swe, and creating it first would block the
+# ~/.quiver -> ~/.swe move swe runs on first sight: anything at ~/.swe
+# wins. Do the move here before mkdir -p touches the new root, mirroring
+# swe.paths._resolve_data_dir (a ~/.quiver that is itself a link stays).
+if [ ! -e "$HOME/.swe" ] && [ ! -L "$HOME/.swe" ] \
+    && [ -d "$HOME/.quiver" ] && [ ! -L "$HOME/.quiver" ]; then
+  mv "$HOME/.quiver" "$HOME/.swe" 2>/dev/null \
+    && ln -s .swe "$HOME/.quiver" 2>/dev/null
+fi
 cleanup() {
   if [ "$held_dest" = 1 ]; then
     # Stopped between the two renames: put the old app back.

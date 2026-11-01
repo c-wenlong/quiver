@@ -7,7 +7,7 @@
         "harness": "claude",
         "tier": "harness",
         "enabled": true,
-        "source_path": "/tmp/quiver-fixture-home/.quiver/hooks/claude/prose-guard.py",
+        "source_path": "/tmp/quiver-fixture-home/.swe/hooks/claude/prose-guard.py",
         "dest_path": "/tmp/quiver-fixture-home/.claude/hooks/prose-guard.py",
         "link_status": "linked",
         "detail": "",

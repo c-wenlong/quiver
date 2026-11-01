@@ -482,7 +482,39 @@ final class AppModel {
         return LocalHub(locator: swe, store: HubDeviceStore(url: HubDeviceStore.defaultURL(home: home)))
     }
 
+    /// `~/.quiver` → `~/.swe`, mirroring `swe.paths._resolve_data_dir`.
+    ///
+    /// The app reaches the data root before any bundled `swe` command may
+    /// have run, so the move has to happen here too: when `~/.swe` does
+    /// not exist and `~/.quiver` is a real directory, rename it in place
+    /// and leave a `~/.quiver` → `.swe` symlink so harness links and older
+    /// copies of the CLI keep resolving. A `~/.quiver` that is itself a
+    /// link is mirrored as `~/.swe`, never moved out from under whatever
+    /// put it there. On any failure the old root keeps serving.
+    private static func migrateDataRoot(home: URL) {
+        let fm = FileManager.default
+        let new = home.appending(path: ".swe")
+        let old = home.appending(path: ".quiver")
+        if (try? fm.attributesOfItem(atPath: new.path)) != nil { return }
+        guard let attrs = try? fm.attributesOfItem(atPath: old.path),
+              let type = attrs[.type] as? FileAttributeType else { return }
+        if type == .typeSymbolicLink {
+            if let target = try? fm.destinationOfSymbolicLink(atPath: old.path) {
+                try? fm.createSymbolicLink(atPath: new.path, withDestinationPath: target)
+            }
+            return
+        }
+        guard type == .typeDirectory else { return }
+        do {
+            try fm.moveItem(at: old, to: new)
+            try? fm.createSymbolicLink(atPath: old.path, withDestinationPath: ".swe")
+        } catch {
+            // The old root keeps serving; the CLI can still move it later.
+        }
+    }
+
     init() {
+        Self.migrateDataRoot(home: FileManager.default.homeDirectoryForCurrentUser)
         let saved = UserDefaults.standard.string(forKey: SweLocation.defaultsKey) ?? ""
         swePath = saved
         let client = Self.client(for: saved)
