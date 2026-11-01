@@ -529,12 +529,22 @@ struct HubClient: Sendable {
     /// field sends it only when the machine's `model_at_launch` says the
     /// harness honours one, and a nil sends no pick. `yolo` starts the
     /// session with its approval checks off, and is sent only when the
-    /// machine's `yolo_at_launch` says the harness honours it.
-    func startSession(machine: String, harness: String, cwd: String, prompt: String, model: String? = nil, yolo: Bool = false) async throws -> LaunchStatus {
+    /// machine's `yolo_at_launch` says the harness honours it. `provider`
+    /// is a slug from the machine's `providers_at_launch`; nil or empty
+    /// sends none, so the harness keeps its own default.
+    func startSession(machine: String, harness: String, cwd: String, prompt: String, model: String? = nil, yolo: Bool = false, provider: String? = nil) async throws -> LaunchStatus {
+        try await send(startSessionRequest(machine: machine, harness: harness, cwd: cwd, prompt: prompt,
+                                           model: model, yolo: yolo, provider: provider))
+    }
+
+    /// `POST /v1/sessions` as `startSession` sends it; split out so tests
+    /// can read the body.
+    func startSessionRequest(machine: String, harness: String, cwd: String, prompt: String, model: String? = nil, yolo: Bool = false, provider: String? = nil) -> URLRequest {
         var body: [String: Any] = ["machine": machine, "harness": harness, "cwd": cwd, "prompt": prompt]
         if let model, !model.isEmpty { body["model"] = model }
         if yolo { body["yolo"] = true }
-        return try await send(request("POST", "/v1/sessions", body: body))
+        if let provider, !provider.isEmpty { body["provider"] = provider }
+        return request("POST", "/v1/sessions", body: body)
     }
 
     func launch(_ id: String) async throws -> LaunchStatus {

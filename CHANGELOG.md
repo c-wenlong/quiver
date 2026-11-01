@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the plan's default model. `plan_providers.PLANS` ports the Mac
   app's `InferenceCatalog`, and a test fails when they drift. Closes
   [#526](https://github.com/c-wenlong/swe/issues/526).
+- **Provider menu on the launch sheets (Mac, web, iPhone).** The
+  new-session sheet shows a Provider menu beside Model: Harness default,
+  or a provider whose key is set on the target machine and that the
+  harness takes (`providers_at_launch`, labelled from
+  `provider_names`). The launch sends only the slug. The menu hides on
+  a machine whose agent is too old or has no keyed provider for that
+  harness. Picking a provider turns an untouched Model menu to Harness
+  default, since the recent models ran on other providers; a model you
+  pick yourself is still sent. Part of [#526](https://github.com/c-wenlong/swe/issues/526).
 - **Doctor: Fix all on the Mac and web pages.** The findings card gets
   a Fix all (N) button whenever some finding has a batch fix. It runs
   `swe doctor --fix`'s ordered batch (setup, discover, init, plugin

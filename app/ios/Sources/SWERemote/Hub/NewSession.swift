@@ -100,6 +100,35 @@ enum NewSessionOptions {
         return machine.yoloAtLaunch?.contains(harness) == true
     }
 
+    /// The provider slugs `harness` can launch with on `machine`, in the
+    /// hub's order. Empty on an older satellite's row (no
+    /// `providers_at_launch`) or a harness with no provider key set.
+    static func providers(_ harness: String?, on machine: Machine) -> [String] {
+        guard let harness else { return [] }
+        return machine.providersAtLaunch?[harness] ?? []
+    }
+
+    /// Whether a sheet's Provider row shows: only when the machine row
+    /// carries `providers_at_launch` and lists something for `harness`.
+    /// Unlike Autonomy there is nothing to show disabled, since the only
+    /// choice left would be the harness default.
+    static func showsProviderField(_ harness: String?, on machine: Machine) -> Bool {
+        !providers(harness, on: machine).isEmpty
+    }
+
+    /// A provider slug's label from `provider_names`, else the slug.
+    static func providerName(_ slug: String, on machine: Machine) -> String {
+        if let name = machine.providerNames?[slug], !name.isEmpty { return name }
+        return slug
+    }
+
+    /// What the launch posts as `provider`: the pick when `harness` on
+    /// `machine` still offers it, else nil (the harness default).
+    static func providerPick(_ pick: String?, for harness: String?, on machine: Machine) -> String? {
+        guard let pick, !pick.isEmpty, providers(harness, on: machine).contains(pick) else { return nil }
+        return pick
+    }
+
     /// The model `machine` last ran `harness` with.
     static func lastModel(_ harness: String?, on machine: Machine) -> String? {
         guard let harness, let model = machine.lastModels?[harness], !model.isEmpty else { return nil }
@@ -182,8 +211,11 @@ struct ModelSelection: Equatable {
         touched = true
     }
 
-    /// Run on every harness or machine change.
-    mutating func follow(_ harness: String?, on machine: Machine) {
+    /// Run on every harness, machine or provider change. `bare` makes the
+    /// untouched default Harness default even when the harness has recent
+    /// models: a launch on a picked provider (#526), whose recent models
+    /// ran on other providers. The menu still lists them.
+    mutating func follow(_ harness: String?, on machine: Machine, bare: Bool = false) {
         // A pick survives a switch (Harness default and Other always, a recent model only while the new harness lists it); anything else re-defaults.
         if touched {
             switch choice {
@@ -192,7 +224,7 @@ struct ModelSelection: Equatable {
                 if NewSessionOptions.recentModels(harness, on: machine).contains(model) { return }
             }
         }
-        choice = NewSessionOptions.defaultModelChoice(harness, on: machine)
+        choice = bare ? .harnessDefault : NewSessionOptions.defaultModelChoice(harness, on: machine)
         touched = false
     }
 
