@@ -480,8 +480,7 @@ extension HubStubbed {
         await chat.start()
         chat.stop()
         // The open's and close's reads land before a test reads the POSTs.
-        await chat.readOnOpen?.value
-        await chat.readFlush?.value
+        await chat.settleReads()
         return chat
     }
 
@@ -549,6 +548,7 @@ extension HubStubbed {
         let chat = SessionChatModel(key: "claude:s1", hub: hub)
         await chat.start()
         chat.stop()
+        await chat.settleReads()
         #expect(chat.hasEarlier)
         await chat.loadEarlier()
         #expect(earlierAsks.withLock { $0 } == 1)
@@ -673,6 +673,8 @@ extension HubStubbed {
         // ...and the next follow asks from the head, not from 500 again.
         #expect(await followed.reach(2))
         #expect(follows().prefix(2) == ["500", "2"])
+        chat.stop()
+        await chat.settleReads()
     }
 
     /// The stream's own reconnect: after journal.truncated at 2 it asks
@@ -760,6 +762,7 @@ extension HubStubbed {
         #expect(await observe(until: { chat.items.map(\.id) == ["m2"] }))
         #expect(await watch.closed.count == 1)
         chat.stop()
+        await chat.settleReads()
         #expect(await watch.closed.reach(2))
         #expect(await watch.opened.count == 2)
     }
@@ -818,8 +821,7 @@ extension HubStubbed {
         await chat.start()
         chat.stop()
         // The open's and close's reads land before a test reads the POSTs.
-        await chat.readOnOpen?.value
-        await chat.readFlush?.value
+        await chat.settleReads()
         return chat
     }
 

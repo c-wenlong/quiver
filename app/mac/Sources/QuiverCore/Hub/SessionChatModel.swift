@@ -294,6 +294,10 @@ public final class SessionChatModel {
         if readOpen {
             readOpen = false
             hub.chatClosed(key, activity: newestActivity)
+            // The opening read stops here: one retried after a re-pair
+            // would land after the close and cover replies nobody saw.
+            readOnOpen?.cancel()
+            readOnOpen = nil
             // One more read, due or not: it covers whatever the chat
             // showed, history that landed after the opening read included.
             readTask?.cancel()
@@ -499,6 +503,13 @@ public final class SessionChatModel {
     }
 
     // MARK: Read state
+
+    /// Waits out the reads `start()` and `stop()` sent, so a test's
+    /// stub sees none land after it moves on.
+    func settleReads() async {
+        await readOnOpen?.value
+        await readFlush?.value
+    }
 
     private func noteActivity(_ at: Double?) {
         guard let at else { return }

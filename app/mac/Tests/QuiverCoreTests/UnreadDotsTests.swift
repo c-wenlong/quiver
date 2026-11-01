@@ -203,7 +203,6 @@ extension HubStubbed {
     @Test func openingPostsAtOnceAndABurstPostsOnce() async throws {
         let gate = HoldGate()
         let (hub, chat) = try await openChat(gate)
-        defer { chat.stop() }
         #expect(Self.reads().count == 1, "the open's read")
         #expect(!hub.isUnread("claude:s1"))
         #expect(chat.readTask == nil, "history is not live activity")
@@ -218,6 +217,8 @@ extension HubStubbed {
         await pending.value
         #expect(Self.reads().count == 2, "three messages, one read")
         #expect(chat.readTask == nil)
+        chat.stop()
+        await chat.settleReads()
     }
 
     @Test func closingFlushesADueReadAndMarksTheNewestActivity() async throws {
@@ -244,6 +245,7 @@ extension HubStubbed {
         let gate = HoldGate()
         let (_, chat) = try await openChat(gate)
         chat.stop()
+        #expect(chat.readOnOpen == nil, "the opening read can't outlive the chat")
         await chat.readFlush?.value
         #expect(Self.reads().count == 2, "the close covers history shown after the opening read")
         // A second stop sends nothing more.
