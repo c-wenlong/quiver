@@ -19,9 +19,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import agent as agent_mod
-from quiver.remote import detach, inject, protocol, supervise
-from quiver.sessions.models import Session
+from swe.remote import agent as agent_mod
+from swe.remote import detach, inject, protocol, supervise
+from swe.sessions.models import Session
 
 from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server
@@ -218,7 +218,7 @@ class TestPendingDetaches(unittest.TestCase):
         self.pd.nudge("nobody")  # nothing pending: a no-op
 
     def test_probed_idle_status_nudges_hub_and_satellite_detaches(self):
-        from quiver.remote.hub import HubState
+        from swe.remote.hub import HubState
         state = HubState(temp_dir(self))
         ag = agent_mod.RemoteAgent("http://h:1", "c", temp_dir(self))
         for owner in (state, ag):
@@ -363,7 +363,7 @@ class TestHubDetachRoutes(unittest.TestCase):
         self.assertEqual(status, 409, data)
 
     def test_keep_leaves_tmux_and_keeps_files(self):
-        from quiver.remote import attachments
+        from swe.remote import attachments
         staged, _ = attachments.stage(
             self.srv.home, self.key, "a.png", b"\x89PNG\r\n\x1a\n")
         with patch.object(supervise, "pane_pid", return_value=4242):
@@ -841,7 +841,7 @@ class TestKeptRecordsWithFakes(unittest.TestCase):
         transcript = proj / "t.jsonl"
         transcript.write_text("{}\n")
         rows = [(key, _session(path=str(proj)), "done")]
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=transcript):
             self.assertEqual(supervise.adopt_pending(self.home, rows), [])
         self.assertIsNone(supervise.meta_for(self.home, key))

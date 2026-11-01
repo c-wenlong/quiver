@@ -1,6 +1,6 @@
-"""quiver.github.manage: pin, repo search and the catalog sync, against a
+"""swe.github.manage: pin, repo search and the catalog sync, against a
 throwaway home and a fake ``gh`` on PATH. Every store they touch lives
-under that home's ~/.quiver, never the real one."""
+under that home's ~/.swe, never the real one."""
 
 import json
 import tempfile
@@ -8,8 +8,8 @@ import time
 import unittest
 from pathlib import Path
 
-from quiver import paths
-from quiver.github import catalog, gh, manage, repos
+from swe import paths
+from swe.github import catalog, gh, manage, repos
 
 from tests.test_webapp_repositories import FakeGh
 
@@ -29,11 +29,11 @@ class _Base(unittest.TestCase):
 
 class TestAddRepo(_Base):
     def test_pins_the_name_github_spells(self):
-        fake = FakeGh(self, repos={"o/quiver": "O/Quiver"})
+        fake = FakeGh(self, repos={"o/quiver": "O/SWE"})
         added = manage.add_repo("o/quiver", self.home)
         self.assertEqual(added.status, "ok")
-        self.assertEqual(added.data, {"repo": "O/Quiver", "pinned": ["O/Quiver"]})
-        self.assertEqual(self.pins(), ["O/Quiver"])
+        self.assertEqual(added.data, {"repo": "O/SWE", "pinned": ["O/SWE"]})
+        self.assertEqual(self.pins(), ["O/SWE"])
         self.assertEqual(fake.calls(), [["repo", "view", "o/quiver", "--json", "nameWithOwner"]])
 
     def test_pinning_twice_keeps_one_pin(self):

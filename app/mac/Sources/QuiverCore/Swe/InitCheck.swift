@@ -99,7 +99,7 @@ extension SweClient {
     /// terminal it leaves newly found harnesses alone rather than asking.
     /// The app never writes a symlink itself; this is the only way it links.
     /// `force` is `swe init --force`: each real file or folder in the way is
-    /// copied to ~/.quiver/backups, then replaced with a link.
+    /// copied to ~/.swe/backups, then replaced with a link.
     public func runInit(force: Bool = false) async throws {
         _ = try await runPlain(force ? ["init", "--force"] : ["init"])
     }

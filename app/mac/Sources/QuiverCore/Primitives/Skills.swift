@@ -22,7 +22,7 @@ public struct SkillInventory: SnapshotValue {
 public struct SkillRoot: Codable, Sendable, Equatable, Identifiable {
     /// What the page can do about a folder.
     public enum Link: Sendable, Equatable {
-        /// Points at `~/.quiver/skills`.
+        /// Points at `~/.swe/skills`.
         case linked
         /// Missing, empty, holding only copies of shared skills, or pointing
         /// somewhere else: linking it loses nothing.
@@ -79,14 +79,14 @@ public struct SkillRoot: Codable, Sendable, Equatable, Identifiable {
     public var explanation: String {
         switch state {
         case "linked" where archived: "Reads the shared skills. Archived in swe, so swe init won't relink it if you unlink it, but you can link it here."
-        case "linked": "Reads the shared skills in ~/.quiver/skills."
+        case "linked": "Reads the shared skills in ~/.swe/skills."
         case "create" where archived: "No skills folder yet. Archived in swe, so swe init leaves it alone; linking here creates it."
         case "create": "No skills folder yet. Linking creates it."
         case "relink": detail.isEmpty ? "Points somewhere else." : "Points somewhere else: \(detail.replacingOccurrences(of: "points at ", with: ""))."
         case "absorb": detail == "empty"
             ? "An empty folder. Linking replaces it."
             : "Holds only copies of shared skills (\(detail)). Linking backs it up and replaces it."
-        case "keep": "Holds skills that exist nowhere else (\(detail)). Move them into ~/.quiver/skills before linking."
+        case "keep": "Holds skills that exist nowhere else (\(detail)). Move them into ~/.swe/skills before linking."
         case "ignored": detail.isEmpty ? "Ignored by swe init." : "Ignored: \(detail)."
         case "skipped": "The harness isn't installed."
         default: detail.isEmpty ? state : "\(state): \(detail)"
@@ -150,7 +150,7 @@ extension SweClient {
         try await call(["skills", "--json"])
     }
 
-    /// Points the folder at `~/.quiver/skills`. By path: some harnesses
+    /// Points the folder at `~/.swe/skills`. By path: some harnesses
     /// have no label `swe skills link` knows.
     public func link(_ root: SkillRoot) async throws {
         var args = ["skills", "link", root.path]
@@ -163,7 +163,7 @@ extension SweClient {
         let _: LinkReply = try await call(["skills", "unlink", root.path, "--json"])
     }
 
-    /// Writes ~/.quiver/skills/<name>/SKILL.md. No force flag: an existing
+    /// Writes ~/.swe/skills/<name>/SKILL.md. No force flag: an existing
     /// name refuses.
     public func newSkill(name: String, description: String) async throws -> NewSkillReply {
         var args = ["skills", "new", name]

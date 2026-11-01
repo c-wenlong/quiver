@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.models import Session
+from swe.sessions.models import Session
 
 T0 = 1_792_604_440_000  # epoch ms
 
@@ -137,7 +137,7 @@ class OpencodeV2Case(unittest.TestCase):
 
 class ParseTest(OpencodeV2Case):
     def test_lists_each_session_once_from_both_tables(self):
-        from quiver.sessions.parsers import parse_opencode
+        from swe.sessions.parsers import parse_opencode
 
         sessions = {s.session_id: s for s in parse_opencode()}
         self.assertEqual(set(sessions), {"ses_old", "ses_new"})
@@ -149,7 +149,7 @@ class ParseTest(OpencodeV2Case):
         self.assertEqual(sessions["ses_old"].path, "/work/old")
 
     def test_a_session_resumed_in_2x_takes_the_newer_time(self):
-        from quiver.sessions.parsers import parse_opencode
+        from swe.sessions.parsers import parse_opencode
 
         conn = self.conn()
         conn.execute("UPDATE session_v2 SET time_updated = ?, title = 'renamed' WHERE id = 'ses_old'", (T0 + 9000,))
@@ -160,7 +160,7 @@ class ParseTest(OpencodeV2Case):
         self.assertEqual(old.title, "renamed")
 
     def test_a_legacy_only_database_still_reads(self):
-        from quiver.sessions.parsers import parse_opencode
+        from swe.sessions.parsers import parse_opencode
 
         conn = self.conn()
         conn.executescript("DROP TABLE session_v2; DROP TABLE session_message;")
@@ -171,7 +171,7 @@ class ParseTest(OpencodeV2Case):
 
 class StatusTest(OpencodeV2Case):
     def probe(self, sid):
-        from quiver.sessions import status
+        from swe.sessions import status
 
         conn = status._open_opencode_db()
         try:
@@ -210,7 +210,7 @@ class StatusTest(OpencodeV2Case):
         self.assertEqual(self.probe("s_error"), ("error", ""))
 
     def test_status_column_labels(self):
-        from quiver.sessions.status import DONE, FOLLOWUP, INTERRUPTED, session_statuses
+        from swe.sessions.status import DONE, FOLLOWUP, INTERRUPTED, session_statuses
 
         self.add_session("s_done", [("assistant", _assistant([{"type": "text", "text": "Merged. CI green."}])),
                                     ("idle", {"outcome": "succeeded"})])
@@ -222,7 +222,7 @@ class StatusTest(OpencodeV2Case):
 
 class TranscriptTest(OpencodeV2Case):
     def test_v2_session_reads_prompts_replies_and_tools(self):
-        from quiver.reports.transcripts import read_transcript
+        from swe.reports.transcripts import read_transcript
 
         transcript = read_transcript(self.session("ses_new"))
         self.assertTrue(transcript.readable)
@@ -233,13 +233,13 @@ class TranscriptTest(OpencodeV2Case):
         )
 
     def test_copied_turns_are_not_read_twice(self):
-        from quiver.reports.transcripts import read_transcript
+        from swe.reports.transcripts import read_transcript
 
         texts = [m.text for m in read_transcript(self.session("ses_old")).messages]
         self.assertEqual(texts, ["fix the old bug", "Fixed the old bug."])
 
     def test_a_turn_added_in_2x_follows_the_legacy_history(self):
-        from quiver.reports.transcripts import read_transcript
+        from swe.reports.transcripts import read_transcript
 
         conn = self.conn()
         self.v2_row(conn, "m_resume", "ses_old", "user", 9, {"text": "and the next one"}, T0 + 9000)
@@ -251,7 +251,7 @@ class TranscriptTest(OpencodeV2Case):
 
 class ModelCountTest(OpencodeV2Case):
     def test_v2_replies_count_once(self):
-        from quiver.sessions.models_analytics import _drizzle_model_counts
+        from swe.sessions.models_analytics import _drizzle_model_counts
 
         conn = self.conn()
         # A reply the migration copied: same id as its message row.
@@ -263,7 +263,7 @@ class ModelCountTest(OpencodeV2Case):
 
 class LedgerTest(OpencodeV2Case):
     def test_v2_replies_become_usage_events_once(self):
-        from quiver.ledger.parsers import opencode_records
+        from swe.ledger.parsers import opencode_records
 
         conn = self.conn()
         self.v2_row(conn, "msg_a", "ses_old", "assistant", 1, _assistant([], model="grok-4.7"), T0 - 8000)
@@ -280,7 +280,7 @@ class LedgerTest(OpencodeV2Case):
 
 
     def test_models_are_provider_slash_model(self):
-        from quiver.ledger.parsers import opencode_model, opencode_records
+        from swe.ledger.parsers import opencode_model, opencode_records
 
         conn = self.conn()
         # 2.x: no provider recorded, an empty one, and an id with a slash of its own.
@@ -316,10 +316,10 @@ class LedgerTest(OpencodeV2Case):
         ``provider/model`` name: same keys, same tokens, same cost."""
         import dataclasses
 
-        from quiver.ledger.parsers import opencode_records
-        from quiver.ledger.scan import scan
-        from quiver.ledger.models import LedgerRecord
-        from quiver.ledger.store import LedgerStore
+        from swe.ledger.parsers import opencode_records
+        from swe.ledger.scan import scan
+        from swe.ledger.models import LedgerRecord
+        from swe.ledger.store import LedgerStore
 
         store = LedgerStore(self.home / "ledger.sqlite")
         self.addCleanup(store.db.close)
@@ -346,8 +346,8 @@ class LedgerTest(OpencodeV2Case):
         self.assertEqual(scan(store, self.home).files_read, 0)
 
     def test_a_cursor_saved_before_v2_reads_the_database_again(self):
-        from quiver.ledger.scan import scan
-        from quiver.ledger.store import LedgerStore
+        from swe.ledger.scan import scan
+        from swe.ledger.store import LedgerStore
 
         store = LedgerStore(self.home / "ledger.sqlite")
         self.addCleanup(store.db.close)
@@ -362,7 +362,7 @@ class LedgerTest(OpencodeV2Case):
 
 class TailTest(OpencodeV2Case):
     def source(self, sid):
-        from quiver.remote.tail import OpencodeSource
+        from swe.remote.tail import OpencodeSource
 
         return OpencodeSource(self.db, sid)
 

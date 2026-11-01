@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.remote import systemd
+from swe.remote import systemd
 
 from tests._tempdir import temp_dir
 
@@ -43,7 +43,7 @@ class FakeCtl:
 class UnitTest(unittest.TestCase):
     def setUp(self):
         self.home = temp_dir(self)
-        self.log = self.home / ".quiver/data/remote/serve.log"
+        self.log = self.home / ".swe/data/remote/serve.log"
         self.program = ["/home/dev/.local/bin/swe", "remote", "serve", "--host=127.0.0.1",
                         "--public-url=https://box.tail.ts.net:8477"]
 

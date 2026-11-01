@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 class CompletionEngineTest(unittest.TestCase):
     def test_top_level_completions(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         comps = get_completions([])
         names = [c for c, _ in comps]
@@ -23,7 +23,7 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertNotIn("__complete", names)
 
     def test_partial_subcommand_filter(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         comps = get_completions(["s"])
         names = [c for c, _ in comps]
@@ -34,8 +34,8 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertNotIn("star", names)
 
     def test_instructions_completions(self):
-        from quiver.completion import get_completions
-        from quiver.instructions.commands import SUBCOMMANDS
+        from swe.completion import get_completions
+        from swe.instructions.commands import SUBCOMMANDS
 
         self.assertIn("instructions", [name for name, _ in get_completions([])])
         self.assertEqual(
@@ -52,8 +52,8 @@ class CompletionEngineTest(unittest.TestCase):
             "claude": {"description": "Claude Code", "aliases": ["cc"]},
             "codex": {"description": "Codex CLI", "aliases": ["cx"]},
         }
-        with patch("quiver.completion.load_registry", return_value=fake_registry):
-            from quiver.completion import get_completions
+        with patch("swe.completion.load_registry", return_value=fake_registry):
+            from swe.completion import get_completions
 
             comps = get_completions(["use", ""])
         names = [c for c, _ in comps]
@@ -66,8 +66,8 @@ class CompletionEngineTest(unittest.TestCase):
         fake_registry = {
             "claude": {"description": "Claude Code", "aliases": ["cc"]},
         }
-        with patch("quiver.completion.load_registry", return_value=fake_registry):
-            from quiver.completion import get_completions
+        with patch("swe.completion.load_registry", return_value=fake_registry):
+            from swe.completion import get_completions
 
             comps = get_completions(["hs", "star", ""])
         names = [c for c, _ in comps]
@@ -80,8 +80,8 @@ class CompletionEngineTest(unittest.TestCase):
             "cline": {"description": "Cline", "aliases": ["cl"]},
             "codex": {"description": "Codex CLI", "aliases": ["cx"]},
         }
-        with patch("quiver.completion.load_registry", return_value=fake_registry):
-            from quiver.completion import get_completions
+        with patch("swe.completion.load_registry", return_value=fake_registry):
+            from swe.completion import get_completions
 
             comps = get_completions(["use", "cl"])
         names = [c for c, _ in comps]
@@ -91,7 +91,7 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertNotIn("codex", names)
 
     def test_list_flag_completions(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         comps = get_completions(["list", "--"])
         names = [c for c, _ in comps]
@@ -106,8 +106,8 @@ class CompletionEngineTest(unittest.TestCase):
             "claude": {"description": "Claude", "aliases": [], "tags": ["coding", "byok"]},
             "codex": {"description": "Codex", "aliases": [], "tags": ["coding"]},
         }
-        with patch("quiver.completion.load_registry", return_value=fake_registry):
-            from quiver.completion import get_completions
+        with patch("swe.completion.load_registry", return_value=fake_registry):
+            from swe.completion import get_completions
 
             comps = get_completions(["list", ""])
         names = [c for c, _ in comps]
@@ -115,7 +115,7 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertIn("byok", names)
 
     def test_session_flag_completions(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         comps = get_completions(["session", "--"])
         names = [c for c, _ in comps]
@@ -124,7 +124,7 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertIn("--start=", names)
 
     def test_report_and_config_subcommands(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         report = [name for name, _ in get_completions(["report", ""])]
         config = [name for name, _ in get_completions(["config", ""])]
@@ -134,7 +134,7 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertIn("check", config)
 
     def test_setup_sections_and_flags(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         sections = [name for name, _ in get_completions(["setup", ""])]
         flags = [name for name, _ in get_completions(["setup", "--"])]
@@ -146,13 +146,13 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertIn("--non-interactive", flags)
 
     def test_no_completions_for_unknown_context(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         comps = get_completions(["unknown_cmd", "arg1", "arg2"])
         self.assertEqual(comps, [])
 
     def test_use_with_extra_args_returns_nothing(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         comps = get_completions(["use", "claude", "extra"])
         self.assertEqual(comps, [])
@@ -160,9 +160,9 @@ class CompletionEngineTest(unittest.TestCase):
     def test_primary_commands_cover_dispatch(self):
         # `swe <TAB>` must offer every non-alias command — find and
         # discover were missing while `harness` was listed twice.
-        from quiver.cli import COMMANDS
-        from quiver.completion import _PRIMARY_COMMANDS
-        from quiver.harness.drift import NO_TOPIC_WHITELIST
+        from swe.cli import COMMANDS
+        from swe.completion import _PRIMARY_COMMANDS
+        from swe.harness.drift import NO_TOPIC_WHITELIST
 
         names = [name for name, _ in _PRIMARY_COMMANDS]
         self.assertEqual(len(names), len(set(names)))
@@ -175,7 +175,7 @@ class CompletionEngineTest(unittest.TestCase):
                 self.assertIn(cmd, names, msg=f"{cmd} not completable")
 
     def test_mcp_subcommands_and_sync_flags(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         subs = [c for c, _ in get_completions(["mcp", ""])]
         for sub in ("discover", "list", "status", "sync", "diff", "edit",
@@ -186,14 +186,14 @@ class CompletionEngineTest(unittest.TestCase):
             self.assertIn(flag, flags)
 
     def test_edit_offers_json_beside_the_field_flags(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         flags = [c for c, _ in get_completions(["edit", "claude", "--"])]
         for flag in ("--description=", "--notes=", "--display-name=", "--json"):
             self.assertIn(flag, flags)
 
     def test_find_and_skills_subcommands(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         topics = [c for c, _ in get_completions(["find", ""])]
         self.assertIn("skills", topics)
@@ -203,7 +203,7 @@ class CompletionEngineTest(unittest.TestCase):
             self.assertIn(sub, skills)
 
     def test_nested_flag_tables(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         # `swe report followups --<TAB>` offers --status, not report's range flags
         flags = [c for c, _ in get_completions(["report", "followups", "--"])]
@@ -223,7 +223,7 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertNotIn("--root=", flags)
 
     def test_followup_work_flags_need_the_id_first(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         # Before the ID: no work flags, and no report-generation flags.
         self.assertEqual(
@@ -239,7 +239,7 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertNotIn("--days=", flags)
 
     def test_nested_subcommands(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         self.assertEqual(
             [c for c, _ in get_completions(["plugins", "marketplace", ""])], ["add"])
@@ -255,8 +255,8 @@ class CompletionEngineTest(unittest.TestCase):
             "codex": {"description": "Codex CLI", "aliases": ["cx"]},
             "cursor": {"description": "Cursor", "aliases": []},
         }
-        with patch("quiver.completion.load_registry", return_value=fake_registry):
-            from quiver.completion import get_completions
+        with patch("swe.completion.load_registry", return_value=fake_registry):
+            from swe.completion import get_completions
 
             names = [c for c, _ in get_completions(["mcp", "sync", "claude", ""])]
         self.assertIn("codex", names)
@@ -269,8 +269,8 @@ class CompletionEngineTest(unittest.TestCase):
         fake_registry = {
             "claude": {"description": "Claude Code", "aliases": ["cc"]},
         }
-        with patch("quiver.completion.load_registry", return_value=fake_registry):
-            from quiver.completion import get_completions
+        with patch("swe.completion.load_registry", return_value=fake_registry):
+            from swe.completion import get_completions
 
             names = [c for c, _ in get_completions(["mcp", "list", ""])]
         self.assertIn("claude", names)
@@ -281,8 +281,8 @@ class CompletionEngineTest(unittest.TestCase):
             "claude": {"description": "Claude Code", "aliases": ["cc"]},
             "codex": {"description": "Codex CLI", "aliases": ["cx"]},
         }
-        with patch("quiver.completion.load_registry", return_value=fake_registry):
-            from quiver.completion import get_completions
+        with patch("swe.completion.load_registry", return_value=fake_registry):
+            from swe.completion import get_completions
 
             names = [c for c, _ in get_completions(["mcp", "sync", "cc", ""])]
         self.assertIn("codex", names)
@@ -292,9 +292,9 @@ class CompletionEngineTest(unittest.TestCase):
     def test_provider_name_completion(self):
         fake = {"anthropic": {"name": "Anthropic"}, "openai": {"name": "OpenAI"}}
         with patch(
-            "quiver.providers.registry.load_registry", return_value=fake
+            "swe.providers.registry.load_registry", return_value=fake
         ):
-            from quiver.completion import get_completions
+            from swe.completion import get_completions
 
             names = [c for c, _ in get_completions(["providers", "info", ""])]
             rm_names = [c for c, _ in get_completions(["pv", "rm", "o"])]
@@ -302,30 +302,30 @@ class CompletionEngineTest(unittest.TestCase):
         self.assertEqual(rm_names, ["openai"])
 
     def test_mcp_edit_server_completion(self):
-        with patch("quiver.mcp.cli.load_registry", return_value={}), \
-             patch("quiver.mcp.cli.resolve_tool_arg", return_value="codex"), \
-             patch("quiver.mcp.cli.get_tool_config",
+        with patch("swe.mcp.cli.load_registry", return_value={}), \
+             patch("swe.mcp.cli.resolve_tool_arg", return_value="codex"), \
+             patch("swe.mcp.cli.get_tool_config",
                    return_value={"path": Path("/x/mcp.json")}), \
-             patch("quiver.mcp.cli.get_tool_loader",
+             patch("swe.mcp.cli.get_tool_loader",
                    return_value=lambda p: {"srv": {}, "db": {}}):
-            from quiver.completion import get_completions
+            from swe.completion import get_completions
 
             names = [c for c, _ in get_completions(["mcp", "edit", "codex", ""])]
         self.assertEqual(names, ["db", "srv"])
 
     def test_mcp_edit_server_completion_unknown_tool(self):
-        with patch("quiver.mcp.cli.load_registry", return_value={}), \
-             patch("quiver.mcp.cli.resolve_tool_arg", return_value=None):
-            from quiver.completion import get_completions
+        with patch("swe.mcp.cli.load_registry", return_value={}), \
+             patch("swe.mcp.cli.resolve_tool_arg", return_value=None):
+            from swe.completion import get_completions
 
             self.assertEqual(get_completions(["mcp", "edit", "ghost", ""]), [])
 
     def test_mcp_edit_server_completion_no_backend(self):
-        with patch("quiver.mcp.cli.load_registry", return_value={}), \
-             patch("quiver.mcp.cli.resolve_tool_arg", return_value="codex"), \
-             patch("quiver.mcp.cli.get_tool_config", return_value=None), \
-             patch("quiver.mcp.cli.get_tool_loader", return_value=None):
-            from quiver.completion import get_completions
+        with patch("swe.mcp.cli.load_registry", return_value={}), \
+             patch("swe.mcp.cli.resolve_tool_arg", return_value="codex"), \
+             patch("swe.mcp.cli.get_tool_config", return_value=None), \
+             patch("swe.mcp.cli.get_tool_loader", return_value=None):
+            from swe.completion import get_completions
 
             self.assertEqual(get_completions(["mcp", "edit", "codex", ""]), [])
 
@@ -334,9 +334,9 @@ class CompletionEngineTest(unittest.TestCase):
             "anthropic": {"name": "Anthropic", "aliases": ["claude-api"]},
         }
         with patch(
-            "quiver.providers.registry.load_registry", return_value=fake
+            "swe.providers.registry.load_registry", return_value=fake
         ):
-            from quiver.completion import get_completions
+            from swe.completion import get_completions
 
             names = [c for c, _ in get_completions(["providers", "info", ""])]
         self.assertIn("anthropic", names)
@@ -345,9 +345,9 @@ class CompletionEngineTest(unittest.TestCase):
     def test_provider_alias_matching_name_not_duplicated(self):
         fake = {"openai": {"name": "OpenAI", "aliases": ["openai"]}}
         with patch(
-            "quiver.providers.registry.load_registry", return_value=fake
+            "swe.providers.registry.load_registry", return_value=fake
         ):
-            from quiver.completion import get_completions
+            from swe.completion import get_completions
 
             names = [c for c, _ in get_completions(["providers", "info", ""])]
         self.assertEqual(names, ["openai"])
@@ -360,9 +360,9 @@ class CompletionEngineTest(unittest.TestCase):
             "claude": {"description": "already registered"},
             "jules": {"description": "Jules agent"},
         }
-        with patch("quiver.completion.load_registry", return_value=fake_registry), \
-             patch.dict("quiver.harness.catalog.HARNESS_CATALOG", catalog, clear=True):
-            from quiver.completion import get_completions
+        with patch("swe.completion.load_registry", return_value=fake_registry), \
+             patch.dict("swe.harness.catalog.HARNESS_CATALOG", catalog, clear=True):
+            from swe.completion import get_completions
 
             names = [c for c, _ in get_completions(["install", ""])]
         self.assertIn("claude", names)
@@ -371,26 +371,26 @@ class CompletionEngineTest(unittest.TestCase):
 
     def test_provider_completion_survives_broken_registry(self):
         with patch(
-            "quiver.providers.registry.load_registry",
+            "swe.providers.registry.load_registry",
             side_effect=OSError("corrupt"),
         ):
-            from quiver.completion import get_completions
+            from swe.completion import get_completions
 
             self.assertEqual(get_completions(["providers", "info", ""]), [])
 
     def test_completion_survives_broken_registry(self):
         # A corrupt registry must yield no candidates, not a crash on TAB.
         with patch(
-            "quiver.completion.load_registry", side_effect=OSError("corrupt")
+            "swe.completion.load_registry", side_effect=OSError("corrupt")
         ):
-            from quiver.completion import get_completions
+            from swe.completion import get_completions
 
             self.assertEqual(get_completions(["use", ""]), [])
             self.assertEqual(get_completions(["mcp", "sync", "x", ""]), [])
             self.assertEqual(get_completions(["list", ""]), [])
 
     def test_first_word_flag_returns_nothing(self):
-        from quiver.completion import get_completions
+        from swe.completion import get_completions
 
         self.assertEqual(get_completions(["-"]), [])
 
@@ -400,7 +400,7 @@ class CompleteCommandTest(unittest.TestCase):
 
     def _capture_complete(self, args):
         import io
-        from quiver.cli import cmd_complete
+        from swe.cli import cmd_complete
 
         with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
             cmd_complete(args)
@@ -422,7 +422,7 @@ class CompleteCommandTest(unittest.TestCase):
         fake_registry = {
             "claude": {"description": "Claude Code", "aliases": ["cc"]},
         }
-        with patch("quiver.completion.load_registry", return_value=fake_registry):
+        with patch("swe.completion.load_registry", return_value=fake_registry):
             output = self._capture_complete(["use", ""])
         lines = output.strip().split("\n")
         # Should have claude, cc, then :4
@@ -435,7 +435,7 @@ class AutocompleteCommandTest(unittest.TestCase):
     """Test the autocomplete command script generation and injection."""
 
     def test_zsh_generates_script(self):
-        from quiver.cli import cmd_autocomplete
+        from swe.cli import cmd_autocomplete
 
         with tempfile.TemporaryDirectory() as tmp:
             completion_dir = Path(tmp) / "completions"
@@ -451,8 +451,8 @@ class AutocompleteCommandTest(unittest.TestCase):
             }
 
             with (
-                patch("quiver.paths.COMPLETION_DIR", completion_dir),
-                patch("quiver.completion_scripts.SHELL_CONFIGS", fake_configs),
+                patch("swe.paths.COMPLETION_DIR", completion_dir),
+                patch("swe.completion_scripts.SHELL_CONFIGS", fake_configs),
             ):
                 result = cmd_autocomplete(["zsh"])
 
@@ -462,7 +462,7 @@ class AutocompleteCommandTest(unittest.TestCase):
             self.assertIn("# test zsh script", script_file.read_text())
 
     def test_injection_idempotent(self):
-        from quiver.cli import cmd_autocomplete
+        from swe.cli import cmd_autocomplete
 
         with tempfile.TemporaryDirectory() as tmp:
             completion_dir = Path(tmp) / "completions"
@@ -479,8 +479,8 @@ class AutocompleteCommandTest(unittest.TestCase):
             }
 
             with (
-                patch("quiver.paths.COMPLETION_DIR", completion_dir),
-                patch("quiver.completion_scripts.SHELL_CONFIGS", fake_configs),
+                patch("swe.paths.COMPLETION_DIR", completion_dir),
+                patch("swe.completion_scripts.SHELL_CONFIGS", fake_configs),
             ):
                 cmd_autocomplete(["zsh"])
                 content_after_first = zshrc.read_text()
@@ -493,14 +493,14 @@ class AutocompleteCommandTest(unittest.TestCase):
 
     def test_unsupported_shell_returns_error(self):
         import io
-        from quiver.cli import cmd_autocomplete
+        from swe.cli import cmd_autocomplete
 
         with patch("sys.stdout", new_callable=io.StringIO):
             result = cmd_autocomplete(["tcsh"])
         self.assertEqual(result, 1)
 
     def test_bash_script_uses_bash_syntax(self):
-        from quiver.completion_scripts import BASH_SCRIPT
+        from swe.completion_scripts import BASH_SCRIPT
 
         self.assertIn("while IFS= read -r line", BASH_SCRIPT)
         self.assertNotIn("${(f)out}", BASH_SCRIPT)
@@ -508,7 +508,7 @@ class AutocompleteCommandTest(unittest.TestCase):
 
     def test_no_args_returns_usage(self):
         import io
-        from quiver.cli import cmd_autocomplete
+        from swe.cli import cmd_autocomplete
 
         with patch("sys.stdout", new_callable=io.StringIO):
             result = cmd_autocomplete([])

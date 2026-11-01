@@ -13,7 +13,7 @@ import Testing
          "supported": \(supported), "problem": null, "installed": \(installed),
          "running": \(running),
          "service": "/Users/k/Library/LaunchAgents/com.cwenlong.quiver.remote-agent.plist",
-         "program": null, "log": "/Users/k/.quiver/data/remote/agent.log",
+         "program": null, "log": "/Users/k/.swe/data/remote/agent.log",
          "hub_installed": \(hubInstalled)}}
         """
         return CommandResult(status: 0, stdout: Data(json.utf8), stderr: "")
@@ -92,6 +92,6 @@ import Testing
     @Test func anInstalledAgentThatIsDownPointsAtItsLog() async {
         let (model, _) = model([(["remote", "agent"], Self.status(installed: true))])
         await model.load()
-        #expect(model.status?.detail.hasSuffix("Installed, but not running: see /Users/k/.quiver/data/remote/agent.log.") == true)
+        #expect(model.status?.detail.hasSuffix("Installed, but not running: see /Users/k/.swe/data/remote/agent.log.") == true)
     }
 }

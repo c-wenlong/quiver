@@ -15,8 +15,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.remote import pairing, sshkeys
-from quiver.remote.commands import cmd_remote
+from swe.remote import pairing, sshkeys
+from swe.remote.commands import cmd_remote
 
 try:
     from _tempdir import temp_dir

@@ -169,7 +169,9 @@ Keychain group is written as `$(AppIdentifierPrefix)com.quiver.remote.shared`
 signing team fills it in. Automatic signing registers both groups on
 each target's App ID (`com.quiver.remote`, `.share`, `.widget`) the first time a device build runs with
 `-allowProvisioningUpdates`.
-The icon is the Mac app's dark icon (`app/mac/Icons/AppIcon-dark.png`) at 1024.
+The icon is `assets/logo-square.png` at 1024, saved without an alpha
+channel because App Store icons must be opaque; `AppMark` is the same
+art at 256.
 
 On-device launch needs Developer Mode (Settings, Privacy and Security,
 Developer Mode).

@@ -5,12 +5,12 @@ A port of the Mac app's Settings › Doctor (`DoctorSection.swift`,
 `#/doctor`. It is not in the sidebar, as in the app; the Settings page
 links to it, and its header links back to Settings.
 
-Files: `quiver/webapp/pages/doctor.py`, `static/pages/doctor.js`,
+Files: `swe/webapp/pages/doctor.py`, `static/pages/doctor.js`,
 `static/pages/doctor.css`, `tests/test_webapp_doctor.py`.
 
 ## What the page shows
 
-Title "Doctor", subtitle "Checks on PATH, Node and drift between quiver
+Title "Doctor", subtitle "Checks on PATH, Node and drift between swe
 and your harnesses.", then one card:
 
 | State | Card |
@@ -89,7 +89,7 @@ report again, finds that finding, and runs the fix in process:
 | `marketplace-drop` | `harness.doctor.drop_marketplace_entries(home, ...)` on the remedy's `settings_entries` (out of `~/.claude/settings.json`'s `extraKnownMarketplaces`) and `cli_entries` (out of `~/.claude/plugins/known_marketplaces.json`) | `claude plugin marketplace remove <name>` plus the settings edit, claude only |
 
 The two delete actions write a harness's own files, which swe otherwise
-only reads. Each file is copied to `~/.quiver/backups` first, and a file
+only reads. Each file is copied to `~/.swe/backups` first, and a file
 `declaration_managed_elsewhere` calls managed (a symlink, as a Nix store
 path, or unwritable) is refused: the edit belongs in whatever generates
 it. The emit side only puts editable files in a remedy, so a managed
@@ -134,10 +134,10 @@ the Fix all button shows.
 
 `POST /v1/app/doctor/replace` takes no body and runs
 `run_init(home, force=True, quiet=True, ask=False)`, `swe init --force`:
-each blocked path is copied to `~/.quiver/backups`, then replaced with a
+each blocked path is copied to `~/.swe/backups`, then replaced with a
 link. Its reply has the same shape, with `ran: "replace"`; `error` names
 any path it still left alone (one resolving outside the home or into
-`~/.quiver`, which `--force` never touches).
+`~/.swe`, which `--force` never touches).
 
 | Status | Code | When |
 |---|---|---|

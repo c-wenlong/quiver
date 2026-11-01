@@ -52,7 +52,7 @@ public final class UpdatesModel {
                 swe: @escaping @Sendable () -> SweClient = { SweClient() },
                 rebuildRunner: any CommandRunning = ProcessRunner(executable: "env"),
                 rebuildDir: URL = FileManager.default.homeDirectoryForCurrentUser
-                    .appending(path: ".quiver/cache/rebuild")) {
+                    .appending(path: ".swe/cache/rebuild")) {
         self.build = build
         self.preferences = preferences
         self.localCheck = localCheck

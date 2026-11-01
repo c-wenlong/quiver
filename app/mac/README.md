@@ -20,7 +20,7 @@ The app runs `swe … --json`. `build-app.sh` puts a copy of `swe` inside
 the bundle (`Contents/Resources/swe`, with a standalone Python 3.13 from
 python-build-standalone; see `script/bundle-swe.sh`), so a Mac with no
 Python or quiver installed still works. The first build downloads that
-Python (about 25 MB, pinned by checksum) into `~/.quiver/cache/build/python`.
+Python (about 25 MB, pinned by checksum) into `~/.swe/cache/build/python`.
 Settings › Paths can point the app at another `swe` instead, such as an
 editable install you're working on. `swift run` builds have no bundle and
 use the `swe` on your login shell's PATH.
@@ -32,7 +32,7 @@ app/mac/script/install-app.sh       # release build of origin/main into ~/Applic
 ```
 
 It fetches, builds `origin/main` in its own worktree under
-`~/.quiver/cache/install` (kept between runs, so rebuilds are incremental),
+`~/.swe/cache/install` (kept between runs, so rebuilds are incremental),
 quits the installed Quiver, swaps the new bundle in and relaunches it. It
 never builds the checkout's current branch, so sessions working on other
 branches can't leave a half-finished app installed. A failed build changes
@@ -105,7 +105,7 @@ BOOTSTRAP.md lists where the credentials live.
 | `script/make-dmg.sh` | Packages a built Quiver.app into a DMG with a laid-out install window (app, arrow, /Applications link), signing, notarizing and stapling when `QUIVER_NOTARY_PROFILE` or the `NOTARY_*` key are set |
 | `script/dmg-settings.py` | dmgbuild settings for that window: size, icon positions, background |
 | `script/make-dmg-background.swift` | Draws the window's background at 1x or 2x; `make-dmg.sh` joins both into one HiDPI TIFF |
-| `script/QuiverWidgets.entitlements` | The extension's sandbox: read access to `~/.quiver/cache/widgets/` only |
+| `script/QuiverWidgets.entitlements` | The extension's sandbox: read access to `~/.swe/cache/widgets/` only |
 | `script/trim-litellm-pricing.py` | Regenerates `Resources/pricing.json` from LiteLLM's price list |
 | `THIRD_PARTY_NOTICES.md` | Licences for the LiteLLM snapshot and ported OpenUsage rules |
 
@@ -116,7 +116,7 @@ target stays thin.
 ## Usage ledger
 
 `Ledger` (an actor) reads harness logs into a deduplicated SQLite store in the
-directory you pass in (production: `~/.quiver/data/ledger/`, chosen by
+directory you pass in (production: `~/.swe/data/ledger/`, chosen by
 `LedgerLocation`, which moves a ledger left in the old `cache/ledger/` there at
 launch). `keepBackedUp` keeps one copy a day in `backups/`, the newest 7. Sources:
 
@@ -146,7 +146,7 @@ then the other harnesses, then the spend donut.
 window that did so resets (a reading taken after its reset time, or a
 reset time that moved on by more than ten minutes). A window that falls
 below 80% without a reset rearms quietly. What it has notified is kept in
-`~/.quiver/cache/app-limit-alerts.json`, so a relaunch repeats nothing.
+`~/.swe/cache/app-limit-alerts.json`, so a relaunch repeats nothing.
 
 ### How the widgets are built
 
@@ -162,12 +162,12 @@ app or appex never falls back to SwiftPM's `Bundle.module`, which would
 stop the process on any Mac but the one that built it.
 
 Data goes one way, through a file. The app writes
-`~/.quiver/cache/widgets/snapshot.json` (usage figures, top models and
+`~/.swe/cache/widgets/snapshot.json` (usage figures, top models and
 limit readings; never a credential, email or session) whenever what the
 widgets show changes, then asks WidgetKit to reload. macOS only loads
 sandboxed extensions, so the extension's entitlements grant read access to
 that one folder through a home-relative temporary exception. That keeps
-everything under `~/.quiver`, and it means the app needs no App Group, so
+everything under `~/.swe`, and it means the app needs no App Group, so
 an ad-hoc signed build works without a paid team: pluginkit registers the
 extension and macOS launches it in its own sandbox container. A Mac App Store build
 would need an App Group instead, since the store rejects temporary

@@ -5,9 +5,9 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import Mock, patch
 
-from quiver.find.commands import cmd_find
-from quiver.flags import expand_value_flags
-from quiver.harness.commands import (
+from swe.find.commands import cmd_find
+from swe.flags import expand_value_flags
+from swe.harness.commands import (
     _parse_edit_flags,
     cmd_add,
     cmd_archive,
@@ -15,10 +15,10 @@ from quiver.harness.commands import (
     cmd_install,
     cmd_list,
 )
-from quiver.providers.commands import cmd_add as provider_add
-from quiver.providers.commands import cmd_info as provider_info
-from quiver.providers.commands import cmd_list as provider_list
-from quiver.reports.commands import _followup, _parse_generate_args, cmd_report
+from swe.providers.commands import cmd_add as provider_add
+from swe.providers.commands import cmd_info as provider_info
+from swe.providers.commands import cmd_list as provider_list
+from swe.reports.commands import _followup, _parse_generate_args, cmd_report
 
 
 def _run(fn, args):
@@ -84,19 +84,19 @@ class BareFlagRejectionTest(unittest.TestCase):
         self.assertIn("--scope=<value>", out)
 
     def test_archive_usage(self):
-        with patch("quiver.harness.archive.load_archive", return_value={}):
+        with patch("swe.harness.archive.load_archive", return_value={}):
             code, out = _run(cmd_archive, ["--usage"])
         self.assertEqual(code, 1)
         self.assertIn("--usage=<value>", out)
 
     def test_archive_bad_usage_level(self):
-        with patch("quiver.harness.archive.load_archive", return_value={}):
+        with patch("swe.harness.archive.load_archive", return_value={}):
             code, out = _run(cmd_archive, ["demo", "--usage=enormous"])
         self.assertEqual(code, 1)
         self.assertIn("Unknown usage level", out)
 
     def test_archive_usage_without_name(self):
-        with patch("quiver.harness.archive.load_archive", return_value={}):
+        with patch("swe.harness.archive.load_archive", return_value={}):
             code, out = _run(cmd_archive, ["--usage=heavy"])
         self.assertEqual(code, 1)
         self.assertIn("Usage: swe hs archive", out)
@@ -191,7 +191,7 @@ class BareFlagRejectionTest(unittest.TestCase):
     def test_report_followup_dispatch(self):
         ledger = Mock()
         ledger.get.return_value = None
-        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+        with patch("swe.reports.commands.FollowUpLedger", return_value=ledger):
             code, out = _run(cmd_report, ["followup", "work", "missing"])
         self.assertEqual(code, 1)
         self.assertIn("Unknown follow-up", out)
@@ -209,7 +209,7 @@ class BareFlagRejectionTest(unittest.TestCase):
     def test_report_followups_status_done_lists(self):
         ledger = Mock()
         ledger.list.return_value = []
-        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+        with patch("swe.reports.commands.FollowUpLedger", return_value=ledger):
             code, _ = _run(cmd_report, ["followups", "--status=done"])
         self.assertEqual(code, 0)
         ledger.list.assert_called_once_with(status="done")
@@ -217,13 +217,13 @@ class BareFlagRejectionTest(unittest.TestCase):
     def test_report_followups_bad_status(self):
         ledger = Mock()
         ledger.list.side_effect = ValueError("bad status")
-        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+        with patch("swe.reports.commands.FollowUpLedger", return_value=ledger):
             code, out = _run(cmd_report, ["followups", "--status=bogus"])
         self.assertEqual(code, 1)
         self.assertIn("bad status", out)
 
     def test_followup_bare_project(self):
-        with patch("quiver.reports.commands.FollowUpLedger", return_value=Mock()):
+        with patch("swe.reports.commands.FollowUpLedger", return_value=Mock()):
             code, out = _run(_followup, ["add", "thing", "--project"])
         self.assertEqual(code, 1)
         self.assertIn("--project=<value>", out)
@@ -232,8 +232,8 @@ class BareFlagRejectionTest(unittest.TestCase):
         item = Mock()
         ledger = Mock()
         ledger.get.return_value = item
-        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger), patch(
-            "quiver.reports.commands.work_on_follow_up", return_value=0
+        with patch("swe.reports.commands.FollowUpLedger", return_value=ledger), patch(
+            "swe.reports.commands.work_on_follow_up", return_value=0
         ) as work:
             code, _ = _run(_followup, ["work", "fu_1", "--new", "--harness=claude"])
         self.assertEqual(code, 0)
@@ -241,7 +241,7 @@ class BareFlagRejectionTest(unittest.TestCase):
 
     def test_followup_edit_keeps_literal_flag_text(self):
         ledger = Mock()
-        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+        with patch("swe.reports.commands.FollowUpLedger", return_value=ledger):
             code, _ = _run(
                 _followup, ["edit", "fu_1", "note", "about", "--harness=x"]
             )
@@ -280,10 +280,10 @@ class BareFlagRejectionTest(unittest.TestCase):
         self.assertEqual(parsed.writer_args, ["--fast"])
 
     def test_add_equals_form_consumes_flags(self):
-        with patch("quiver.harness.commands.load_registry", return_value={}), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value={}), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.is_installed", return_value=True
+            "swe.harness.commands.is_installed", return_value=True
         ):
             code, out = _run(
                 cmd_add,
@@ -297,10 +297,10 @@ class BareFlagRejectionTest(unittest.TestCase):
 
     def test_re_adding_a_harness_keeps_its_display_name(self):
         existing = {"demo": {"command": "old", "display_name": "Demo Code"}}
-        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value=existing), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.is_installed", return_value=True
+            "swe.harness.commands.is_installed", return_value=True
         ):
             _, out = _run(cmd_add, ["demo", "demo-cmd"])
         saved = save.call_args[0][0]["demo"]
@@ -310,10 +310,10 @@ class BareFlagRejectionTest(unittest.TestCase):
 
     def test_re_adding_a_harness_keeps_its_colour(self):
         existing = {"demo": {"command": "old", "primary_color": "#112233"}}
-        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value=existing), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.is_installed", return_value=True
+            "swe.harness.commands.is_installed", return_value=True
         ):
             _run(cmd_add, ["demo", "demo-cmd"])
         self.assertEqual(save.call_args[0][0]["demo"]["primary_color"], "#112233")
@@ -337,10 +337,10 @@ class BareFlagRejectionTest(unittest.TestCase):
                 "added": "2020-01-01T00:00:00",
             }
         }
-        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value=existing), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.is_installed", return_value=True
+            "swe.harness.commands.is_installed", return_value=True
         ):
             _run(cmd_add, ["demo", "demo-cmd"])
         saved = save.call_args[0][0]["demo"]
@@ -359,10 +359,10 @@ class BareFlagRejectionTest(unittest.TestCase):
 
     def test_re_adding_archived_entry_keeps_state_and_notes_it(self):
         existing = {"demo": {"command": "old", "state": "archived"}}
-        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value=existing), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.is_installed", return_value=True
+            "swe.harness.commands.is_installed", return_value=True
         ):
             _, out = _run(cmd_add, ["demo", "demo-cmd"])
         self.assertEqual(save.call_args[0][0]["demo"]["state"], "archived")
@@ -372,10 +372,10 @@ class BareFlagRejectionTest(unittest.TestCase):
         existing = {
             "demo": {"command": "old", "state": "starred", "tags": ["custom-tag"]}
         }
-        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value=existing), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.is_installed", return_value=True
+            "swe.harness.commands.is_installed", return_value=True
         ):
             _run(cmd_add, ["demo", "demo-cmd", "--tags=nouveau"])
         saved = save.call_args[0][0]["demo"]
@@ -386,10 +386,10 @@ class BareFlagRejectionTest(unittest.TestCase):
         # The stored version belongs to the probed binary: re-adding to
         # point at another command must not show the old binary's version.
         existing = {"demo": {"command": "old-bin", "version": "9.9"}}
-        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value=existing), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.is_installed", return_value=True
+            "swe.harness.commands.is_installed", return_value=True
         ):
             _run(cmd_add, ["demo", "new-bin"])
         self.assertIsNone(save.call_args[0][0]["demo"]["version"])
@@ -397,10 +397,10 @@ class BareFlagRejectionTest(unittest.TestCase):
     def test_re_adding_with_empty_description_clears_it(self):
         # `--description=` is an explicit clear, not "not supplied".
         existing = {"demo": {"command": "demo-cmd", "description": "old text"}}
-        with patch("quiver.harness.commands.load_registry", return_value=existing), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value=existing), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.is_installed", return_value=True
+            "swe.harness.commands.is_installed", return_value=True
         ):
             _run(cmd_add, ["demo", "demo-cmd", "--description="])
         self.assertEqual(save.call_args[0][0]["demo"]["description"], "")
@@ -411,7 +411,7 @@ class BareFlagRejectionTest(unittest.TestCase):
         # binary's version must not survive on the saved entry.
         import subprocess as sp
 
-        from quiver.harness.installers import Installer
+        from swe.harness.installers import Installer
 
         existing = {"demo": {"command": "old-bin", "version": "9.9"}}
         done = sp.CompletedProcess(args=[], returncode=0)
@@ -420,20 +420,20 @@ class BareFlagRejectionTest(unittest.TestCase):
             return "/usr/bin/brew" if tool == "brew" else None
 
         with patch(
-            "quiver.harness.commands.load_registry_readonly",
+            "swe.harness.commands.load_registry_readonly",
             return_value=existing,
         ), patch(
-            "quiver.harness.commands.load_registry",
+            "swe.harness.commands.load_registry",
             return_value=dict(existing),
         ), patch(
-            "quiver.harness.commands.save_registry"
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.installers.installers_for",
+            "swe.harness.installers.installers_for",
             return_value=[Installer("brew", "demo-pkg")],
         ), patch(
-            "quiver.harness.commands.shutil.which", side_effect=fake_which
+            "swe.harness.commands.shutil.which", side_effect=fake_which
         ), patch(
-            "quiver.harness.commands.subprocess.run", return_value=done
+            "swe.harness.commands.subprocess.run", return_value=done
         ):
             _run(cmd_install, ["demo", "--via=brew", "--command=new-bin"])
         saved = save.call_args[0][0]["demo"]
@@ -441,30 +441,30 @@ class BareFlagRejectionTest(unittest.TestCase):
         self.assertIsNone(saved["version"])
 
     def test_adding_a_new_harness_sets_no_display_name(self):
-        with patch("quiver.harness.commands.load_registry", return_value={}), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value={}), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.is_installed", return_value=True
+            "swe.harness.commands.is_installed", return_value=True
         ):
             _run(cmd_add, ["demo", "demo-cmd"])
         self.assertNotIn("display_name", save.call_args[0][0]["demo"])
 
     def test_add_description_flag_sets_description(self):
-        with patch("quiver.harness.commands.load_registry", return_value={}), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value={}), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.is_installed", return_value=True
+            "swe.harness.commands.is_installed", return_value=True
         ):
             _run(cmd_add, ["demo", "demo-cmd", "--description=from flag"])
         self.assertEqual(save.call_args[0][0]["demo"]["description"], "from flag")
 
     def test_add_dash_i_value_does_not_go_interactive(self):
-        with patch("quiver.harness.commands.load_registry", return_value={}), patch(
-            "quiver.harness.commands.save_registry"
+        with patch("swe.harness.commands.load_registry", return_value={}), patch(
+            "swe.harness.commands.save_registry"
         ) as save, patch(
-            "quiver.harness.commands.is_installed", return_value=True
+            "swe.harness.commands.is_installed", return_value=True
         ), patch(
-            "quiver.harness.commands._add_interactive"
+            "swe.harness.commands._add_interactive"
         ) as interactive:
             _run(cmd_add, ["demo", "demo-cmd", "--description=-i"])
         interactive.assert_not_called()
@@ -492,11 +492,11 @@ class BareFlagRejectionTest(unittest.TestCase):
         # A refresh run would clear the real session cache and re-poll
         # provider rate limits, so the refresh side-effects are patched.
         with (
-            patch("quiver.sessions.aggregator.invalidate_cache") as inv_sessions,
+            patch("swe.sessions.aggregator.invalidate_cache") as inv_sessions,
             patch(
-                "quiver.sessions.usage.invalidate_counts_cache"
+                "swe.sessions.usage.invalidate_counts_cache"
             ) as inv_counts,
-            patch("quiver.harness.commands._fetch_rate_limits"),
+            patch("swe.harness.commands._fetch_rate_limits"),
         ):
             code, _ = _run(cmd_list, ["--exclude=-r"])
         self.assertEqual(code, 0)
@@ -505,11 +505,11 @@ class BareFlagRejectionTest(unittest.TestCase):
 
     def test_list_real_boolean_flags_still_work(self):
         with (
-            patch("quiver.sessions.aggregator.invalidate_cache"),
+            patch("swe.sessions.aggregator.invalidate_cache"),
             patch(
-                "quiver.sessions.usage.invalidate_counts_cache"
+                "swe.sessions.usage.invalidate_counts_cache"
             ) as invalidate,
-            patch("quiver.harness.commands._fetch_rate_limits"),
+            patch("swe.harness.commands._fetch_rate_limits"),
         ):
             code, _ = _run(cmd_list, ["-r"])
         self.assertEqual(code, 0)
@@ -519,7 +519,7 @@ class BareFlagRejectionTest(unittest.TestCase):
         # `edit`/`legend` dispatch on the untouched argv: `-u edit` keeps
         # treating "edit" as a tag filter, and a real `edit` call hands its
         # own argv to cmd_list_edit, which rejects list-only flags.
-        with patch("quiver.harness.commands._fetch_rate_limits"):
+        with patch("swe.harness.commands._fetch_rate_limits"):
             code, out = _run(cmd_list, ["-u", "edit"])
         self.assertEqual(code, 0)
         code, out = _run(cmd_list, ["edit", "--reset", "-r"])

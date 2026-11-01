@@ -1,6 +1,6 @@
-# The Quiver release process
+# The SWE release process
 
-This document is the complete walkthrough of how a Quiver release ships. It
+This document is the complete walkthrough of how a SWE release ships. It
 is written to double as a narration script: each numbered section is one
 scene, with the why, the exact commands, what success looks like, and what
 can go wrong. The pipeline itself lives in
@@ -9,7 +9,7 @@ covers everything around it.
 
 ## Scene 0 — What a release ships
 
-A Quiver release delivers three products to one GitHub Release page:
+A SWE release delivers three products to one GitHub Release page:
 
 1. **The Python package** — an sdist and a wheel for the `swe` CLI, built
    from `pyproject.toml`. This is what `pip install quiver-*.whl` users get.
@@ -33,7 +33,7 @@ just risk a failed run; it risks shipping a build whose name does not match
 its release.
 
 - [ ] **The version is bumped in two places.** `project.version` in
-  `pyproject.toml` and `__version__` in `src/quiver/__init__.py` must both
+  `pyproject.toml` and `__version__` in `src/swe/__init__.py` must both
   say the release version. The workflow hard-fails if the pushed tag does
   not equal `pyproject.toml`'s version, and `swe version` reads
   `__init__.py`, so a mismatch ships a CLI that lies about its own version.
@@ -73,7 +73,7 @@ and variables → Actions and survive every release.
 | `NOTARY_KEY` | Base64 of an App Store Connect API key's `.p8` file | `base64 -i AuthKey_<ID>.p8` |
 | `NOTARY_KEY_ID` | The key's ID, e.g. `P3VHYCSWKN` | App Store Connect → Integrations → App Store Connect API |
 | `NOTARY_ISSUER` | The issuer UUID | Same page as the key ID |
-| `SPARKLE_PRIVATE_KEY` | The EdDSA private key matching the `SUPublicEDKey` baked into the app | Sparkle's `generate_keys`; stored locally at `~/.quiver/secrets/` |
+| `SPARKLE_PRIVATE_KEY` | The EdDSA private key matching the `SUPublicEDKey` baked into the app | Sparkle's `generate_keys`; stored locally at `~/.swe/secrets/` |
 
 Three failure-mode notes that change how this scene ends:
 

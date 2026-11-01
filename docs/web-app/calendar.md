@@ -4,10 +4,10 @@ The Mac app's Calendar page (`CalendarPage.swift`, model in
 `QuiverCore/Calendar/`): when each harness was actually working on the
 hub machine, drawn as blocks of activity per project on a day grid.
 
-Files: `src/quiver/webapp/pages/calendar.py` (data),
-`src/quiver/webapp/pages/_activity.py` (the session-file and Cursor
+Files: `src/swe/webapp/pages/calendar.py` (data),
+`src/swe/webapp/pages/_activity.py` (the session-file and Cursor
 app sources),
-`src/quiver/webapp/static/pages/calendar.js` and `calendar.css` (page),
+`src/swe/webapp/static/pages/calendar.js` and `calendar.css` (page),
 `LedgerStore.activity_events` and `activity_session_stats` (the store
 reads it adds), `tests/test_webapp_calendar.py` and
 `tests/test_webapp_calendar_sources.py`.
@@ -93,7 +93,7 @@ Ported from `Activity.swift`, `ActivityBlocks.swift` and
    The Cursor app (`CursorAppActivity`): each account root's
    `User/globalStorage/state.vscdb`, opened read-only. The roots are
    `~/Library/Application Support/Cursor` plus each extra Cursor
-   profile's `~/.quiver/accounts/cursor/<id>/desktop`, and the root is
+   profile's `~/.swe/accounts/cursor/<id>/desktop`, and the root is
    the block's account ("Cursor", or "Cursor: <profile>"). Every
    `cursorDiskKV` row keyed `bubbleId:<composer>:<bubble>` is a response
    at its `createdAt` (an ISO time or epoch milliseconds), grouped by
@@ -130,13 +130,13 @@ Ported from `Activity.swift`, `ActivityBlocks.swift` and
   "days": [{"date": "2026-10-19", "start": 1792339200.0, "end": 1792425600.0}],
   "gap_s": 1800,
   "blocks": [{
-    "id": "claude|/home/me/.claude|/home/me/dev/quiver|1792755710.7",
+    "id": "claude|/home/me/.claude|/home/me/dev/swe|1792755710.7",
     "harness": "claude", "account": "/home/me/.claude", "account_label": "Claude: Default",
-    "project": "quiver", "project_key": "/home/me/dev/quiver",
+    "project": "swe", "project_key": "/home/me/dev/swe",
     "start": 1792755710.7, "end": 1792765400.1, "responses": 369,
     "tokens": 101928159, "cost_usd": 33.59, "unpriced_tokens": 0,
     "sessions": [{"id": "8bccd4fc-…", "row": "<catalog key>", "title": "Deploy the hub",
-                  "cwd": "/home/me/dev/quiver", "start": 1792755710.7, "end": 1792765400.1,
+                  "cwd": "/home/me/dev/swe", "start": 1792755710.7, "end": 1792765400.1,
                   "responses": 167, "tokens": 41800000, "cost_usd": 13.69, "unpriced_tokens": 0,
                   "days": {"2026-10-23": {"responses": 167, "tokens": 41800000,
                                           "cost_usd": 13.69, "unpriced_tokens": 0}}}]
@@ -164,9 +164,9 @@ listing gets a stand-in row from the ledger, as the app's
   with the token in its Settings into its own store, which the hub
   doesn't share. A satellite's activity is not shown either.
   The hub keeps its file index in memory; the Mac's copy in
-  `~/.quiver/cache/calendar` is its own.
+  `~/.swe/cache/calendar` is its own.
 - **Grok Bot titles** come from the names the Mac app remembered in
-  `~/.quiver/data/grok-bot-names.json` (read only); the hub has no Bot
+  `~/.swe/data/grok-bot-names.json` (read only); the hub has no Bot
   roster, so a deleted Bot reads as its short id, not "Deleted Bot".
 - **Tokens and spend** are added to the block card and the project
   sheet for ledger harnesses; the app shows time and responses only.

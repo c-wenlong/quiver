@@ -50,10 +50,16 @@ def bump_cask(text: str, version: str, sha256: str) -> str:
 def bump_formula(text: str, version: str, sha256: str) -> str:
     """The formula spells the version out in its url, so rewrite the url."""
     text = _sub_once(
-        r"(/releases/download/)v[^/\"]+/quiver-[^/\"]+-py3-none-any\.whl",
-        rf"\g<1>v{version}/quiver-{version}-py3-none-any.whl",
+        r"(/releases/download/)v[^/\"]+/(?:quiver|swe)-[^/\"]+-py3-none-any\.whl",
+        rf"\g<1>v{version}/swe-{version}-py3-none-any.whl",
         text,
         "formula wheel url",
+    )
+    text = _sub_once(
+        r"(?:quiver|swe)-#\{version\}-py3-none-any\.whl",
+        "swe-#{version}-py3-none-any.whl",
+        text,
+        "formula wheel filename",
     )
     return _sub_once(r'^(  sha256 )"[0-9a-f]{64}"$', rf'\g<1>"{sha256}"', text, "formula sha256 line")
 

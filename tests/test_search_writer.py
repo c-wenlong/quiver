@@ -18,9 +18,9 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from quiver.sessions import search_decode as decode
-from quiver.sessions import search_index
-from quiver.sessions import search_writer as writer
+from swe.sessions import search_decode as decode
+from swe.sessions import search_index
+from swe.sessions import search_writer as writer
 from tests.test_json_output import decode as decode_json, run_swe
 
 
@@ -531,7 +531,7 @@ class ReviewFixTests(_Home):
         self.assertEqual(len(search_index.search(self.home, "surrogate")), 1)
 
     def test_the_hub_loop_keeps_its_last_error(self):
-        from quiver.remote import hub
+        from swe.remote import hub
 
         class OneCycle(threading.Event):
             def wait(self, timeout=None):
@@ -663,7 +663,7 @@ class CommandTests(_Home):
 
 class HubLoopTests(_Home):
     def test_loop_indexes_only_while_enabled(self):
-        from quiver.remote import hub
+        from swe.remote import hub
 
         class OneCycle(threading.Event):
             def wait(self, timeout=None):

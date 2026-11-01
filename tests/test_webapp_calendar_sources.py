@@ -13,11 +13,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.ledger.models import LedgerRecord, UsageEvent
-from quiver.ledger.store import LedgerStore
-from quiver.webapp import sessions as sessions_mod
-from quiver.webapp.pages import _activity
-from quiver.webapp.pages import calendar as cal
+from swe.ledger.models import LedgerRecord, UsageEvent
+from swe.ledger.store import LedgerStore
+from swe.webapp import sessions as sessions_mod
+from swe.webapp.pages import _activity
+from swe.webapp.pages import calendar as cal
 
 from tests.test_remote_hub import HubBase
 
@@ -140,7 +140,7 @@ class TestCursor(unittest.TestCase):
                     {"id": "x1", "vendor": "claude", "isDefault": False}]
         dirs = _activity.cursor_user_data_dirs(self.dir, profiles)
         self.assertEqual(dirs, [str(self.dir / "Library/Application Support/Cursor"),
-                                str(self.dir / ".quiver/accounts/cursor/c1/desktop")])
+                                str(self.dir / ".swe/accounts/cursor/c1/desktop")])
         _cursor_db(self.dir / "a")
         files = _activity.cursor_files([str(self.dir / "a"), str(self.dir / "a")])
         self.assertEqual(list(files), [str(self.dir / "a" / _activity.CURSOR_DB)])

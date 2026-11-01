@@ -4,13 +4,13 @@ Instructions for any coding agent working in this repository. This file holds th
 
 ## What this is
 
-`quiver` is a Python package whose console entry point is `swe`. It manages the AI coding CLIs on a machine (Claude Code, Codex, Gemini, Cursor, opencode, ...): one registry, one shared instruction file and skills tree symlinked into every harness, cross-agent session history, MCP config sync, rate limits, and coding-session reports.
+`swe` is a Python package; its console entry point is also `swe`. It manages the AI coding CLIs on a machine (Claude Code, Codex, Gemini, Cursor, opencode, ...): one registry, one shared instruction file and skills tree symlinked into every harness, cross-agent session history, MCP config sync, rate limits, and coding-session reports.
 
-The core CLI is stdlib-only with no runtime dependencies. Optional extras: `server` (FastMCP session server via `python -m quiver.mcp_server`) and `test` (coverage). Python floor is 3.11; never add a 3.10 compatibility shim (3.10 users get `v0.2.9`, see [docs/testing.md](docs/testing.md#interpreter-matrix)).
+The core CLI is stdlib-only with no runtime dependencies. Optional extras: `server` (FastMCP session server via `python -m swe.mcp_server`) and `test` (coverage). Python floor is 3.11; never add a 3.10 compatibility shim (3.10 users get `v0.2.9`, see [docs/testing.md](docs/testing.md#interpreter-matrix)).
 
 | Doc | Read it before you touch |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | layering, the `~/.quiver` layout, registry and link states, `swe init` and archived harnesses, session engines, caches, drift checks |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | layering, the `~/.swe` layout, registry and link states, `swe init` and archived harnesses, session engines, caches, drift checks |
 | [docs/backend-architecture.md](docs/backend-architecture.md) | what each package owns, adding a command / `--json` payload / parser / fetcher / MCP format, the Python [gotchas](docs/backend-architecture.md#gotchas) |
 | [docs/app-architecture.md](docs/app-architecture.md) | the macOS app's structure and conventions, the app [gotchas](docs/app-architecture.md#gotchas) |
 | [docs/testing.md](docs/testing.md) | every test suite, coverage, fixtures, the end-to-end checks CI runs |
@@ -24,7 +24,7 @@ The core CLI is stdlib-only with no runtime dependencies. Optional extras: `serv
 |---|---|---|
 | macOS app | `app/mac/` | SwiftPM; see [app/mac/README.md](app/mac/README.md) |
 | iPhone app | `app/ios/` | XcodeGen and Xcode; see [app/ios/README.md](app/ios/README.md) |
-| Web app | `src/quiver/webapp/` | nothing: it ships in the Python package and `swe remote serve` serves it; see [docs/web-app.md](docs/web-app.md) |
+| Web app | `src/swe/webapp/` | nothing: it ships in the Python package and `swe remote serve` serves it; see [docs/web-app.md](docs/web-app.md) |
 
 The web app stays inside the Python package because pipx installs and the `swe` bundled in Quiver.app serve it from there.
 
@@ -40,8 +40,8 @@ The web app stays inside the Python package because pipx installs and the `swe` 
 
 `app/mac/` replaces Switchboard, TokenTracker, AIUsage and OpenUsage ([app/mac/ROADMAP.md](app/mac/ROADMAP.md)).
 
-- **Share no data with those apps.** Never read or write `~/.switchboard`, `~/.tokentracker`, `~/.config/aiusage`, OpenUsage's Application Support folder, or their caches, settings or keychain items, not even to import. Everything Quiver keeps lives under `~/.quiver`. The harnesses' own files (`~/.claude`, `~/.codex`, ...) are not another app's data; reading them is the point.
-- **Borrow ideas and code, not state.** Their source is a reference; Quiver re-implements against its own files. Keep the licence notices for any code copied.
+- **Share no data with those apps.** Never read or write `~/.switchboard`, `~/.tokentracker`, `~/.config/aiusage`, OpenUsage's Application Support folder, or their caches, settings or keychain items, not even to import. Everything SWE keeps lives under `~/.swe`. The harnesses' own files (`~/.claude`, `~/.codex`, ...) are not another app's data; reading them is the point.
+- **Borrow ideas and code, not state.** Their source is a reference; SWE re-implements against its own files. Keep the licence notices for any code copied.
 - **Never write to `~/Applications/Quiver.app` by hand.** Several sessions work on this repo at once, so the installed app is built only from `origin/main` by `app/mac/script/install-app.sh`. Check your change with your own build: `./script/build-app.sh debug` in your worktree, then `open -n build/Quiver.app`.
 - **Reinstall the app after every push to `main`**, not only `app/mac/` changes. Once your PR merges, run `app/mac/script/install-app.sh` from any checkout, `git fetch`, then confirm `git merge-base --is-ancestor <your merge commit> "$(defaults read ~/Applications/Quiver.app/Contents/Info QuiverCommit)"`. A newer commit is fine. If the script reports another install running, wait and run it again, since that one may have built an older `main`. Nothing to install after a push to a PR branch.
 
@@ -67,14 +67,14 @@ HOME="$test_home" python3 -m coverage run -m unittest discover -s tests -p 'test
 python3 -m coverage combine && python3 -m coverage report
 
 # CLI from source; MCP sync subsystem directly
-PYTHONPATH=src python3 -m quiver.cli list
-python3 -m quiver.mcp list
+PYTHONPATH=src python3 -m swe.cli list
+python3 -m swe.mcp list
 
 # Docs pages under app/landing-page/: regenerate after doc or help changes
 python3 scripts/docs_site.py  # or: --check to verify freshness
 ```
 
-There is no linter or formatter, and no pytest: `tests/conftest.py` pins terminal width to 200 columns but only fires under pytest, so a unittest test that asserts on rendered width patches `quiver.console.terminal_width` itself.
+There is no linter or formatter, and no pytest: `tests/conftest.py` pins terminal width to 200 columns but only fires under pytest, so a unittest test that asserts on rendered width patches `swe.console.terminal_width` itself.
 
 ### Rules a test or CI already enforces
 
@@ -93,21 +93,21 @@ Manual `swe` runs that check a change also use `HOME="$(mktemp -d)"`, so they ne
 
 ## End-to-end verification
 
-Verify every e2e feature against the installed `swe` binary, not only unit tests. A new module under `src/quiver/` passes with `PYTHONPATH=src` but stays invisible to a stale non-editable install. For any change that adds files or changes `cmd_*` handlers:
+Verify every e2e feature against the installed `swe` binary, not only unit tests. A new module under `src/swe/` passes with `PYTHONPATH=src` but stays invisible to a stale non-editable install. For any change that adds files or changes `cmd_*` handlers:
 
 1. Write tests and run the full suite against a throwaway HOME.
 2. Reinstall with `pip install -e .` (or `pipx install --force git+...`).
 3. Run the real `swe <command>` against a temp HOME. Read `.github/workflows/ci.yml` and `release.yml` for what CI repeats; [docs/testing.md](docs/testing.md#end-to-end-checks-against-the-installed-swe) has the detail.
 4. Open a PR, one concern per PR.
 
-If it works with `PYTHONPATH=src python3 -m quiver.cli` but not with `swe`, the installed copy is stale: re-run `pip install -e .`.
+If it works with `PYTHONPATH=src python3 -m swe.cli` but not with `swe`, the installed copy is stale: re-run `pip install -e .`.
 
 ## Architecture rules
 
 [docs/backend-architecture.md](docs/backend-architecture.md) has the package map and per-extension checklists; [ARCHITECTURE.md](ARCHITECTURE.md#layering-rules) the reasons.
 
 - `cli.py` is dispatch only: `COMMANDS` maps the first argv token to a `cmd_*`. Top-level entries are shortcuts for the most-used harness verbs; everything else lives under a domain command (`harness`, `mcp`, `find`, `plugins`, `providers`, `report`, `skills`, `session`, `config`, `setup`, `init`, `hooks`, `gh`, `remote`) that owns its own sub-dispatch.
-- Six bottom-layer modules never import a domain package: `console.py`, `keys.py` and `flags.py` import nothing from the project, `paths.py` only `quiver/__init__.py` constants, `table.py` imports `console`, `configuration.py` imports `paths`. Use `paths.py`'s `*_for(home)` helpers in tests.
+- Six bottom-layer modules never import a domain package: `console.py`, `keys.py` and `flags.py` import nothing from the project, `paths.py` only `swe/__init__.py` constants, `table.py` imports `console`, `configuration.py` imports `paths`. Use `paths.py`'s `*_for(home)` helpers in tests.
 - Command modules own presentation; logic modules do not print (`setup/wizard.py` is the one exception). The one cycle, `harness <-> sessions`, stays function-local.
 - `harness/registry.py` is the only module that touches `harness.json`. `harness/stars.py` and `harness/archive.py` are compatibility shims: add no state to them.
 - **Code never hardcodes what `harness.json` can say.** `HARNESS_ROOTS` and `PLUGIN_FALLBACK` are read-only fallbacks for harnesses the registry has never heard of; a harness's `capabilities` entry always wins.
@@ -129,7 +129,7 @@ If it works with `PYTHONPATH=src python3 -m quiver.cli` but not with `swe`, the 
 
 - A test's temp folder comes from `temp_dir(self)` in `tests/_tempdir.py` (or `self.enterContext(tempfile.TemporaryDirectory())`), never a bare `tempfile.mkdtemp()`.
 - A test that mutates nested keys of a class-level JSON fixture must `copy.deepcopy` it first.
-- Session parser tests mock `os.path.expanduser` in `quiver.sessions.parsers`; completion tests mock `load_registry` and `SHELL_CONFIGS`.
+- Session parser tests mock `os.path.expanduser` in `swe.sessions.parsers`; completion tests mock `load_registry` and `SHELL_CONFIGS`.
 
 ## Gotchas
 

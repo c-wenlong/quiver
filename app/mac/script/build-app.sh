@@ -40,7 +40,7 @@
 #
 # A prod build also refuses a tree it cannot ship from: non-arm64 hosts
 # (releases are Apple Silicon only, per app/mac/ROADMAP.md), a dirty checkout
-# (untracked files under src/quiver would bundle in silently) and a
+# (untracked files under src/swe would bundle in silently) and a
 # checkout with no version tag (the bundle would stamp 0.0.0, which
 # ReleaseCheck then treats as older than every release).
 set -euo pipefail
@@ -69,7 +69,7 @@ if [ "$channel" = "prod" ]; then
   fi
   if [ -n "$(git -C "$here" status --porcelain)" ]; then
     echo "build-app: refusing a prod build from a dirty checkout: uncommitted" >&2
-    echo "edits (and untracked files under src/quiver) ship silently. Commit or" >&2
+    echo "edits (and untracked files under src/swe) ship silently. Commit or" >&2
     echo "stash first, or build a clean worktree like install-app.sh does." >&2
     exit 1
   fi
@@ -144,16 +144,13 @@ done
 # swe and its Python, so the app works on a Mac that has neither.
 "$here/script/bundle-swe.sh" "$bundle"
 
-# App icons: light is the bundle's icon; Settings can switch the Dock icon
-# to dark at runtime. Both come from square art in Icons/.
-for style in light dark; do
-  art="$here/Icons/AppIcon-$style.png"
-  if [ ! -f "$art" ]; then
-    echo "build-app: $art missing" >&2
-    exit 1
-  fi
-  swift "$here/script/make-icon.swift" "$art" "$bundle/Contents/Resources/AppIcon-$style.icns"
-done
+# The app icon, from the square art in Icons/ (assets/logo-square.png).
+art="$here/Icons/AppIcon.png"
+if [ ! -f "$art" ]; then
+  echo "build-app: $art missing" >&2
+  exit 1
+fi
+swift "$here/script/make-icon.swift" "$art" "$bundle/Contents/Resources/AppIcon.icns"
 
 # What Settings shows: the full describe string ("v0.2.9-296-g571fbd8").
 describe="$(git -C "$here" describe --tags --always 2>/dev/null || echo 0.0.0)"
@@ -215,7 +212,7 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Quiver</string>
   <key>CFBundleIdentifier</key><string>com.cwenlong.quiver</string>
   <key>CFBundleExecutable</key><string>Quiver</string>
-  <key>CFBundleIconFile</key><string>AppIcon-light</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
   <key>CFBundleVersion</key><string>${build}</string>

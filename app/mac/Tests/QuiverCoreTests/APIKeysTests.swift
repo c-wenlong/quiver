@@ -620,7 +620,7 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
 
     @Test func theDefaultFileSitsUnderQuiverSecrets() throws {
         let home = try temp()
-        let current = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        let current = home.appending(path: ".swe/secrets/providers/.api_keys")
         #expect(APIKeysStore.defaultURL(home: home) == current)
         // An unmigrated machine keeps editing the file it already has.
         let legacy = home.appending(path: ".api_keys")
@@ -636,7 +636,7 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         // ~/.api_keys as a directory of per-provider files is a CLI-only
         // layout; the app reads the file, not the directory.
         let home = try temp()
-        let current = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        let current = home.appending(path: ".swe/secrets/providers/.api_keys")
         let legacy = home.appending(path: ".api_keys")
         try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
         #expect(APIKeysStore.defaultURL(home: home) == current)
@@ -785,7 +785,7 @@ struct FakeShell: ShellEnvironmentReading {
         -> (APIKeysModel, URL, URL) {
         let home = scratch.url
             .appending(path: "keysource-\(UUID().uuidString)")
-        let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        let keys = home.appending(path: ".swe/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
         try "export A_KEY=v1\n".write(to: keys, atomically: true, encoding: .utf8)
@@ -823,7 +823,7 @@ struct FakeShell: ShellEnvironmentReading {
     @Test func zdotdirWinsForTheRcPath() async throws {
         let home = scratch.url
             .appending(path: "keysource-\(UUID().uuidString)")
-        let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        let keys = home.appending(path: ".swe/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
         try "export A_KEY=v1\n".write(to: keys, atomically: true, encoding: .utf8)
@@ -850,7 +850,7 @@ struct FakeShell: ShellEnvironmentReading {
     @Test func sourcingFollowsTheLandingReadsEnvironment() async throws {
         let home = scratch.url
             .appending(path: "keysource-\(UUID().uuidString)")
-        let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
+        let keys = home.appending(path: ".swe/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
         try "export A_KEY=v1\n".write(to: keys, atomically: true, encoding: .utf8)

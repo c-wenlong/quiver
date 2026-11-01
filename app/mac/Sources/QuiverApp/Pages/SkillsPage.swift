@@ -53,7 +53,7 @@ struct SkillsPage: View {
     }
 }
 
-/// Writes ~/.quiver/skills/<name>/SKILL.md through `swe skills new`.
+/// Writes ~/.swe/skills/<name>/SKILL.md through `swe skills new`.
 private struct NewSkillSheet: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismissSheet) private var dismiss

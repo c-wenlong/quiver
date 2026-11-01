@@ -1,4 +1,4 @@
-"""``python -m quiver.mcp_server`` must start the server, not just import it."""
+"""``python -m swe.mcp_server`` must start the server, not just import it."""
 
 import importlib
 import runpy
@@ -47,15 +47,15 @@ class TestMcpServerShimWithoutExtra(unittest.TestCase):
         patcher = mock.patch.dict(sys.modules, _fake_mcp_modules())
         patcher.start()
         self.addCleanup(patcher.stop)
-        for name in ("quiver.mcp.server", "quiver.mcp_server"):
+        for name in ("swe.mcp.server", "swe.mcp_server"):
             sys.modules.pop(name, None)
 
     def test_running_shim_as_main_starts_the_server(self):
-        runpy.run_module("quiver.mcp_server", run_name="__main__")
+        runpy.run_module("swe.mcp_server", run_name="__main__")
         _FakeFastMCP.run.assert_called_once_with()
 
     def test_importing_shim_does_not_start_the_server(self):
-        runpy.run_module("quiver.mcp_server", run_name="quiver.mcp_server")
+        runpy.run_module("swe.mcp_server", run_name="swe.mcp_server")
         _FakeFastMCP.run.assert_not_called()
 
 
@@ -70,21 +70,21 @@ class TestMcpServerMissingExtra(unittest.TestCase):
         err = io.StringIO()
         with mock.patch.dict(sys.modules, {"mcp": None, "mcp.server": None,
                                            "mcp.server.fastmcp": None}):
-            sys.modules.pop("quiver.mcp.server", None)
+            sys.modules.pop("swe.mcp.server", None)
             with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
-                importlib.import_module("quiver.mcp.server")
-        sys.modules.pop("quiver.mcp.server", None)
+                importlib.import_module("swe.mcp.server")
+        sys.modules.pop("swe.mcp.server", None)
         self.assertIn('pip install -e ".[server]"', err.getvalue())
         self.assertNotIn("pip install quiver[server]", err.getvalue())
 
 @unittest.skipUnless(_have_fastmcp(), "FastMCP (quiver[server]) not installed")
 class TestMcpServerShimWithFastMCP(unittest.TestCase):
     def test_running_shim_as_main_starts_the_real_server(self):
-        # Not `from quiver.mcp import server`: the stub tests can leave a stale package attribute.
-        server = importlib.import_module("quiver.mcp.server")
+        # Not `from swe.mcp import server`: the stub tests can leave a stale package attribute.
+        server = importlib.import_module("swe.mcp.server")
 
         with mock.patch.object(server.mcp, "run") as run:
-            runpy.run_module("quiver.mcp_server", run_name="__main__")
+            runpy.run_module("swe.mcp_server", run_name="__main__")
         run.assert_called_once_with()
 
 

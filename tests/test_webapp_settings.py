@@ -15,11 +15,11 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
-from quiver.github import gh
-from quiver.remote import pairing
-from quiver.remote.hub import save_hub_config
-from quiver.webapp.pages import PageContext, PageError, _qr
-from quiver.webapp.pages import settings as settings_page
+from swe.github import gh
+from swe.remote import pairing
+from swe.remote.hub import save_hub_config
+from swe.webapp.pages import PageContext, PageError, _qr
+from swe.webapp.pages import settings as settings_page
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp import app_js_function
@@ -395,7 +395,7 @@ class _Settings(HubBase):
     def setUp(self):
         super().setUp()
         self.home = self.srv.home
-        patcher = patch("quiver.remote.catalog.tailscale_ip", return_value="100.64.0.7")
+        patcher = patch("swe.remote.catalog.tailscale_ip", return_value="100.64.0.7")
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -462,7 +462,7 @@ class TestGet(_Settings):
         self.assertNotIn("credential_hash", row)
 
     def test_remote_setup_is_its_own_part_and_reads_this_machine(self):
-        from quiver.remote import setup
+        from swe.remote import setup
 
         made_up = setup.Facts(platform="darwin", exe=None, status=None)
         seen = {}
@@ -494,7 +494,7 @@ class TestGet(_Settings):
         self.assertFalse({"code", "poll_secret", "poll_secret_hash"} & set(rows[0]))
 
     def test_providers_are_masked_and_nothing_is_written(self):
-        keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        keys = self.home / ".swe" / "secrets" / "providers" / ".api_keys"
         keys.parent.mkdir(parents=True)
         secret = "sk-proj-SECRETSECRETSECRET9876"
         keys.write_text(f"# OpenAI\nexport OPENAI_API_KEY={secret}\nexport EMPTY_KEY=\"\"\n")
@@ -504,9 +504,9 @@ class TestGet(_Settings):
             {"name": "EMPTY_KEY", "provider": "OpenAI", "has_value": False, "masked": ""},
         ])
         self.assertNotIn("SECRET", json.dumps(body))
-        self.assertEqual(body["providers"]["path"], "~/.quiver/secrets/providers/.api_keys")
+        self.assertEqual(body["providers"]["path"], "~/.swe/secrets/providers/.api_keys")
         self.assertRegex(body["providers"]["stamp"], r"^[0-9a-f]{64}$")
-        self.assertFalse((self.home / ".quiver" / "config" / "providers.json").exists())
+        self.assertFalse((self.home / ".swe" / "config" / "providers.json").exists())
         catalog = {r["id"]: r for r in body["providers"]["catalog"]}
         self.assertEqual(catalog["gemini"]["env_vars"], ["GEMINI_API_KEY", "GOOGLE_API_KEY"])
         self.assertEqual(catalog["anthropic"]["name"], "Anthropic")
@@ -517,7 +517,7 @@ class TestGet(_Settings):
         self.assertFalse(catalog["anthropic"]["has_key"])
 
     def test_catalog_has_key_needs_a_value_not_only_the_variable(self):
-        keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        keys = self.home / ".swe" / "secrets" / "providers" / ".api_keys"
         keys.parent.mkdir(parents=True)
         keys.write_text("export GEMINI_API_KEY=\nexport ANTHROPIC_API_KEY=\"\"\n")
         catalog = {r["id"]: r for r in settings_page.get(self.ctx(), {})["providers"]["catalog"]}
@@ -528,7 +528,7 @@ class TestGet(_Settings):
         self.assertTrue(catalog["gemini"]["has_key"])
 
     def test_providers_follow_providers_json_and_its_removals(self):
-        config = self.home / ".quiver" / "config"
+        config = self.home / ".swe" / "config"
         config.mkdir(parents=True)
         (config / "providers.json").write_text(json.dumps({
             "acme": {"env_vars": ["ACME_API_KEY"], "url": "https://acme.example/keys"},
@@ -542,7 +542,7 @@ class TestGet(_Settings):
         self.assertEqual((config / "providers.json").read_text(), before)
 
     def test_a_corrupt_providers_json_is_reported_not_raised(self):
-        config = self.home / ".quiver" / "config"
+        config = self.home / ".swe" / "config"
         config.mkdir(parents=True)
         (config / "providers.json").write_text("{nope")
         prov = settings_page.get(self.ctx(), {})["providers"]
@@ -550,7 +550,7 @@ class TestGet(_Settings):
         self.assertTrue(prov["error"])
 
     def test_a_provider_with_bad_field_types_is_reported_not_raised(self):
-        config = self.home / ".quiver" / "config"
+        config = self.home / ".swe" / "config"
         config.mkdir(parents=True)
         (config / "providers.json").write_text(json.dumps({
             "acme": {"env_vars": "ACME_API_KEY"},
@@ -561,7 +561,7 @@ class TestGet(_Settings):
         self.assertTrue(body["remote"]["hub"]["ok"])
 
     def test_a_keys_file_that_is_not_utf8_is_reported(self):
-        keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        keys = self.home / ".swe" / "secrets" / "providers" / ".api_keys"
         keys.parent.mkdir(parents=True)
         keys.write_bytes(b"export A=\xff\n")
         prov = settings_page.get(self.ctx(), {})["providers"]
@@ -569,7 +569,7 @@ class TestGet(_Settings):
         self.assertIn("UTF-8", prov["error"])
 
     def test_a_keys_file_in_a_symlink_loop_is_reported(self):
-        keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        keys = self.home / ".swe" / "secrets" / "providers" / ".api_keys"
         keys.parent.mkdir(parents=True)
         keys.symlink_to(keys.parent / "loop")
         (keys.parent / "loop").symlink_to(keys)
@@ -579,7 +579,7 @@ class TestGet(_Settings):
         self.assertTrue(body["remote"]["hub"]["ok"])
 
     def test_provider_links_are_web_links_only(self):
-        config = self.home / ".quiver" / "config"
+        config = self.home / ".swe" / "config"
         config.mkdir(parents=True)
         (config / "providers.json").write_text(json.dumps({
             "acme": {"env_vars": ["ACME_API_KEY"], "url": "javascript:alert(1)"},
@@ -590,7 +590,7 @@ class TestGet(_Settings):
 
     def test_github_part(self):
         env = gh.GhEnv(installed=True, authenticated=True, login="octo")
-        with patch("quiver.github.shared.probe", return_value=env) as probe:
+        with patch("swe.github.shared.probe", return_value=env) as probe:
             body = settings_page.get(self.ctx(), {"part": "github", "refresh": "1"})
         probe.assert_called_once_with(self.home, refresh=True)
         self.assertEqual(body["github"]["env"]["status"], "ok")
@@ -664,7 +664,7 @@ class TestKeys(_Settings):
 
     def setUp(self):
         super().setUp()
-        self.keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        self.keys = self.home / ".swe" / "secrets" / "providers" / ".api_keys"
         self.keys.parent.mkdir(parents=True)
         self.keys.write_text("# OpenAI\nexport OPENAI_API_KEY=sk-proj-OLDOLDOLDOLDOLD0000\n")
 
@@ -688,10 +688,10 @@ class TestKeys(_Settings):
         self.assertEqual(self.keys.stat().st_mode & 0o777, 0o600)
         names = [k["name"] for k in reply["providers"]["keys"]]
         self.assertEqual(names, ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"])
-        backup = self.home / ".quiver" / "backups" / "api-keys" / "api_keys.bak"
+        backup = self.home / ".swe" / "backups" / "api-keys" / "api_keys.bak"
         self.assertIn("OLDOLD", backup.read_text())
         self.assertEqual(backup.parent.stat().st_mode & 0o777, 0o700)
-        self.assertEqual((self.home / ".quiver" / "secrets" / ".gitignore").read_text().splitlines()[-1], "*")
+        self.assertEqual((self.home / ".swe" / "secrets" / ".gitignore").read_text().splitlines()[-1], "*")
 
     def test_replace_keeps_the_line_in_place(self):
         self.keys.write_text("# OpenAI\nexport OPENAI_API_KEY=old # mine\nexport B=1\n")
@@ -892,7 +892,7 @@ class TestOwnerTailnetCaller(_Settings):
 
 class TestSessionSearch(_Settings):
     def wait_idle(self):
-        from quiver.sessions import search_writer
+        from swe.sessions import search_writer
 
         for _ in range(500):
             if not search_writer.is_running(self.home):
@@ -911,7 +911,7 @@ class TestSessionSearch(_Settings):
         self.assertEqual((ss["enabled"], ss["running"], ss["exists"]), (False, False, False))
 
     def test_turning_it_on_indexes_now_and_off_stops_the_hub(self):
-        from quiver.sessions import search_index, search_writer
+        from swe.sessions import search_index, search_writer
 
         projects = Path(self.home) / ".claude" / "projects" / "p"
         projects.mkdir(parents=True)
@@ -935,7 +935,7 @@ class TestSessionSearch(_Settings):
         self.assertEqual((status, data["error"]["code"]), (400, "bad_enabled"))
 
     def test_a_foreign_origin_cannot_turn_it_on(self):
-        from quiver.sessions import search_writer
+        from swe.sessions import search_writer
 
         me = self.device("laptop")
         headers = {"Authorization": f"Bearer {me['credential']}", "Origin": "https://evil.example",
@@ -946,7 +946,7 @@ class TestSessionSearch(_Settings):
         self.assertFalse(search_writer.is_enabled(self.home))
 
     def test_a_failed_first_pass_is_recorded(self):
-        from quiver.sessions import search_writer
+        from swe.sessions import search_writer
 
         with patch.object(search_writer, "open_index", side_effect=search_writer.IndexUnavailable("too new")):
             settings_page._first_pass(Path(self.home))
@@ -961,7 +961,7 @@ class TestSessionSearch(_Settings):
             "message": {"content": "resync and clear fixture"}}, separators=(",", ":")) + "\n")
 
     def test_resync_reruns_the_pass(self):
-        from quiver.sessions import search_index
+        from swe.sessions import search_index
 
         self.write_session()
         me = self.device("laptop")
@@ -1029,8 +1029,8 @@ class TestSessionSearch(_Settings):
         self.assertIsNone(ss["last_pass"])
 
     def test_clear_while_a_pass_holds_the_lock_is_409(self):
-        from quiver.sessions import search_writer
-        from quiver.paths import search_index_for
+        from swe.sessions import search_writer
+        from swe.paths import search_index_for
 
         me = self.device("laptop")
         self.post("session_search", {"enabled": True}, me)
@@ -1051,15 +1051,15 @@ class TestSync(_Settings):
 
     def setUp(self):
         super().setUp()
-        from quiver.github import shared as G
+        from swe.github import shared as G
 
         patcher = patch.object(G, "CACHE", G.TtlCache())
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def test_sync_fills_the_hubs_catalog_and_answers_with_the_card(self):
-        from quiver import paths
-        from quiver.github import catalog
+        from swe import paths
+        from swe.github import catalog
         from tests.test_webapp_repositories import FakeGh
 
         FakeGh(self, orgs=["acme"], lists={"octo": ["dots"], "acme": ["sdk"]})
@@ -1072,9 +1072,9 @@ class TestSync(_Settings):
         self.assertEqual(catalog.status(paths.github_catalog_for(self.home))["repos"], 2)
 
     def test_sync_probes_gh_afresh_so_a_switched_account_counts(self):
-        from quiver import paths
-        from quiver.github import catalog
-        from quiver.github import shared as G
+        from swe import paths
+        from swe.github import catalog
+        from swe.github import shared as G
         from tests.test_webapp_repositories import FakeGh
 
         # The card read the old account a moment ago; gh is now signed in as octo.
@@ -1132,7 +1132,7 @@ class TestRevokeThisBrowserScript(unittest.TestCase):
     localStorage and stops the remote poll; revoking another device
     leaves both alone. The poll itself stops at its first 401."""
 
-    STATIC = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static"
+    STATIC = Path(__file__).resolve().parents[1] / "src/swe/webapp/static"
 
     def run_js(self, api_status, post_data, body, hash_="#/settings?section=integrations"):
         app = (self.STATIC / "app.js").read_text(encoding="utf-8")
@@ -1188,7 +1188,7 @@ class TestRevealedKeysScript(unittest.TestCase):
     masked again once the page moves to another section or the other
     Providers tab, so coming back never shows it in plain text."""
 
-    STATIC = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static"
+    STATIC = Path(__file__).resolve().parents[1] / "src/swe/webapp/static"
 
     def test_switching_section_or_tab_masks_revealed_values(self):
         prelude = (

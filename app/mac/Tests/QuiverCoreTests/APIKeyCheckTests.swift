@@ -525,7 +525,7 @@ final class GateTransport: HTTPTransport {
     }
 }
 
-/// The cache under ~/.quiver/cache and the salt the fingerprints hash against.
+/// The cache under ~/.swe/cache and the salt the fingerprints hash against.
 @Suite struct APIKeyCheckCacheTests {
     /// This test's own folder, removed with its contents when the test ends.
     let scratch: TempDir

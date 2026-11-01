@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from quiver.reports.commands import (
+from swe.reports.commands import (
     _default_period,
     _followup,
     _generate,
@@ -20,9 +20,9 @@ from quiver.reports.commands import (
     _warnings_command,
     cmd_report,
 )
-from quiver.reports.followups import FollowUpLedger
-from quiver.reports.models import FollowUp
-from quiver.reports.pipeline import ReportApprovalError, ReportWriterError
+from swe.reports.followups import FollowUpLedger
+from swe.reports.models import FollowUp
+from swe.reports.pipeline import ReportApprovalError, ReportWriterError
 
 
 class ReportCommandsTest(unittest.TestCase):
@@ -49,16 +49,16 @@ class ReportCommandsTest(unittest.TestCase):
         query = Mock()
         query.apply.return_value = [object()]
         patches = (
-            patch("quiver.reports.commands.load_resolved_config", return_value={}),
-            patch("quiver.reports.commands.validate_config", return_value=[]),
-            patch("quiver.reports.commands.report_setup_complete", return_value=True),
+            patch("swe.reports.commands.load_resolved_config", return_value={}),
+            patch("swe.reports.commands.validate_config", return_value=[]),
+            patch("swe.reports.commands.report_setup_complete", return_value=True),
             patch(
-                "quiver.reports.commands._source_period",
+                "swe.reports.commands._source_period",
                 return_value=(1, 2, "start", "end", True),
             ),
-            patch("quiver.reports.commands.SessionQuery", return_value=query),
-            patch("quiver.reports.commands.get_all_sessions", return_value=[object()]),
-            patch("quiver.reports.commands._pipeline", return_value=pipeline),
+            patch("swe.reports.commands.SessionQuery", return_value=query),
+            patch("swe.reports.commands.get_all_sessions", return_value=[object()]),
+            patch("swe.reports.commands._pipeline", return_value=pipeline),
         )
         output = io.StringIO()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
@@ -83,10 +83,10 @@ class ReportCommandsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             _parse_generate_args(["-d", "2", "-w", "1"])
 
-    @patch("quiver.reports.commands.get_all_sessions", return_value=[])
-    @patch("quiver.reports.commands.report_setup_complete", return_value=True)
-    @patch("quiver.reports.commands.load_resolved_config", return_value={})
-    @patch("quiver.reports.commands.ReportStore")
+    @patch("swe.reports.commands.get_all_sessions", return_value=[])
+    @patch("swe.reports.commands.report_setup_complete", return_value=True)
+    @patch("swe.reports.commands.load_resolved_config", return_value={})
+    @patch("swe.reports.commands.ReportStore")
     def test_no_sessions_returns_without_pipeline(self, store_cls, _config, _complete, _sessions):
         store_cls.return_value.get_cursor.return_value = None
         output = io.StringIO()
@@ -142,15 +142,15 @@ class ReportCommandsTest(unittest.TestCase):
         # "Report failed". Sessions must never even be loaded.
         get_sessions = Mock()
         patches = (
-            patch("quiver.reports.commands.load_resolved_config", return_value={}),
-            patch("quiver.reports.commands.validate_config", return_value=[]),
-            patch("quiver.reports.commands.report_setup_complete", return_value=True),
-            patch("quiver.reports.commands.ReportStore"),
+            patch("swe.reports.commands.load_resolved_config", return_value={}),
+            patch("swe.reports.commands.validate_config", return_value=[]),
+            patch("swe.reports.commands.report_setup_complete", return_value=True),
+            patch("swe.reports.commands.ReportStore"),
             patch(
-                "quiver.reports.commands._source_period",
+                "swe.reports.commands._source_period",
                 return_value=(2, 1, "start", "end", True),
             ),
-            patch("quiver.reports.commands.get_all_sessions", get_sessions),
+            patch("swe.reports.commands.get_all_sessions", get_sessions),
         )
         output = io.StringIO()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
@@ -162,7 +162,7 @@ class ReportCommandsTest(unittest.TestCase):
         self.assertNotIn("Report failed", output.getvalue())
         get_sessions.assert_not_called()
 
-    @patch("quiver.reports.commands.load_resolved_config")
+    @patch("swe.reports.commands.load_resolved_config")
     def test_invalid_resolved_config_is_reported_without_traceback(self, load_config):
         load_config.return_value = {
             "report": {
@@ -305,7 +305,7 @@ class ReportCommandsTest(unittest.TestCase):
     def test_followup_lifecycle_routes_to_persistent_ledger(self):
         with tempfile.TemporaryDirectory() as tmp:
             ledger = FollowUpLedger(root=tmp, clock=lambda: "2026-08-01T00:00:00+00:00")
-            with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+            with patch("swe.reports.commands.FollowUpLedger", return_value=ledger):
                 self.assertEqual(_followup(["add", "Ship", "the", "fix", f"--project={tmp}"]), 0)
                 item = ledger.list()[0]
                 self.assertEqual(_followup(["edit", item.id, "Ship", "the", "tested", "fix"]), 0)
@@ -321,8 +321,8 @@ class ReportCommandsTest(unittest.TestCase):
         item = FollowUp(id="fu_test", text="Finish", project_root="/tmp")
         ledger = Mock()
         ledger.get.return_value = item
-        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger), patch(
-            "quiver.reports.commands.work_on_follow_up"
+        with patch("swe.reports.commands.FollowUpLedger", return_value=ledger), patch(
+            "swe.reports.commands.work_on_follow_up"
         ) as work:
             result = _followup(["work", item.id, "--resume", "--new"])
 
@@ -337,7 +337,7 @@ class ReportCommandsTest(unittest.TestCase):
             ledger = FollowUpLedger(
                 root=tmp, clock=lambda: "2026-08-01T00:00:00+00:00"
             )
-            with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+            with patch("swe.reports.commands.FollowUpLedger", return_value=ledger):
                 self.assertEqual(
                     _followup(
                         ["add", "fix", "--harness=codex", "config", f"--project={tmp}"]
@@ -355,9 +355,9 @@ class ReportCommandsTest(unittest.TestCase):
         for argv in (["work", item.id], ["work", item.id, "--new"]):
             with self.subTest(argv=argv):
                 with patch(
-                    "quiver.reports.commands.FollowUpLedger", return_value=ledger
+                    "swe.reports.commands.FollowUpLedger", return_value=ledger
                 ), patch(
-                    "quiver.reports.commands.work_on_follow_up"
+                    "swe.reports.commands.work_on_follow_up"
                 ) as work, patch(
                     "builtins.input", side_effect=EOFError
                 ):
@@ -402,7 +402,7 @@ class HelpRoutesTest(unittest.TestCase):
             root=Path(tempfile.mkdtemp()),
             clock=lambda: "2026-08-01T00:00:00+00:00",
         )
-        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+        with patch("swe.reports.commands.FollowUpLedger", return_value=ledger):
             result, out = self._run(["followup", "add", "--help"])
         self.assertEqual(result, 0)
         self.assertIn("swe report daily", out)
@@ -414,7 +414,7 @@ class HelpRoutesTest(unittest.TestCase):
         ledger = Mock()
         ledger.get.return_value = item
         ledger.edit.return_value = item
-        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+        with patch("swe.reports.commands.FollowUpLedger", return_value=ledger):
             result = _followup(["edit", "fu_x", "need", "help", "here"])
         self.assertEqual(result, 0)
         ledger.edit.assert_called_once_with("fu_x", text="need help here")
@@ -426,7 +426,7 @@ class HelpRoutesTest(unittest.TestCase):
         ledger = Mock()
         ledger.get.return_value = item
         ledger.edit.return_value = item
-        with patch("quiver.reports.commands.FollowUpLedger", return_value=ledger):
+        with patch("swe.reports.commands.FollowUpLedger", return_value=ledger):
             result = _followup(["edit", "fu_x", "ask", "for", "--help", "output"])
         self.assertEqual(result, 0)
         ledger.edit.assert_called_once_with("fu_x", text="ask for --help output")

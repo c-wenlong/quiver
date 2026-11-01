@@ -12,12 +12,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver import paths
-from quiver.github import gh
-from quiver.mcp import secrets as mcp_secrets
-from quiver.remote import linear
-from quiver.remote import tasks as tasks_mod
-from quiver.github import shared as G
+from swe import paths
+from swe.github import gh
+from swe.mcp import secrets as mcp_secrets
+from swe.remote import linear
+from swe.remote import tasks as tasks_mod
+from swe.github import shared as G
 
 from tests.test_remote_hub import _Server, _session
 
@@ -126,7 +126,7 @@ class TestEnv(unittest.TestCase):
 
     def test_missing_secret_is_auth_required(self):
         _config(self.home, {})
-        with patch("quiver.remote.linear._graphql") as call:
+        with patch("swe.remote.linear._graphql") as call:
             env = linear.LinearTasks(self.home).probe()
         call.assert_not_called()  # never reaches the wire
         self.assertEqual(env.status, "auth-required")
@@ -144,7 +144,7 @@ class TestEnv(unittest.TestCase):
         """``key_ref`` unset means ${LINEAR_API_KEY}."""
         _config(self.home, {})
         _secret(self.home)
-        with patch("quiver.remote.linear._graphql",
+        with patch("swe.remote.linear._graphql",
                    return_value=linear.GraphQLResult(
                        "ok", data={"viewer": {"displayName": "Kai"}})
                    ) as call:
@@ -157,7 +157,7 @@ class TestEnv(unittest.TestCase):
         _config(self.home, {"key_ref": "${WORK_LINEAR_TOKEN}"})
         mcp_secrets.set_secret("WORK_LINEAR_TOKEN", "lin_api_w",
                                home=self.home)
-        with patch("quiver.remote.linear._graphql",
+        with patch("swe.remote.linear._graphql",
                    return_value=linear.GraphQLResult("ok", data={})):
             env = linear.LinearTasks(self.home).probe()
         self.assertEqual(env.status, "ok")
@@ -165,7 +165,7 @@ class TestEnv(unittest.TestCase):
     def test_refused_key_is_auth_required(self):
         _config(self.home, {})
         _secret(self.home)
-        with patch("quiver.remote.linear._graphql",
+        with patch("swe.remote.linear._graphql",
                    return_value=linear.GraphQLResult(
                        "auth-required",
                        error="Linear refused the API key (HTTP 401)")):
@@ -176,7 +176,7 @@ class TestEnv(unittest.TestCase):
     def test_unreachable_is_upstream_error(self):
         _config(self.home, {})
         _secret(self.home)
-        with patch("quiver.remote.linear._graphql",
+        with patch("swe.remote.linear._graphql",
                    return_value=linear.GraphQLResult(
                        "upstream-error", error="Linear is unreachable")):
             env = linear.LinearTasks(self.home).probe()
@@ -200,7 +200,7 @@ class TestListAndGet(unittest.TestCase):
             linear._LIST_QUERY: linear.GraphQLResult(
                 status, data={"issues": {"nodes": nodes}}, error=error),
         }
-        return patch("quiver.remote.linear._graphql",
+        return patch("swe.remote.linear._graphql",
                    side_effect=lambda key, query, variables=None:
                        replies.get(query) or
                        (_ for _ in ()).throw(AssertionError(query)))
@@ -230,7 +230,7 @@ class TestListAndGet(unittest.TestCase):
             return linear.GraphQLResult(
                 "ok", data={"issues": {"nodes": []}})
 
-        with patch("quiver.remote.linear._graphql", side_effect=fake):
+        with patch("swe.remote.linear._graphql", side_effect=fake):
             linear.LinearTasks(self.home).list()
         team = seen["filter"]["or"][1]["team"]["key"]["in"]
         self.assertEqual(team, ["QUI", "ENG"])
@@ -246,7 +246,7 @@ class TestListAndGet(unittest.TestCase):
                 "nodes": [_node(f"QUI-{n}")],
                 "pageInfo": {"hasNextPage": True, "endCursor": f"c{n}"}}})
 
-        with patch("quiver.remote.linear._graphql", side_effect=fake):
+        with patch("swe.remote.linear._graphql", side_effect=fake):
             out = linear.LinearTasks(self.home).list()
         self.assertEqual(calls, [None, "c1", "c2", "c3", "c4"])
         self.assertEqual(len(out["tasks"]), linear.LIST_PAGES)
@@ -261,8 +261,8 @@ class TestListAndGet(unittest.TestCase):
                 "nodes": [_node(f"QUI-{clock[0]}")],
                 "pageInfo": {"hasNextPage": True, "endCursor": "c"}}})
 
-        with patch("quiver.remote.linear._graphql", side_effect=fake), \
-                patch("quiver.remote.linear.time.monotonic",
+        with patch("swe.remote.linear._graphql", side_effect=fake), \
+                patch("swe.remote.linear.time.monotonic",
                       side_effect=lambda: clock[0]):
             out = linear.LinearTasks(self.home).list()
         # 0 s start: pages at 5 s and 10 s; the third would start past 8 s.
@@ -274,7 +274,7 @@ class TestListAndGet(unittest.TestCase):
                   "pageInfo": {"hasNextPage": True, "endCursor": "c1"}},
                  {"nodes": [_node("QUI-2")],
                   "pageInfo": {"hasNextPage": False, "endCursor": "c2"}}]
-        with patch("quiver.remote.linear._graphql",
+        with patch("swe.remote.linear._graphql",
                    side_effect=[linear.GraphQLResult("ok", data={"issues": p})
                                 for p in pages]):
             out = linear.LinearTasks(self.home).list()
@@ -288,7 +288,7 @@ class TestListAndGet(unittest.TestCase):
         may raise or send a mangled filter."""
         for raw in (5, "QUI", ["QUI", 7], {"k": "QUI"}, True):
             _config(self.home, {"teams": raw})
-            with patch("quiver.remote.linear._graphql") as call:
+            with patch("swe.remote.linear._graphql") as call:
                 out = linear.LinearTasks(self.home).list()
             call.assert_not_called()  # never reaches the wire
             self.assertEqual(out["status"], "bad-config", raw)
@@ -312,7 +312,7 @@ class TestListAndGet(unittest.TestCase):
     def test_get_answers_state_title_url_and_description(self):
         issue = {**_node("QUI-12", stype="started"),
                  "description": "## Spec\nDo the thing."}
-        with patch("quiver.remote.linear._graphql",
+        with patch("swe.remote.linear._graphql",
                    return_value=linear.GraphQLResult(
                        "ok", data={"issue": issue})) as call:
             src = linear.LinearTasks(self.home)
@@ -326,7 +326,7 @@ class TestListAndGet(unittest.TestCase):
         self.assertEqual(out["title"], "Ship the thing")
 
     def test_get_missing_issue_is_none(self):
-        with patch("quiver.remote.linear._graphql",
+        with patch("swe.remote.linear._graphql",
                    return_value=linear.GraphQLResult(
                        "ok", data={"issue": None})):
             out = linear.LinearTasks(self.home).get(
@@ -334,7 +334,7 @@ class TestListAndGet(unittest.TestCase):
         self.assertIsNone(out)
 
     def test_get_unreachable_is_none_not_a_crash(self):
-        with patch("quiver.remote.linear._graphql",
+        with patch("swe.remote.linear._graphql",
                    return_value=linear.GraphQLResult(
                        "upstream-error", error="timeout")):
             out = linear.LinearTasks(self.home).get({"ref": "QUI-12"})
@@ -348,7 +348,7 @@ class TestGraphQL(unittest.TestCase):
         import urllib.error
         err = urllib.error.HTTPError(
             linear.GRAPHQL_URL, 401, "unauthorized", None, None)
-        with patch("quiver.remote.linear.urllib.request.urlopen",
+        with patch("swe.remote.linear.urllib.request.urlopen",
                    side_effect=err):
             out = linear._graphql("k", "query { viewer { id } }")
         self.assertEqual(out.status, "auth-required")
@@ -359,7 +359,7 @@ class TestGraphQL(unittest.TestCase):
         import io
         import ssl
         import urllib.error
-        from quiver.remote import agent as agent_mod
+        from swe.remote import agent as agent_mod
         agent_mod._fallback_ctx = None
         self.addCleanup(setattr, agent_mod, "_fallback_ctx", None)
         sentinel = ssl.create_default_context()
@@ -372,9 +372,9 @@ class TestGraphQL(unittest.TestCase):
                     ssl.SSLCertVerificationError("no CA store"))
             return io.BytesIO(b'{"data": {"viewer": {"id": "u"}}}')
 
-        with patch("quiver.remote.linear.urllib.request.urlopen",
+        with patch("swe.remote.linear.urllib.request.urlopen",
                    side_effect=urlopen), \
-             patch("quiver.harness.rate_limits._verified_context",
+             patch("swe.harness.rate_limits._verified_context",
                    return_value=sentinel):
             out = linear._graphql("k", "query { viewer { id } }")
             again = linear._graphql("k", "query { viewer { id } }")
@@ -387,14 +387,14 @@ class TestGraphQL(unittest.TestCase):
         import urllib.error
         err = urllib.error.HTTPError(
             linear.GRAPHQL_URL, 500, "server", None, None)
-        with patch("quiver.remote.linear.urllib.request.urlopen",
+        with patch("swe.remote.linear.urllib.request.urlopen",
                    side_effect=err):
             out = linear._graphql("k", "query { viewer { id } }")
         self.assertEqual(out.status, "upstream-error")
         self.assertIn("500", out.error)
 
     def test_network_failure_is_upstream_error(self):
-        with patch("quiver.remote.linear.urllib.request.urlopen",
+        with patch("swe.remote.linear.urllib.request.urlopen",
                    side_effect=OSError("no route")):
             out = linear._graphql("k", "query { viewer { id } }")
         self.assertEqual(out.status, "upstream-error")
@@ -413,7 +413,7 @@ class TestGraphQL(unittest.TestCase):
                     {"errors": [{"message": "Field 'x' doesn't exist"}]}
                 ).encode()
 
-        with patch("quiver.remote.linear.urllib.request.urlopen",
+        with patch("swe.remote.linear.urllib.request.urlopen",
                    return_value=Resp()):
             out = linear._graphql("k", "query { x }")
         self.assertEqual(out.status, "upstream-error")
@@ -431,7 +431,7 @@ class TestGraphQL(unittest.TestCase):
                 return json.dumps(
                     {"data": {"viewer": {"displayName": "Kai"}}}).encode()
 
-        with patch("quiver.remote.linear.urllib.request.urlopen",
+        with patch("swe.remote.linear.urllib.request.urlopen",
                    return_value=Resp()) as call:
             out = linear._graphql("lin_api_k", "query { viewer { id } }")
         self.assertEqual(out.status, "ok")
@@ -462,8 +462,8 @@ class _Base(unittest.TestCase):
         """GitHub ok with no pins; Linear's transport recorded."""
         graphql = graphql or (lambda key, query, variables=None:
                               linear.GraphQLResult("ok", data={}))
-        with patch("quiver.github.gh.probe_env", return_value=OK_ENV), \
-             patch("quiver.remote.linear._graphql",
+        with patch("swe.github.gh.probe_env", return_value=OK_ENV), \
+             patch("swe.remote.linear._graphql",
                    side_effect=graphql):
             yield
 

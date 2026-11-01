@@ -1,7 +1,7 @@
 """The per-file parse cache behind `swe session`.
 
 A listing must read the same whether every transcript was parsed just now or
-handed back from ``~/.quiver/cache/session_parse_cache.json``. The CLI tests
+handed back from ``~/.swe/cache/session_parse_cache.json``. The CLI tests
 run the real `swe session --json` against a throwaway HOME, once cold and
 once warm, and compare stdout byte for byte. The in-process tests pin HOME
 with ``patch.dict`` and count how often a transcript is actually read.
@@ -17,10 +17,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.paths import session_parse_cache_file_for
-from quiver.sessions import aggregator, failures, parse_cache
-from quiver.sessions.engines import jsonl_engine
-from quiver.sessions.parsers import parse_claude
+from swe.paths import session_parse_cache_file_for
+from swe.sessions import aggregator, failures, parse_cache
+from swe.sessions.engines import jsonl_engine
+from swe.sessions.parsers import parse_claude
 from tests.test_json_output import decode, run_swe
 
 OLD = 1_780_000_000
@@ -385,8 +385,8 @@ class InProcessCacheTest(unittest.TestCase):
 
     def test_unwritable_cache_dir_still_lists(self):
         add_claude(self.home)
-        (self.home / ".quiver").mkdir()
-        (self.home / ".quiver" / "cache").write_text("a file, not a dir")
+        (self.home / ".swe").mkdir()
+        (self.home / ".swe" / "cache").write_text("a file, not a dir")
         self.assertEqual(len(self.listing()), 1)
         self.assertEqual(len(self.listing()), 1)
 

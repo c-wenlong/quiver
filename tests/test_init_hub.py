@@ -1,4 +1,4 @@
-"""`swe init --hub=<url>`: clone an existing hub as ~/.quiver (#696)."""
+"""`swe init --hub=<url>`: clone an existing hub as ~/.swe (#696)."""
 
 import io
 import os
@@ -10,8 +10,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver.init import commands as init_commands
-from quiver.init.hub import (HubError, check_target, clone_hub, public_url,
+from swe.init import commands as init_commands
+from swe.init.hub import (HubError, check_target, clone_hub, public_url,
                               register_marketplaces)
 
 GIT = shutil.which("git")
@@ -42,28 +42,28 @@ class CheckTargetTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             check_target(home)
-            (home / ".quiver").mkdir()
+            (home / ".swe").mkdir()
             check_target(home)
             # What the app, the remote hub and swe write on their own.
-            (home / ".quiver" / "data" / "remote").mkdir(parents=True)
-            (home / ".quiver" / "data" / "remote" / "devices.json").write_text("{}")
-            (home / ".quiver" / "cache").mkdir()
+            (home / ".swe" / "data" / "remote").mkdir(parents=True)
+            (home / ".swe" / "data" / "remote" / "devices.json").write_text("{}")
+            (home / ".swe" / "cache").mkdir()
             check_target(home)
-            (home / ".quiver" / "AGENTS.md").write_text("x")
+            (home / ".swe" / "AGENTS.md").write_text("x")
             with self.assertRaisesRegex(HubError, "already has a hub .*AGENTS.md"):
                 check_target(home)
 
     def test_a_git_repository_is_a_hub(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / ".quiver" / ".git").mkdir(parents=True)
+            (home / ".swe" / ".git").mkdir(parents=True)
             with self.assertRaisesRegex(HubError, "it has .git"):
                 check_target(home)
 
     def test_a_file_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / ".quiver").write_text("x")
+            (home / ".swe").write_text("x")
             with self.assertRaisesRegex(HubError, "a file, not a folder"):
                 check_target(home)
 
@@ -71,7 +71,7 @@ class CheckTargetTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             (home / "elsewhere").mkdir()
-            (home / ".quiver").symlink_to(home / "elsewhere")
+            (home / ".swe").symlink_to(home / "elsewhere")
             with self.assertRaisesRegex(HubError, "symlink"):
                 check_target(home)
 
@@ -95,7 +95,7 @@ class CloneHubTest(unittest.TestCase):
             with self.assertRaisesRegex(HubError, "can't reach .*repository not found"):
                 clone_hub(home, "https://example.invalid/hub.git", run=fail)
             self.assertEqual(fail.call_count, 1)  # ls-remote only, never clone
-            self.assertFalse((home / ".quiver").exists())
+            self.assertFalse((home / ".swe").exists())
 
     def test_option_shaped_url_is_refused(self):
         run = mock.Mock()
@@ -128,9 +128,9 @@ class CloneHubTest(unittest.TestCase):
     def test_an_unreadable_hub_is_a_refusal_not_a_traceback(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / ".quiver").mkdir()
+            (home / ".swe").mkdir()
             with mock.patch.object(Path, "iterdir", side_effect=PermissionError(13, "Permission denied")):
-                with self.assertRaisesRegex(HubError, "can't read ~/.quiver"):
+                with self.assertRaisesRegex(HubError, "can't read ~/.swe"):
                     check_target(home)
 
     @unittest.skipUnless(GIT, "git not installed")
@@ -141,15 +141,15 @@ class CloneHubTest(unittest.TestCase):
             home = root / "home"
             home.mkdir()
             clone_hub(home, str(src))
-            self.assertEqual((home / ".quiver" / "AGENTS.md").read_text(), "# from the hub\n")
-            remote = subprocess.run(["git", "-C", str(home / ".quiver"), "remote", "get-url",
+            self.assertEqual((home / ".swe" / "AGENTS.md").read_text(), "# from the hub\n")
+            remote = subprocess.run(["git", "-C", str(home / ".swe"), "remote", "get-url",
                                      "origin"], capture_output=True, text=True).stdout.strip()
             self.assertEqual(remote, str(src))
 
 
 @unittest.skipUnless(GIT, "git not installed")
 class CloneAroundLocalStateTest(unittest.TestCase):
-    """A ~/.quiver holding only what the app, the hub and swe wrote on their
+    """A ~/.swe holding only what the app, the hub and swe wrote on their
     own takes the clone around that state, and never overwrites any of it."""
 
     def setUp(self):
@@ -158,14 +158,14 @@ class CloneAroundLocalStateTest(unittest.TestCase):
         self.root = Path(tmp.name)
         self.src = _hub_repo(self.root)
         self.home = self.root / "home"
-        self.quiver = self.home / ".quiver"
-        (self.quiver / "data" / "remote").mkdir(parents=True)
-        (self.quiver / "data" / "remote" / "devices.json").write_text('{"paired": 1}')
-        (self.quiver / "cache").mkdir()
-        (self.quiver / "cache" / "session_cache.json").write_text("{}")
+        self.hub_dir = self.home / ".swe"
+        (self.hub_dir / "data" / "remote").mkdir(parents=True)
+        (self.hub_dir / "data" / "remote" / "devices.json").write_text('{"paired": 1}')
+        (self.hub_dir / "cache").mkdir()
+        (self.hub_dir / "cache" / "session_cache.json").write_text("{}")
         # A folder the hub has too: the clone goes inside it.
-        (self.quiver / "plugins").mkdir()
-        (self.quiver / "plugins" / "local-only.txt").write_text("mine")
+        (self.hub_dir / "plugins").mkdir()
+        (self.hub_dir / "plugins" / "local-only.txt").write_text("mine")
 
     def _listing(self) -> dict:
         return {str(p.relative_to(self.home)): (p.read_text() if p.is_file() else None)
@@ -173,36 +173,36 @@ class CloneAroundLocalStateTest(unittest.TestCase):
 
     def test_the_clone_lands_beside_local_state(self):
         clone_hub(self.home, str(self.src))
-        self.assertEqual((self.quiver / "AGENTS.md").read_text(), "# from the hub\n")
-        self.assertTrue((self.quiver / ".git").is_dir())
-        self.assertTrue((self.quiver / "plugins" / "mine" / ".claude-plugin"
+        self.assertEqual((self.hub_dir / "AGENTS.md").read_text(), "# from the hub\n")
+        self.assertTrue((self.hub_dir / ".git").is_dir())
+        self.assertTrue((self.hub_dir / "plugins" / "mine" / ".claude-plugin"
                          / "marketplace.json").is_file())
-        self.assertEqual((self.quiver / "data" / "remote" / "devices.json").read_text(),
+        self.assertEqual((self.hub_dir / "data" / "remote" / "devices.json").read_text(),
                          '{"paired": 1}')
-        self.assertEqual((self.quiver / "plugins" / "local-only.txt").read_text(), "mine")
-        self.assertEqual((self.quiver / "cache" / "session_cache.json").read_text(), "{}")
+        self.assertEqual((self.hub_dir / "plugins" / "local-only.txt").read_text(), "mine")
+        self.assertEqual((self.hub_dir / "cache" / "session_cache.json").read_text(), "{}")
         # git sees the hub's files as checked out, not modified.
-        status = subprocess.run(["git", "-C", str(self.quiver), "status", "--porcelain",
+        status = subprocess.run(["git", "-C", str(self.hub_dir), "status", "--porcelain",
                                  "--untracked-files=no"], capture_output=True, text=True)
         self.assertEqual(status.stdout, "")
-        self.assertEqual([p.name for p in self.home.iterdir()], [".quiver"])  # no staging left
+        self.assertEqual([p.name for p in self.home.iterdir()], [".swe"])  # no staging left
 
     def test_a_path_on_both_sides_stops_before_anything_moves(self):
-        clash = self.quiver / "plugins" / "mine" / ".claude-plugin"
+        clash = self.hub_dir / "plugins" / "mine" / ".claude-plugin"
         clash.mkdir(parents=True)
         (clash / "marketplace.json").write_text("local copy")
         before = self._listing()
         with self.assertRaisesRegex(
-                HubError, r"~/.quiver/plugins/mine/.claude-plugin/marketplace.json is on "
+                HubError, r"~/.swe/plugins/mine/.claude-plugin/marketplace.json is on "
                           r"this machine and in the hub"):
             clone_hub(self.home, str(self.src))
         self.assertEqual(self._listing(), before)
-        self.assertFalse((self.quiver / ".git").exists())
+        self.assertFalse((self.hub_dir / ".git").exists())
 
     def test_a_folder_against_a_file_is_a_collision_too(self):
-        (self.quiver / "plugins" / "mine").write_text("a file where the hub has a folder")
+        (self.hub_dir / "plugins" / "mine").write_text("a file where the hub has a folder")
         before = self._listing()
-        with self.assertRaisesRegex(HubError, r"~/.quiver/plugins/mine is on this machine"):
+        with self.assertRaisesRegex(HubError, r"~/.swe/plugins/mine is on this machine"):
             clone_hub(self.home, str(self.src))
         self.assertEqual(self._listing(), before)
 
@@ -218,11 +218,11 @@ class CloneAroundLocalStateTest(unittest.TestCase):
 
         before = self._listing()
         with mock.patch.object(Path, "rename", flaky):
-            with self.assertRaisesRegex(HubError, "can't move the clone into ~/.quiver"):
+            with self.assertRaisesRegex(HubError, "can't move the clone into ~/.swe"):
                 clone_hub(self.home, str(self.src))
         self.assertEqual(self._listing(), before)
-        self.assertFalse((self.quiver / ".git").exists())
-        self.assertEqual([p.name for p in self.home.iterdir()], [".quiver"])
+        self.assertFalse((self.hub_dir / ".git").exists())
+        self.assertEqual([p.name for p in self.home.iterdir()], [".swe"])
 
     def test_a_move_that_cant_be_undone_names_what_is_left_and_keeps_the_rest(self):
         real_rename = Path.rename
@@ -240,8 +240,8 @@ class CloneAroundLocalStateTest(unittest.TestCase):
             with self.assertRaises(HubError) as caught:
                 clone_hub(self.home, str(self.src))
         message = str(caught.exception)
-        self.assertIn("couldn't be moved back and are still there: ~/.quiver/.git", message)
-        staging = [p for p in self.home.iterdir() if p.name.startswith(".quiver-clone-")]
+        self.assertIn("couldn't be moved back and are still there: ~/.swe/.git", message)
+        staging = [p for p in self.home.iterdir() if p.name.startswith(".swe-clone-")]
         self.assertEqual(len(staging), 1)
         self.assertIn(str(staging[0] / "hub"), message)
         self.assertTrue((staging[0] / "hub" / "AGENTS.md").is_file())
@@ -251,24 +251,24 @@ class CloneAroundLocalStateTest(unittest.TestCase):
         (self.src / ".gitignore").write_text("cache/\n")
         _git("add", "-A", cwd=self.src)
         _git("commit", "-q", "-m", "ignore", cwd=self.src)
-        (self.quiver / "data" / "web-ledger").mkdir(parents=True)
-        (self.quiver / "data" / "web-ledger" / "ledger.sqlite").write_text("personal")
+        (self.hub_dir / "data" / "web-ledger").mkdir(parents=True)
+        (self.hub_dir / "data" / "web-ledger" / "ledger.sqlite").write_text("personal")
         clone_hub(self.home, str(self.src))
-        self.assertEqual((self.quiver / ".gitignore").read_text(), "cache/\n")
-        exclude = (self.quiver / ".git" / "info" / "exclude").read_text()
+        self.assertEqual((self.hub_dir / ".gitignore").read_text(), "cache/\n")
+        exclude = (self.hub_dir / ".git" / "info" / "exclude").read_text()
         self.assertIn("data/web-ledger/\n", exclude)
         self.assertNotIn("\ncache/\n", exclude)  # the hub already ignores it
-        status = subprocess.run(["git", "-C", str(self.quiver), "status", "--porcelain"],
+        status = subprocess.run(["git", "-C", str(self.hub_dir), "status", "--porcelain"],
                                 capture_output=True, text=True).stdout
         self.assertNotIn("data", status)
-        ignored = subprocess.run(["git", "-C", str(self.quiver), "check-ignore", "-q",
+        ignored = subprocess.run(["git", "-C", str(self.hub_dir), "check-ignore", "-q",
                                   "data/web-ledger/ledger.sqlite"])
         self.assertEqual(ignored.returncode, 0)
 
 
 class RegisterMarketplacesTest(unittest.TestCase):
     def _hub_with_plugin(self, home: Path) -> Path:
-        market = home / ".quiver" / "plugins" / "mine"
+        market = home / ".swe" / "plugins" / "mine"
         (market / ".claude-plugin").mkdir(parents=True)
         (market / ".claude-plugin" / "marketplace.json").write_text(
             '{"name": "mine", "plugins": [{"name": "p", "source": "./p"}]}\n')
@@ -294,7 +294,7 @@ class RegisterMarketplacesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             (home / ".claude").mkdir()
-            market = home / ".quiver" / "plugins" / "far"
+            market = home / ".swe" / "plugins" / "far"
             (market / ".claude-plugin").mkdir(parents=True)
             (market / ".claude-plugin" / "marketplace.json").write_text(
                 '{"name": "far", "plugins": [{"name": "r", "source": '
@@ -328,7 +328,7 @@ class RegisterMarketplacesTest(unittest.TestCase):
 class RegisterOutputTest(unittest.TestCase):
     def _print(self, results):
         buf = io.StringIO()
-        with mock.patch("quiver.init.hub.register_marketplaces", return_value=results), \
+        with mock.patch("swe.init.hub.register_marketplaces", return_value=results), \
              redirect_stdout(buf):
             init_commands._register_hub_marketplaces(Path("/nowhere"))
         return buf.getvalue()
@@ -348,7 +348,7 @@ class RegisterOutputTest(unittest.TestCase):
 @unittest.skipUnless(GIT, "git not installed")
 class CmdInitHubTest(unittest.TestCase):
     def setUp(self):
-        patcher = mock.patch("quiver.init.hub.register_marketplaces", return_value=[])
+        patcher = mock.patch("swe.init.hub.register_marketplaces", return_value=[])
         self.register = patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -367,7 +367,7 @@ class CmdInitHubTest(unittest.TestCase):
             (home / ".claude").mkdir(parents=True)
             code, out = self._run(home, [f"--hub={src}", "--yes"])
             self.assertEqual(code, 0, out)
-            quiver = home / ".quiver"
+            quiver = home / ".swe"
             self.assertTrue((quiver / ".git").is_dir())
             self.assertTrue((quiver / "plugins" / "mine").is_dir())
             # Folders the hub lacked are created by the scaffold repair.
@@ -383,13 +383,13 @@ class CmdInitHubTest(unittest.TestCase):
             root = Path(tmp)
             src = _hub_repo(root)
             home = root / "home"
-            (home / ".quiver").mkdir(parents=True)
-            (home / ".quiver" / "AGENTS.md").write_text("mine\n")
+            (home / ".swe").mkdir(parents=True)
+            (home / ".swe" / "AGENTS.md").write_text("mine\n")
             code, out = self._run(home, [f"--hub={src}"])
             self.assertEqual(code, 1)
             self.assertIn("already has a hub", out)
             self.register.assert_not_called()
-            self.assertEqual((home / ".quiver" / "AGENTS.md").read_text(), "mine\n")
+            self.assertEqual((home / ".swe" / "AGENTS.md").read_text(), "mine\n")
 
     def test_hub_needs_the_equals_form_and_no_check(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -399,7 +399,7 @@ class CmdInitHubTest(unittest.TestCase):
             self.assertIn("--hub=<value>", out)
             code, out = self._run(home, ["--hub=x", "--check"])
             self.assertEqual(code, 1)
-            self.assertFalse((home / ".quiver").exists())
+            self.assertFalse((home / ".swe").exists())
             err = io.StringIO()
             with redirect_stderr(err):
                 code, out = self._run(home, ["--hub=x", "--check", "--json"])

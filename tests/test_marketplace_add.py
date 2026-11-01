@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from quiver.plugins.actions import (ActionError, marketplace_add,
+from swe.plugins.actions import (ActionError, marketplace_add,
                                     marketplace_source)
 
 
@@ -119,7 +119,7 @@ class MarketplaceCliTest(unittest.TestCase):
         import io
         import os
         from unittest import mock
-        from quiver.plugins.commands import cmd_plugins
+        from swe.plugins.commands import cmd_plugins
 
         out, err = io.StringIO(), io.StringIO()
         patches = [mock.patch.dict(os.environ, {"HOME": str(self.home)}),

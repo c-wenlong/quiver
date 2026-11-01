@@ -5,7 +5,7 @@
     "harnesses": [
       {
         "harness": "claude",
-        "source": "/tmp/quiver-fixture-home/.quiver/hooks/claude/prose-guard.py",
+        "source": "/tmp/quiver-fixture-home/.swe/hooks/claude/prose-guard.py",
         "destination": "/tmp/quiver-fixture-home/.claude/hooks/prose-guard.py",
         "state": "linked",
         "detail": "",

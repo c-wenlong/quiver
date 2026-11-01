@@ -6,9 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.reports.transcripts import EXPECTED_READER_TOOLS, READER_REGISTRY, read_transcript
-from quiver.sessions.aggregator import PARSER_REGISTRY
-from quiver.sessions.models import Session
+from swe.reports.transcripts import EXPECTED_READER_TOOLS, READER_REGISTRY, read_transcript
+from swe.sessions.aggregator import PARSER_REGISTRY
+from swe.sessions.models import Session
 
 
 def _session(tool, sid, path="/work/project", timestamp=1):
@@ -127,7 +127,7 @@ class TranscriptReaderTest(_HomeCase):
         # redactor runs, so a stray byte inside a value or token cannot
         # split the match and leak a fragment. Words separated by \r
         # stay separate: it becomes a newline.
-        from quiver.reports.transcripts import _clean_text
+        from swe.reports.transcripts import _clean_text
 
         for raw in (
             "API_KEY=secret\x07suffix tail",
@@ -151,7 +151,7 @@ class TranscriptReaderTest(_HomeCase):
     def test_unreadable_errors_carry_no_escapes(self):
         # A reader that fails on a hostile filename used to surface the
         # exception (and its bytes) into the picker's preview pane.
-        from quiver.reports.transcripts import _unreadable
+        from swe.reports.transcripts import _unreadable
 
         sess = _session("codex", "x")
         t = _unreadable(sess, "OSError: cannot open 'evil\x1b]8;;u\x07f\x1b[2J'")

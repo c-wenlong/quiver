@@ -41,7 +41,7 @@
 # state is read through `git ls-remote` instead. Only --apply fetches.
 #
 # Runs unattended, e.g. from cron:
-#   15 4 * * *  /path/to/repo/scripts/reaper.sh --yes >> ~/.quiver/logs/reaper.log 2>&1
+#   15 4 * * *  /path/to/repo/scripts/reaper.sh --yes >> ~/.swe/logs/reaper.log 2>&1
 
 set -euo pipefail
 

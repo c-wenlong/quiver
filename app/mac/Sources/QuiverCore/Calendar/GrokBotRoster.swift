@@ -18,7 +18,7 @@ import os
 ///
 /// Deleting a Bot drops it from the roster, and Grok Bot keeps no name
 /// for it. So every id and name read is also remembered in `memory`
-/// (`~/.quiver/data/grok-bot-names.json`, Quiver's own copy), never
+/// (`~/.swe/data/grok-bot-names.json`, Quiver's own copy), never
 /// pruned, and a Bot deleted later still titles by its last name. An id
 /// in neither, while the roster names Bots, is a Bot deleted before Quiver
 /// saw it: "Deleted Bot (<short id>)".
@@ -26,7 +26,7 @@ public final class GrokBotRoster: Sendable {
     /// The shared instance the calendar uses. Reads are cached and the
     /// roster file is only re-parsed when its modification date changes.
     public static let shared = GrokBotRoster(memory: FileManager.default.homeDirectoryForCurrentUser
-        .appending(path: ".quiver/data/grok-bot-names.json"))
+        .appending(path: ".swe/data/grok-bot-names.json"))
 
     /// `grok-bot` sessions under a Bot that is not a top-level Bot of its
     /// own: subagent runs, titled "Subagent".
@@ -59,7 +59,7 @@ public final class GrokBotRoster: Sendable {
     private let memory: URL?
 
     /// `directory` and `memory` are injectable so tests point at fixtures
-    /// rather than the real Application Support folder and `~/.quiver`.
+    /// rather than the real Application Support folder and `~/.swe`.
     public init(directory: URL? = nil, memory: URL? = nil, recheckInterval: TimeInterval = 30) {
         self.memory = memory
         self.directory = directory ?? FileManager.default.homeDirectoryForCurrentUser

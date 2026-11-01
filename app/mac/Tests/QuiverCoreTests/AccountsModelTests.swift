@@ -108,7 +108,7 @@ final class FakeRunningInstances: RunningInstances {
     init() throws {
         scratch = try TempDir()
         root = scratch.url
-        store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        store = ProfileStore(root: root.appending(path: ".swe/accounts"), userHome: root)
         // Real stub CLIs on the injected PATH: signIn refuses when they
         // aren't executable, like a missing install.
         bin = root.appending(path: "bin")
@@ -262,7 +262,7 @@ final class FakeRunningInstances: RunningInstances {
 
     @Test func aHarnessOpenStartsANewInstanceWhenOnlyExtrasRun() async throws {
         running.instances = [RunningInstance(pid: 9, arguments: [
-            cursorExe, "--user-data-dir=/Users/me/.quiver/accounts/cursor/cursor-side/desktop"])]
+            cursorExe, "--user-data-dir=/Users/me/.swe/accounts/cursor/cursor-side/desktop"])]
         try await model().openApp(at: "/Applications/Cursor.app")
 
         #expect(running.activated.isEmpty)
@@ -574,7 +574,7 @@ final class FakeRunningInstances: RunningInstances {
 
     func harnessTarget(appPath: String?, cliInstalled: Bool?,
                        name: String = "cursor", command: String = "cursor-agent") -> LaunchTarget {
-        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let store = ProfileStore(root: root.appending(path: ".swe/accounts"), userHome: root)
         return LaunchTarget(kind: .harness(name: name, command: command),
                             model: AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
                                                  terminal: { .terminal }, loginPath: { "" },
@@ -613,7 +613,7 @@ final class FakeRunningInstances: RunningInstances {
     }
 
     @Test func anAccountLaunchesTheAppWithItsFolders() async throws {
-        let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
+        let store = ProfileStore(root: root.appending(path: ".swe/accounts"), userHome: root)
         let work = try store.add(vendor: .claude, name: "Work")
         let model = AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
                                   terminal: { .terminal }, loginPath: { "" }, running: running)
@@ -626,7 +626,7 @@ final class FakeRunningInstances: RunningInstances {
     }
 
     @Test func anAccountTerminalRunsAsThatAccount() async throws {
-        let store = ProfileStore(root: root.appending(path: ".quiver/accounts2"), userHome: root)
+        let store = ProfileStore(root: root.appending(path: ".swe/accounts2"), userHome: root)
         let work = try store.add(vendor: .claude, name: "Work")
         let model = AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
                                   terminal: { .terminal }, loginPath: { "" }, running: running)
@@ -666,9 +666,9 @@ final class FakeRunningInstances: RunningInstances {
     }
 
     @Test func aNonDefaultProfileGetsItsHomeAndTheDefaultNone() {
-        let (_, named) = ClaudeSignInRenewer.plan(home: "/u/.quiver/accounts/work/.claude",
+        let (_, named) = ClaudeSignInRenewer.plan(home: "/u/.swe/accounts/work/.claude",
                                                   isDefault: false, base: base)
-        #expect(named["CLAUDE_CONFIG_DIR"] == "/u/.quiver/accounts/work/.claude")
+        #expect(named["CLAUDE_CONFIG_DIR"] == "/u/.swe/accounts/work/.claude")
         let (_, standard) = ClaudeSignInRenewer.plan(home: "/u/.claude",
                                                      isDefault: true, base: base)
         #expect(standard["CLAUDE_CONFIG_DIR"] == nil)

@@ -10,9 +10,9 @@ from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.github import catalog, cli as ghcli
-from quiver.github import gh, repos
-from quiver import paths
+from swe.github import catalog, cli as ghcli
+from swe.github import gh, repos
+from swe import paths
 from tests._tempdir import temp_dir
 
 
@@ -412,9 +412,9 @@ class TestCommands(unittest.TestCase):
     def _run_cli(self, args, run=None, env=None):
         out, err = io.StringIO(), io.StringIO()
         env = env or _env_ok()
-        with patch("quiver.github.gh.probe_env", return_value=env), \
+        with patch("swe.github.gh.probe_env", return_value=env), \
              patch("subprocess.run", run or _gh_run({})), \
-             patch("quiver.github.repos.repo_at", return_value=None), \
+             patch("swe.github.repos.repo_at", return_value=None), \
              redirect_stdout(out), redirect_stderr(err):
             rc = ghcli.main(list(args))
         return rc, out.getvalue(), err.getvalue()
@@ -603,7 +603,7 @@ class TestCommands(unittest.TestCase):
     def test_fan_handles_no_names_and_one(self):
         # The hub's surfaces fan out through the same helper
         # (shared.fan): an empty pin list must not build an empty pool.
-        from quiver.github import shared
+        from swe.github import shared
 
         self.assertIs(shared.fan, ghcli._fan)
         self.assertEqual(ghcli._fan([], lambda n: n), [])
@@ -1098,7 +1098,7 @@ class TestCommands(unittest.TestCase):
         return _gh_run(handlers)
 
     def test_sync_writes_catalog_and_emits_summary(self):
-        run = self._sync_run({"octocat": ["quiver"], "org-one": ["sdk"]})
+        run = self._sync_run({"octocat": ["swe"], "org-one": ["sdk"]})
         rc, out, _ = self._run_cli(["sync", "--json"], run=run)
         self.assertEqual(rc, 0)
         data = json.loads(out)["data"]
@@ -1110,7 +1110,7 @@ class TestCommands(unittest.TestCase):
         self.assertGreater(status["synced_at"], 0)
 
     def test_sync_failed_owner_returns_1_and_keeps_rows(self):
-        run = self._sync_run({"octocat": ["quiver"], "org-one": ["sdk"]})
+        run = self._sync_run({"octocat": ["swe"], "org-one": ["sdk"]})
         self._run_cli(["sync"], run=run)
         handlers = {
             "user/orgs": _Proc(stdout="org-one\n"),
@@ -1140,7 +1140,7 @@ class TestCommands(unittest.TestCase):
         self.assertIn("brew install gh", out)
 
     def test_sync_account_switch_wipes_previous_rows(self):
-        run = self._sync_run({"octocat": ["quiver"]}, orgs="")
+        run = self._sync_run({"octocat": ["swe"]}, orgs="")
         self._run_cli(["sync"], run=run)
         other = gh.GhEnv(installed=True, authenticated=True,
                          login="someone-else")
@@ -1168,7 +1168,7 @@ class TestCommands(unittest.TestCase):
 
     def test_sync_nonlist_response_counts_as_failure(self):
         self._run_cli(["sync"], run=self._sync_run(
-            {"octocat": ["quiver"], "org-one": ["sdk"]}))
+            {"octocat": ["swe"], "org-one": ["sdk"]}))
         handlers = {
             "user/orgs": _Proc(stdout="org-one\n"),
             # gh exits 0 but prints junk — must not prune the old rows.
@@ -1271,14 +1271,14 @@ class TestCommands(unittest.TestCase):
 
     def test_env_after_clean_sweep_skips_probe(self):
         """A successful fetch is itself the auth proof — no probe runs."""
-        with patch("quiver.github.gh.probe_env") as probe:
+        with patch("swe.github.gh.probe_env") as probe:
             env = ghcli._env_after([{"status": "ok"}, {"status": "ok"}])
         self.assertEqual(env.status, "ok")
         probe.assert_not_called()
 
     def test_env_after_failure_probes(self):
         blocked = gh.GhEnv(installed=True, authenticated=False)
-        with patch("quiver.github.gh.probe_env", return_value=blocked) as probe:
+        with patch("swe.github.gh.probe_env", return_value=blocked) as probe:
             env = ghcli._env_after([{"status": "upstream-error"}])
         probe.assert_called_once()
         self.assertEqual(env.status, "auth-required")
@@ -1358,7 +1358,7 @@ class TestCommands(unittest.TestCase):
 
     def test_board_web_opens_pulls(self):
         opened = []
-        with patch("quiver.github.cli.webbrowser.open", opened.append):
+        with patch("swe.github.cli.webbrowser.open", opened.append):
             rc, _, _ = self._run_cli(["board", "--repo=o/r", "--web"])
         self.assertEqual(rc, 0)
         self.assertEqual(opened, ["https://github.com/o/r/pulls"])
@@ -1385,7 +1385,7 @@ class TestCommands(unittest.TestCase):
     def test_json_web_still_opens(self):
         opened = []
         run = _gh_run({"pr list": _Proc(stdout="[]")})
-        with patch("quiver.github.cli.webbrowser.open", opened.append):
+        with patch("swe.github.cli.webbrowser.open", opened.append):
             rc, out, _ = self._run_cli(
                 ["pr", "--repo=o/r", "--web", "--json"], run=run)
         self.assertEqual(rc, 0)
@@ -1434,7 +1434,7 @@ class TestCommands(unittest.TestCase):
     def test_web_opens_url(self):
         opened = []
         run = _gh_run({"pr list": _Proc(stdout="[]")})
-        with patch("quiver.github.cli.webbrowser.open",
+        with patch("swe.github.cli.webbrowser.open",
                    opened.append):
             rc, out, _ = self._run_cli(["pr", "--repo=o/r", "--web"], run=run)
         self.assertEqual(rc, 0)
@@ -1700,7 +1700,7 @@ class TestCommands(unittest.TestCase):
         # The hub names a PR's folder before the checkout exists (a
         # pending launch's cwd, the detail page's ``worktree``): the
         # checkout must land exactly there.
-        from quiver.github import pulls as gh_pulls
+        from swe.github import pulls as gh_pulls
 
         _mirrors, trees = self._patch_paths()
 
@@ -2135,7 +2135,7 @@ class TestCommands(unittest.TestCase):
 
     def test_pr_web_flag(self):
         opened = []
-        with patch("quiver.github.cli._open_web",
+        with patch("swe.github.cli._open_web",
                    lambda what, extra: opened.append(what)):
             rc, _, _ = self._run_cli(["inbox", "--web"])
         self.assertEqual(rc, 0)
@@ -2143,27 +2143,27 @@ class TestCommands(unittest.TestCase):
 
 
 class TestSharedLayer(unittest.TestCase):
-    """The ``gh`` cache, write lock and pins live in ``quiver.github``."""
+    """The ``gh`` cache, write lock and pins live in ``swe.github``."""
 
     def test_remote_and_github_do_not_import_web_pages(self):
-        # quiver.remote's issue, pull, task and Linear routes reached
+        # swe.remote's issue, pull, task and Linear routes reached
         # into the web app's private page module for the shared cache.
         import ast
-        src = Path(__file__).resolve().parent.parent / "src" / "quiver"
+        src = Path(__file__).resolve().parent.parent / "src" / "swe"
         offenders = []
         for folder in ("remote", "github"):
             for path in sorted((src / folder).glob("*.py")):
                 for node in ast.walk(ast.parse(path.read_text())):
                     if isinstance(node, ast.ImportFrom) and (
-                            node.module or "").startswith("quiver.webapp.pages"):
+                            node.module or "").startswith("swe.webapp.pages"):
                         names = {a.name for a in node.names}
                         if node.module.endswith("_github") or "_github" in names:
                             offenders.append(path.name)
         self.assertEqual(offenders, [])
 
     def test_pinned_name_errors(self):
-        from quiver.github import shared
-        from quiver.webapp.pages import PageError, _github as W
+        from swe.github import shared
+        from swe.webapp.pages import PageError, _github as W
         home = temp_dir(self)
         with patch.object(shared, "pinned",
                           return_value=[{"name": "Acme/Tool"}]):

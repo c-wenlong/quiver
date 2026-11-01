@@ -5,7 +5,7 @@ import SwiftUI
 /// Benchmarks from Artificial Analysis crossed with the models the ledger
 /// actually saw. Bars are provider-coloured, used models carry a light
 /// outline, and every label hovers into the shared model card. The data
-/// lands in `~/.quiver/data/artificial-analysis/`; without a key the page
+/// lands in `~/.swe/data/artificial-analysis/`; without a key the page
 /// points at Settings › Services.
 struct ModelsPage: View {
     @Environment(AppModel.self) private var app

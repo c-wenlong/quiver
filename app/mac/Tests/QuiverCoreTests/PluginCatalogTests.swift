@@ -9,16 +9,16 @@ let catalogJSON = #"""
 {"harnesses": ["claude", "codex", "cursor"], "actions": ["claude", "codex"],
  "errors": [{"harness": "codex", "marketplace": "broken", "detail": "manifest is not JSON"}],
  "marketplaces": [
-  {"name": "kit", "hub": true, "path": "/h/.quiver/plugins/kit", "description": "My kit",
-   "harnesses": {"claude": {"source_type": "directory", "location": "/h/.quiver/plugins/kit", "manifest": "/m", "readable": true},
-                 "codex": {"source_type": "directory", "location": "/h/.quiver/plugins/kit", "manifest": "/m", "readable": true}},
+  {"name": "kit", "hub": true, "path": "/h/.swe/plugins/kit", "description": "My kit",
+   "harnesses": {"claude": {"source_type": "directory", "location": "/h/.swe/plugins/kit", "manifest": "/m", "readable": true},
+                 "codex": {"source_type": "directory", "location": "/h/.swe/plugins/kit", "manifest": "/m", "readable": true}},
    "plugins": [
     {"name": "drawer", "ref": "drawer@kit", "marketplace": "kit", "display_name": null, "description": "Holds things",
      "version": "2.0.0", "category": null, "tags": [], "author": null, "homepage": null, "listed": true,
-     "source_path": "/h/.quiver/plugins/kit/drawer", "components": {"commands": 1}, "skills": [],
+     "source_path": "/h/.swe/plugins/kit/drawer", "components": {"commands": 1}, "skills": [],
      "harnesses": {
       "claude": {"available": true, "installed": true, "enabled": false, "version": "1.0.0", "scopes": ["user"],
-                 "path": "/h/.quiver/plugins/kit/drawer", "copies": []},
+                 "path": "/h/.swe/plugins/kit/drawer", "copies": []},
       "codex": {"available": true, "installed": true, "enabled": true, "version": "2.0.0", "scopes": [],
                 "path": "/h/.codex/plugins/cache/kit/drawer/2.0.0", "copies": ["/h/.codex/plugins/cache/kit/drawer/2.0.0"]},
       "cursor": {"available": false, "installed": null, "enabled": null, "version": null, "scopes": [], "path": null, "copies": []}},
@@ -26,13 +26,13 @@ let catalogJSON = #"""
                "codex": {"state": "installed", "fix": null, "id": null}}},
     {"name": "toolkit", "ref": "toolkit@kit", "marketplace": "kit", "display_name": "Tool kit", "description": "Tools for testing",
      "version": "1.2.0", "category": "dev", "tags": ["test"], "author": "Me", "homepage": null, "listed": true,
-     "source_path": "/h/.quiver/plugins/kit/toolkit",
+     "source_path": "/h/.swe/plugins/kit/toolkit",
      "components": {"skills": 2, "mcp_servers": 1},
-     "skills": [{"name": "hammer", "description": "Hits things", "path": "/h/.quiver/plugins/kit/toolkit/skills/hammer", "harnesses": ["claude"]},
-                {"name": "saw", "description": "", "path": "/h/.quiver/plugins/kit/toolkit/skills/saw", "harnesses": ["claude"]}],
+     "skills": [{"name": "hammer", "description": "Hits things", "path": "/h/.swe/plugins/kit/toolkit/skills/hammer", "harnesses": ["claude"]},
+                {"name": "saw", "description": "", "path": "/h/.swe/plugins/kit/toolkit/skills/saw", "harnesses": ["claude"]}],
      "harnesses": {
       "claude": {"available": true, "installed": true, "enabled": true, "version": "1.2.0", "scopes": ["user"],
-                 "path": "/h/.quiver/plugins/kit/toolkit", "copies": ["/h/.claude/plugins/cache/kit/toolkit/1.0"]},
+                 "path": "/h/.swe/plugins/kit/toolkit", "copies": ["/h/.claude/plugins/cache/kit/toolkit/1.0"]},
       "codex": {"available": true, "installed": false, "enabled": null, "version": null, "scopes": [], "path": null, "copies": []},
       "cursor": {"available": false, "installed": null, "enabled": null, "version": null, "scopes": [], "path": null, "copies": []}},
      "drift": {"claude": {"state": "installed", "fix": null, "id": null},
@@ -114,11 +114,11 @@ let catalogJSON = #"""
 /// `swe skills --json` on the same machine: every shape a skill can take
 /// against the catalog above.
 let catalogInventoryJSON = #"""
-{"shared_dir": "/h/.quiver/skills", "harnesses": [],
+{"shared_dir": "/h/.swe/skills", "harnesses": [],
  "skills": [
-  {"name": "alpha", "description": "Mine", "path": "/h/.quiver/skills/alpha", "root": "shared", "source": "shared", "harnesses": ["claude"]},
+  {"name": "alpha", "description": "Mine", "path": "/h/.swe/skills/alpha", "root": "shared", "source": "shared", "harnesses": ["claude"]},
   {"name": "only-codex", "description": "", "path": "/h/.codex/skills/only-codex", "root": "codex", "source": "harness", "harnesses": ["codex"]},
-  {"name": "hammer", "description": "Hits things", "path": "/h/.quiver/plugins/kit/toolkit/skills/hammer",
+  {"name": "hammer", "description": "Hits things", "path": "/h/.swe/plugins/kit/toolkit/skills/hammer",
    "root": "claude-plugin", "source": "plugin", "harnesses": ["claude"]},
   {"name": "hammer", "description": "Hits things", "path": "/h/.claude/plugins/cache/kit/toolkit/1.0/skills/hammer",
    "root": "claude-plugin", "source": "plugin", "harnesses": ["claude"]},
@@ -173,7 +173,7 @@ func decodedInventory() throws -> [Skill] {
         #expect(catalog.plugins.count == 9)
         let toolkit = try #require(catalog.plugins.first { $0.ref == "toolkit@kit" })
         #expect(toolkit.displayName == "Tool kit")
-        #expect(toolkit.sourcePath == "/h/.quiver/plugins/kit/toolkit")
+        #expect(toolkit.sourcePath == "/h/.swe/plugins/kit/toolkit")
         // swe's snake_case component names survive the decoder's key conversion.
         #expect(toolkit.components == ["skills": 2, "mcp_servers": 1])
         #expect(toolkit.harnesses["claude"]?.scopes == ["user"])

@@ -10,10 +10,10 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import quote
 
-from quiver.remote import catalog as catalog_mod
-from quiver.remote import files
-from quiver.remote import preview
-from quiver.remote import protocol
+from swe.remote import catalog as catalog_mod
+from swe.remote import files
+from swe.remote import preview
+from swe.remote import protocol
 from tests.test_remote_hub import _Server, _session
 
 PAGE = b"<!doctype html><title>mock</title><p>hi</p>"

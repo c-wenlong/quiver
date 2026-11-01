@@ -34,7 +34,17 @@ enum ClaudeUsageAPI {
 
     static func credential(key: AccountKey, secrets: SecretReading, files: FileReading) async -> CredentialLookup {
         let service = ClaudeKeychain.service(configHome: key.configHome, isDefault: key.isDefault)
-        let fromKeychain = await secrets.genericPassword(service: service, account: ClaudeKeychain.currentAccount)
+        var fromKeychain = await secrets.genericPassword(service: service, account: ClaudeKeychain.currentAccount)
+        if fromKeychain == nil, !key.isDefault,
+           key.configHome.contains("/.swe/") {
+            // Sign-ins made before the ~/.quiver -> ~/.swe move live under
+            // the hash of the old spelling; the service name is derived
+            // from the path verbatim, so check both.
+            let legacy = ClaudeKeychain.service(
+                configHome: key.configHome.replacingOccurrences(of: "/.swe/", with: "/.quiver/"),
+                isDefault: key.isDefault)
+            fromKeychain = await secrets.genericPassword(service: legacy, account: ClaudeKeychain.currentAccount)
+        }
         let fromFile = files.read(key.configHome + "/.credentials.json")
         // Both can exist, and either can be the stale one: the later expiry
         // is the newer login, as quiver's own Claude fetcher decides.

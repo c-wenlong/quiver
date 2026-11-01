@@ -7,8 +7,8 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
-from quiver.remote import catalog as catalog_mod
-from quiver.remote import protocol, sessionmeta
+from swe.remote import catalog as catalog_mod
+from swe.remote import protocol, sessionmeta
 from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server, _session
 

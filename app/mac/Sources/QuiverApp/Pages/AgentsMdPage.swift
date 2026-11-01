@@ -2,7 +2,7 @@ import AppKit
 import QuiverCore
 import SwiftUI
 
-/// The shared `~/.quiver/AGENTS.md`, where swe has linked it, and the
+/// The shared `~/.swe/AGENTS.md`, where swe has linked it, and the
 /// instruction files of one project folder.
 struct AgentsMdPage: View {
     enum Scope: Hashable { case global, project }
@@ -107,7 +107,7 @@ private struct FlatInstructions: View {
                     // editor would never reach the chapter it becomes.
                     .disabled(chapters.converting || unsaved)
                     .hoverTip(unsaved ? AgentsModel.saveFirst
-                              : "Runs swe instructions init: your AGENTS.md becomes main.md under ~/.quiver/AGENTS_MD.",
+                              : "Runs swe instructions init: your AGENTS.md becomes main.md under ~/.swe/AGENTS_MD.",
                               replacesLabel: false)
                 }
                 if let error = chapters.convertError {
@@ -186,7 +186,7 @@ private struct ChaptersEditor: View {
                 }
             }
         } message: {
-            Text("A .md file under ~/.quiver/AGENTS_MD, added at the end of index.txt.")
+            Text("A .md file under ~/.swe/AGENTS_MD, added at the end of index.txt.")
         }
     }
 
@@ -420,7 +420,7 @@ private struct LinksStrip: View {
                         .secondaryButton()
                         .disabled(model.linking || model.projectHasUnsavedChanges)
                         .hoverTip(model.projectHasUnsavedChanges ? AgentsModel.saveFirst
-                                  : "Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.",
+                                  : "Runs swe init --force, which copies each real file in the way to ~/.swe/backups before linking over it.",
                                   replacesLabel: false)
                 }
             }
@@ -441,7 +441,7 @@ private struct LinksStrip: View {
                 Task { await model.link(swe: app.swe, force: true) }
             }
         } message: {
-            Text("This runs swe init --force. Each real file or folder in the way is copied to ~/.quiver/backups, then replaced with a link to the shared copy.")
+            Text("This runs swe init --force. Each real file or folder in the way is copied to ~/.swe/backups, then replaced with a link to the shared copy.")
         }
     }
 }

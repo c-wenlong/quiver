@@ -1,7 +1,7 @@
 import Foundation
 
 /// Wire types for the hub's `/v1` routes. Field names match
-/// `src/quiver/remote/protocol.py` and `catalog.py`; every field the hub
+/// `src/swe/remote/protocol.py` and `catalog.py`; every field the hub
 /// may omit or null is optional so a newer hub never breaks decoding.
 
 struct Machine: Codable, Identifiable, Hashable {

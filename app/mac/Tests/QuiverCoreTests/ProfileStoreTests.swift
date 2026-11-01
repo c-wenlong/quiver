@@ -3,7 +3,7 @@ import Testing
 @testable import QuiverCore
 
 private func root(of home: URL) -> URL {
-    home.appendingPathComponent(".quiver/accounts", isDirectory: true)
+    home.appendingPathComponent(".swe/accounts", isDirectory: true)
 }
 
 private func makeStore(_ home: URL) -> ProfileStore {
@@ -16,7 +16,7 @@ private func makeStore(_ home: URL) -> ProfileStore {
     init() throws { home = try TempDir() }
 
     /// A scratch directory used as the user's home. The accounts root sits
-    /// under it the way it does in production: <home>/.quiver/accounts.
+    /// under it the way it does in production: <home>/.swe/accounts.
     private func scratch() throws -> URL { home.url }
 
     @Test func aStoreWithNoFileStillListsTheTwoDefaultsFirst() throws {

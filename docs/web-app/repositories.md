@@ -10,24 +10,24 @@ drag to reorder. Inbox marks notifications read.
 
 | File | What |
 |---|---|
-| `src/quiver/webapp/pages/repositories.py` | `GET /v1/app/repositories`, `POST /v1/app/repositories/merge`, `/rerun`, `/worktree`, `/add`, `/remove` and `/reorder` |
-| `src/quiver/webapp/pages/inbox.py` | `GET /v1/app/inbox`, `POST /v1/app/inbox/read` |
-| `src/quiver/github/shared.py` | Shared with the hub's `/v1` routes: the `gh` cache, the write lock, the hub's pins, the env payload. |
-| `src/quiver/webapp/pages/_github.py` | Page-side: request flags, pin errors as page errors. The leading underscore keeps it off `/v1/app/`. |
-| `src/quiver/webapp/static/pages/github.js`, `github.css` | Shared by both scripts: `GhUI` (icons, the gh setup card, the minute poll, the writes' POST, the PR body's markdown) and the styles. |
-| `src/quiver/webapp/static/pages/repositories.js`, `inbox.js` | The pages. |
+| `src/swe/webapp/pages/repositories.py` | `GET /v1/app/repositories`, `POST /v1/app/repositories/merge`, `/rerun`, `/worktree`, `/add`, `/remove` and `/reorder` |
+| `src/swe/webapp/pages/inbox.py` | `GET /v1/app/inbox`, `POST /v1/app/inbox/read` |
+| `src/swe/github/shared.py` | Shared with the hub's `/v1` routes: the `gh` cache, the write lock, the hub's pins, the env payload. |
+| `src/swe/webapp/pages/_github.py` | Page-side: request flags, pin errors as page errors. The leading underscore keeps it off `/v1/app/`. |
+| `src/swe/webapp/static/pages/github.js`, `github.css` | Shared by both scripts: `GhUI` (icons, the gh setup card, the minute poll, the writes' POST, the PR body's markdown) and the styles. |
+| `src/swe/webapp/static/pages/repositories.js`, `inbox.js` | The pages. |
 
 ## Whose GitHub
 
 Every read runs the `gh` CLI in the hub process, through the same
-builders `swe gh … --json` uses (`quiver.github.cli`). So the pages show
+builders `swe gh … --json` uses (`swe.github.cli`). So the pages show
 what **the hub machine's `gh` login** can see, and the pinned repos are
-the hub machine's (`~/.quiver/config/github.json`, the same file
+the hub machine's (`~/.swe/config/github.json`, the same file
 `swe gh repo add` writes there).
 The browser's own GitHub session plays no part. If `gh` is missing or
 signed out on the hub, both pages show the app's setup card
 (`brew install gh` / `gh auth login`) with a line saying to run it on the
-hub machine. No GitHub token is stored by Quiver.
+hub machine. No GitHub token is stored by SWE.
 
 ## Cache
 
@@ -51,8 +51,8 @@ is not kept, so the next look reads GitHub again.
 ## Writes
 
 They go through the functions `swe` itself calls, in the hub process
-(`quiver.github.cli.merge_pr`, `rerun_run`, `mark_threads_read`,
-`mark_all_read`, `quiver.github.manage.add_repo`, `pr_worktree`),
+(`swe.github.cli.merge_pr`, `rerun_run`, `mark_threads_read`,
+`mark_all_read`, `swe.github.manage.add_repo`, `pr_worktree`),
 with the hub's `gh` login. Nothing a browser sends reaches a shell: the
 repo must be a pin, the number and ids digits, the method one of three
 words. Writes run one at a time per hub (`shared.WRITE_LOCK`), behind
@@ -223,10 +223,10 @@ Start then:
 
 1. `POST /v1/app/repositories/worktree` `{"repo", "number"}`: `swe gh
    pr worktree N --repo=R --json` in process
-   (`quiver.github.manage.pr_worktree`). A bare mirror per repo under
-   `~/.quiver/data/github/mirrors`, the head fetched from GitHub's
+   (`swe.github.manage.pr_worktree`). A bare mirror per repo under
+   `~/.swe/data/github/mirrors`, the head fetched from GitHub's
    `refs/pull/N/head` (fork PRs too), a detached checkout at
-   `~/.quiver/worktrees/<owner>__<name>-prN`, reused on the next ask.
+   `~/.swe/worktrees/<owner>__<name>-prN`, reused on the next ask.
    Answers `{"repo", "number", "path", "head", "created", "machine"}`.
    It holds no lock the other writes wait on, since a first clone can
    take minutes. Checkouts of one repo run one after another: its PRs

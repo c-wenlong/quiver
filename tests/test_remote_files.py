@@ -13,9 +13,9 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import quote
 
-from quiver.remote import catalog as catalog_mod
-from quiver.remote import files
-from quiver.remote import protocol
+from swe.remote import catalog as catalog_mod
+from swe.remote import files
+from swe.remote import protocol
 from tests.test_remote_hub import _Server, _session
 
 HAS_GIT = shutil.which("git") is not None
@@ -48,14 +48,14 @@ class _Tmp(unittest.TestCase):
 
 class TestRanking(_Tmp):
     def test_name_tiers_lead_path_matches(self):
-        _touch(self.root, "src/quiver/remote/hub.py")
+        _touch(self.root, "src/swe/remote/hub.py")
         _touch(self.root, "src/github/notes.md")
         _touch(self.root, "docs/hubris.txt")
         _touch(self.root, "h/u/b/deep.txt")
         got = _paths(files.search(str(self.root), "hub"))
         # exact stem, then name prefix, then path substring, then the
         # letters spread over the path.
-        self.assertEqual(got[:2], ["src/quiver/remote/hub.py",
+        self.assertEqual(got[:2], ["src/swe/remote/hub.py",
                                    "docs/hubris.txt"])
         self.assertLess(got.index("src/github/notes.md"),
                         got.index("h/u/b/deep.txt"))

@@ -15,17 +15,17 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from quiver.init import commands as init_commands
-from quiver.init import manage
-from quiver.init.hooks import plan_hooks
-from quiver.init.layout import link_states, plan
+from swe.init import commands as init_commands
+from swe.init import manage
+from swe.init.hooks import plan_hooks
+from swe.init.layout import link_states, plan
 
 
 def _home(tmp: str, registry: dict | None = None) -> Path:
     home = Path(tmp)
-    (home / ".quiver").mkdir()
+    (home / ".swe").mkdir()
     if registry is not None:
-        cfg = home / ".quiver" / "config"
+        cfg = home / ".swe" / "config"
         cfg.mkdir(parents=True, exist_ok=True)
         (cfg / "harness.json").write_text(json.dumps(registry))
     return home
@@ -48,7 +48,7 @@ def _init(home: Path, args: list[str], *, supported=False,
 
 
 def _registry(home: Path) -> dict:
-    path = home / ".quiver" / "config" / "harness.json"
+    path = home / ".swe" / "config" / "harness.json"
     return json.loads(path.read_text())
 
 
@@ -62,7 +62,7 @@ class NewHarnessCheckTest(unittest.TestCase):
             out, _ = _init(home, ["--check", "--full"])
             self.assertIn("1 new harness", out)
             self.assertIn("foo", out)
-            self.assertFalse((home / ".quiver" / "config" / "harness.json").exists())
+            self.assertFalse((home / ".swe" / "config" / "harness.json").exists())
             self.assertFalse(root.is_symlink())
 
 
@@ -86,15 +86,15 @@ class YesFlagTest(unittest.TestCase):
             )
             agents = home / ".config" / "foo" / "AGENTS.md"
             self.assertTrue(agents.is_symlink())
-            self.assertEqual(agents.resolve(), (home / ".quiver" / "AGENTS.md").resolve())
+            self.assertEqual(agents.resolve(), (home / ".swe" / "AGENTS.md").resolve())
             self.assertTrue(root.is_symlink())
-            self.assertEqual(root.resolve(), (home / ".quiver" / "skills").resolve())
+            self.assertEqual(root.resolve(), (home / ".swe" / "skills").resolve())
 
     def test_already_linked_root_is_still_offered(self):
         """A machine that ran init before this feature has linked roots."""
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             (home / ".config" / "foo").mkdir(parents=True)
             root = home / ".config" / "foo" / "skills"
@@ -125,7 +125,7 @@ class YesFlagTest(unittest.TestCase):
             self.assertFalse(picker.called)
             self.assertIn("left 1 new skills folder(s) alone (foo)", out)
             self.assertIn(manage.UNREVIEWED_DETAIL, out)
-            self.assertFalse((home / ".quiver" / "config" / "harness.json").exists())
+            self.assertFalse((home / ".swe" / "config" / "harness.json").exists())
             self.assertFalse(root.is_symlink())
             self.assertFalse((home / ".config" / "foo" / "AGENTS.md").exists())
 
@@ -133,7 +133,7 @@ class YesFlagTest(unittest.TestCase):
         """init never unlinks, held or not."""
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             (home / ".foo").mkdir()
             root = home / ".foo" / "skills"
@@ -199,7 +199,7 @@ class InteractivePickerTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 manage.register(home, {}, {"foo": (root, "..")}, {})
             self.assertFalse(
-                (home / ".quiver" / "config" / "harness.json").exists()
+                (home / ".swe" / "config" / "harness.json").exists()
             )
 
     def test_register_writes_atomically(self):
@@ -208,7 +208,7 @@ class InteractivePickerTest(unittest.TestCase):
             root = home / ".foo" / "skills"
             root.mkdir(parents=True)
             registry = manage.register(home, {}, {"foo": (root, None)}, {})
-            cfg = home / ".quiver" / "config"
+            cfg = home / ".swe" / "config"
             self.assertEqual([p for p in cfg.iterdir() if p.name.endswith(".tmp")], [])
             self.assertEqual(
                 json.loads((cfg / "harness.json").read_text()), registry
@@ -243,7 +243,7 @@ class InteractivePickerTest(unittest.TestCase):
             root.mkdir(parents=True)
             out, _ = _init(home, ["--full"], supported=True, chosen=None)
             self.assertIn("cancelled, nothing registered", out)
-            self.assertFalse((home / ".quiver" / "config" / "harness.json").exists())
+            self.assertFalse((home / ".swe" / "config" / "harness.json").exists())
             self.assertFalse(root.is_symlink())
 
     def test_only_roots_with_evidence_start_ticked(self):
@@ -285,7 +285,7 @@ class ArchivedMeansUnmanagedTest(unittest.TestCase):
     def test_archived_but_linked_stays_linked(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp, {"droid": {"state": "archived", "aliases": []}})
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             (home / ".factory").mkdir()
             (home / ".factory" / "skills").symlink_to(shared)
@@ -295,7 +295,7 @@ class ArchivedMeansUnmanagedTest(unittest.TestCase):
     def test_archived_hook_is_ignored_not_linked(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp, {"droid": {"state": "archived", "aliases": []}})
-            hooks = home / ".quiver" / "hooks" / "droid"
+            hooks = home / ".swe" / "hooks" / "droid"
             hooks.mkdir(parents=True)
             (hooks / "x.sh").write_text("#!/bin/sh\n")
             (home / ".factory").mkdir()
@@ -309,7 +309,7 @@ class ArchivedMeansUnmanagedTest(unittest.TestCase):
     def test_archived_hook_already_linked_stays_linked(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp, {"droid": {"state": "archived", "aliases": []}})
-            hooks = home / ".quiver" / "hooks" / "droid"
+            hooks = home / ".swe" / "hooks" / "droid"
             hooks.mkdir(parents=True)
             (hooks / "x.sh").write_text("#!/bin/sh\n")
             dest = home / ".factory" / "hooks"
@@ -407,7 +407,7 @@ class LegacyGuardTest(unittest.TestCase):
     def test_unmigrated_tools_json_blocks_the_picker(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            cfg = home / ".quiver" / "config"
+            cfg = home / ".swe" / "config"
             cfg.mkdir(parents=True)
             (cfg / "tools.json").write_text(json.dumps({"claude": {}}))
             (home / ".config" / "foo" / "skills").mkdir(parents=True)
@@ -434,7 +434,7 @@ class NotHarnessTest(unittest.TestCase):
             self.assertIn("not a coding harness", out)
             self.assertFalse(root.is_symlink())
             self.assertTrue((root / "usage-cache.json").exists())
-            path = home / ".quiver" / "config" / "harness.json"
+            path = home / ".swe" / "config" / "harness.json"
             self.assertFalse(path.exists() and "tokentracker" in _registry(home))
 
     def test_known_app_is_not_offered_in_the_picker(self):
@@ -450,14 +450,14 @@ class NotHarnessTest(unittest.TestCase):
         """An older init linked it: keep the link, never re-register it."""
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             (home / ".tokentracker").mkdir()
             root = home / ".tokentracker" / "skills"
             root.symlink_to(shared)
             _, picker = _init(home, ["--yes", "--full"])
             self.assertFalse(picker.called)
-            path = home / ".quiver" / "config" / "harness.json"
+            path = home / ".swe" / "config" / "harness.json"
             self.assertFalse(path.exists() and "tokentracker" in _registry(home))
             self.assertTrue(root.is_symlink())
 

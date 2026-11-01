@@ -76,7 +76,7 @@ public actor ServiceCredentials {
             keyURL: URL(string: "https://artificialanalysis.ai/data-api/docs")!),
     ]
 
-    /// `services.json` under ~/.quiver/config: per-key dates, never values.
+    /// `services.json` under ~/.swe/config: per-key dates, never values.
     private struct Metadata: Codable {
         var added: TimeInterval
         var lastUsed: TimeInterval?

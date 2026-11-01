@@ -2,19 +2,19 @@ import Foundation
 
 /// Who may edit a marketplace, a plugin or a skill: the user's own only.
 /// A marketplace is editable when a harness registers it as a `directory`
-/// source inside `~/.quiver/plugins` (the hub). A plugin is editable when
+/// source inside `~/.swe/plugins` (the hub). A plugin is editable when
 /// its files sit inside such a marketplace's folder. A skill is editable
-/// when its folder, symlinks resolved, lives under `~/.quiver` without
+/// when its folder, symlinks resolved, lives under `~/.swe` without
 /// being part of a marketplace checkout or a cache. Anything else is
 /// view only, because updates from wherever it really lives (a GitHub
 /// clone, a harness cache) would silently undo the edits.
 public enum PrimitiveOwnership {
     /// The folder an editable marketplace lives in, else nil. A
     /// marketplace counts when its `directory` registration resolves to a
-    /// folder inside `~/.quiver/plugins`.
+    /// folder inside `~/.swe/plugins`.
     public static func marketplaceDirectory(_ market: PluginMarketplace, home: URL,
                                             resolve: (String) -> String = FolderOwners.realPath) -> URL? {
-        let plugins = resolve(home.appending(path: ".quiver/plugins").path)
+        let plugins = resolve(home.appending(path: ".swe/plugins").path)
         var candidates = market.harnesses.values
             .filter { $0.sourceType == "directory" }
             .compactMap(\.location)
@@ -45,11 +45,11 @@ public enum PrimitiveOwnership {
         return resolved
     }
 
-    /// Whether a skill's folder is the user's own: under `~/.quiver` after
+    /// Whether a skill's folder is the user's own: under `~/.swe` after
     /// symlinks resolve, and not inside the cache.
     public static func isEditable(skillPath: String, home: URL,
                                   resolve: (String) -> String = FolderOwners.realPath) -> Bool {
-        let quiver = resolve(home.appending(path: ".quiver").path)
+        let quiver = resolve(home.appending(path: ".swe").path)
         let cache = quiver + "/cache"
         let resolved = resolve(skillPath)
         return resolved.hasPrefix(quiver + "/") && !resolved.hasPrefix(cache + "/")
@@ -98,7 +98,7 @@ public enum PrimitiveOwnership {
 /// Quiver's own names for marketplaces and plugins. Renaming is display
 /// only: a plugin's `name@marketplace` id never changes, so nothing is
 /// reinstalled and nothing on disk a harness validates is touched. Kept in
-/// `~/.quiver/config/plugin-display-names.json` and written atomically.
+/// `~/.swe/config/plugin-display-names.json` and written atomically.
 public struct PluginDisplayNames: Sendable, Equatable, Codable {
     /// Marketplace id to display name.
     public var marketplaces: [String: String] = [:]
@@ -128,9 +128,9 @@ public struct PluginDisplayNames: Sendable, Equatable, Codable {
         if trimmed.isEmpty { map.removeValue(forKey: key) } else { map[key] = trimmed }
     }
 
-    /// The file `~/.quiver/config/plugin-display-names.json`.
+    /// The file `~/.swe/config/plugin-display-names.json`.
     public static func file(home: URL) -> URL {
-        home.appending(path: ".quiver/config/plugin-display-names.json")
+        home.appending(path: ".swe/config/plugin-display-names.json")
     }
 
     /// What the file holds; an empty overlay when it is missing or unreadable.

@@ -1,4 +1,4 @@
-"""~/.quiver/.linkignore: paths swe init must leave alone.
+"""~/.swe/.linkignore: paths swe init must leave alone.
 
 A harness can keep its own skills or instructions by listing its path. The
 plan still sees the path, stamps it ``ignored``, and nothing acts on it.
@@ -13,8 +13,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver.init import commands as init_commands
-from quiver.init.layout import (
+from swe.init import commands as init_commands
+from swe.init.layout import (
     LinkIgnoreError,
     is_linkignored,
     link_states,
@@ -26,7 +26,7 @@ from quiver.init.layout import (
 
 def _home(tmp: str) -> Path:
     home = Path(tmp)
-    (home / ".quiver").mkdir()
+    (home / ".swe").mkdir()
     for rel in (".claude", ".codex", ".agents"):
         (home / rel).mkdir(parents=True)
     return home
@@ -147,7 +147,7 @@ class CmdInitTest(unittest.TestCase):
             self.assertIn("1 ignored", out)
             self.assertNotIn("exist nowhere else", out)
             self.assertNotIn("Left alone", out)
-            self.assertEqual(list((home / ".quiver/backups").iterdir()), [])
+            self.assertEqual(list((home / ".swe/backups").iterdir()), [])
 
     def test_unreadable_ignore_file_stops_init_before_writing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -161,7 +161,7 @@ class CmdInitTest(unittest.TestCase):
             self.assertIn("cannot read", out)
             self.assertFalse(agents.is_symlink(), "nothing may be replaced")
             self.assertFalse((home / ".claude/CLAUDE.md").exists(), "nothing may be linked")
-            self.assertFalse((home / ".quiver/backups").exists())
+            self.assertFalse((home / ".swe/backups").exists())
 
     def test_force_still_respects_ignore(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -178,7 +178,7 @@ class CmdInitTest(unittest.TestCase):
             _skill(home / ".agents/skills", "only-here")
             _ignore(home, ".agents/skills\n")
             _, out = self._run(home, ["--full"])
-            self.assertRegex(out, r"ignored\s+~/.agents/skills\s+listed in ~/.quiver/.linkignore")
+            self.assertRegex(out, r"ignored\s+~/.agents/skills\s+listed in ~/.swe/.linkignore")
 
     def test_init_seeds_a_commented_linkignore(self):
         with tempfile.TemporaryDirectory() as tmp:

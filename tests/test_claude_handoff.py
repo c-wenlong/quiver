@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.sessions.parsers import (
+from swe.sessions.parsers import (
     _claude_handed_off,
     _claude_transcript_paths,
     parse_claude,
@@ -68,13 +68,13 @@ class ClaudeHandoffTest(unittest.TestCase):
             def fake_expanduser(path):
                 if path.startswith("~/.claude/projects"):
                     return str(projects) + "/"
-                # Account-home scans must not read the real ~/.quiver.
-                if path.startswith("~/.quiver"):
-                    return str(Path(tmp) / ".quiver") + path[len("~/.quiver"):]
+                # Account-home scans must not read the real ~/.swe.
+                if path.startswith("~/.swe"):
+                    return str(Path(tmp) / ".swe") + path[len("~/.swe"):]
                 return REAL_EXPANDUSER(path)
 
             with patch(
-                "quiver.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
+                "swe.sessions.parsers.os.path.expanduser", side_effect=fake_expanduser
             ):
                 sessions = parse_claude()
         return {s.session_id: s for s in sessions}

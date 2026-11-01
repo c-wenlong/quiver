@@ -238,7 +238,7 @@ struct McpAddServerSheet: View {
                     variables.append(Variable())
                 }
                 .secondaryButton()
-                Text("Secret values go to ~/.quiver/secrets/mcp/.api_keys; "
+                Text("Secret values go to ~/.swe/secrets/mcp/.api_keys; "
                      + "the configs get ${NAME} references.")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }

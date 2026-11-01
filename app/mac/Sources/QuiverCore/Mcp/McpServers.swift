@@ -113,7 +113,7 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
     /// `local_only` marks them: Claude Desktop adds a remote server in the
     /// app itself (Settings › Connectors).
     public static let localOnly: Set<String> = ["claude-desktop"]
-    /// Whether ~/.quiver/mcp.json defines this server. A hub-only row has
+    /// Whether ~/.swe/mcp.json defines this server. A hub-only row has
     /// no harnesses; an older swe sends nothing and decodes false.
     public let inHub: Bool
     /// The places (harnesses, "quiver" for the hub) whose definition is at
@@ -254,7 +254,7 @@ enum McpRedaction {
     /// Words that mark a secret anywhere in a flag or key name, compared
     /// without dashes, underscores or case: `--api-key`, `--apiKey`,
     /// `--keyfile`, `SESSION_COOKIE`. The same words as swe's
-    /// `_SECRET_FLAG_RE` (src/quiver/mcp/secrets.py), so the app hides
+    /// `_SECRET_FLAG_RE` (src/swe/mcp/secrets.py), so the app hides
     /// whatever `swe mcp` hides.
     static let secretNameParts = ["key", "token", "secret", "passw", "bearer", "credential", "cookie",
                                   "signature", "authorization", "authorisation"]
@@ -541,7 +541,7 @@ extension SweClient {
         return try await call(args)
     }
 
-    /// Removes `name` from each place; swe reports `quiver` for the hub.
+    /// Removes `name` from each place; swe reports `swe` for the hub.
     public func mcpRemove(name: String, from places: [String]) async throws -> McpRemoveResult {
         try await call(["mcp", "remove", name, "--from=" + places.joined(separator: ","), "--json"])
     }

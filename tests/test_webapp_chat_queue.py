@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-CHAT_JS = Path(__file__).resolve().parent.parent / "src" / "quiver" / "webapp" / "static" / "pages" / "chat.js"
+CHAT_JS = Path(__file__).resolve().parent.parent / "src" / "swe" / "webapp" / "static" / "pages" / "chat.js"
 
 # Elements with the parts chat.js touches: classes, dataset, children,
 # and the few selectors the tray and the send paths use.

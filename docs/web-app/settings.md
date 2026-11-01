@@ -19,7 +19,7 @@ app's saved value does).
 
 | Section | On the web |
 |---|---|
-| General | Open at login, Terminal, Show in Dock: Mac app only. First-run setup links to `#/setup` ("Set up this machine"). Display › Appearance (System, Light, Dark) works, per browser. App icon and Hide accidental sessions: Mac app only. Updates › Version shows the hub's swe version; Latest release and Automatic checks are Mac app only. |
+| General | Open at login, Terminal, Show in Dock: Mac app only. First-run setup links to `#/setup` ("Set up this machine"). Display › Appearance (System, Light, Dark) works, per browser. Hide accidental sessions: Mac app only. Updates › Version shows the hub's swe version; Latest release and Automatic checks are Mac app only. |
 | Sidebar | A switch per page in every group, Enable all / Disable all, Overview, Accounts and Settings locked on ("Always on"), per browser. |
 | Notifications | All three rows Mac app only. |
 | Providers | Harnesses tab: Provider visibility is Mac app only, with a link to the Harnesses page. Inference tab: the API keys file, with Add key, the provider Catalogue, edit, delete, reveal and copy (below). |
@@ -35,11 +35,11 @@ badge where its control would be.
 ### Integrations › Remote
 
 - **Set up remote control**: while any step `swe remote setup` checks is
-  left, a card lists them all with a Done, Needs you, Quiver does this,
+  left, a card lists them all with a Done, Needs you, SWE does this,
   Failed or Waiting badge. A step only a person can do links to its
   page (Download Tailscale, Sign in, Open admin console) or copies its
   command; "Pair a phone" mints a code like Pair a device. The steps
-  Quiver does itself are not run from here, since moving the hub can cut
+  SWE does itself are not run from here, since moving the hub can cut
   off the page it serves: the card's last row points to the Mac app's
   Set up remote control or `swe remote setup --apply` on the hub, with
   Check again. The card is gone once every step is done. Each visit to
@@ -82,7 +82,7 @@ badge where its control would be.
 ### Providers › Inference
 
 The Mac app's Keys and plans table, read from the API keys file
-(`quiver.providers.keyfile`, a port of the app's `APIKeysFile`): every
+(`swe.providers.keyfile`, a port of the app's `APIKeysFile`): every
 `export` in file order under its `# Provider` heading ("Other" before the
 first one), the variable, the value masked as the app's `APIKeyMask` does
 (`sk-ant-••••••••WXYZ`: the vendor prefix up to a dash in the first eight
@@ -117,7 +117,7 @@ stay in the Mac app.
 ### Experimental › Session index
 
 The switch is the hub's own setting, `enabled` in
-`~/.quiver/data/search/indexer.json`: while it is on, the hub's
+`~/.swe/data/search/indexer.json`: while it is on, the hub's
 `remote-search-index` thread runs a pass over every transcript swe can
 decode (the list is in [data-model.md](../data-model.md)) every two minutes (`sessions/search_writer.py`). Turning it
 on also starts a pass at once, so the line under the switch reads
@@ -168,15 +168,15 @@ app loads, not only when Settings is open, so `app.js` needs no change.
     "token_ttl_s": 300
   },
   "providers": {
-    "path": "~/.quiver/secrets/providers/.api_keys", "exists": true, "error": null,
+    "path": "~/.swe/secrets/providers/.api_keys", "exists": true, "error": null,
     "stamp": "9f2c…",
     "keys": [{"name": "OPENAI_API_KEY", "provider": "OpenAI", "has_value": true,
               "masked": "sk-proj-••••••••1234"}],
     "catalog": [{"id": "openai", "name": "OpenAI", "env_vars": ["OPENAI_API_KEY"],
                  "url": "https://platform.openai.com/api-keys", "has_key": true}]
   },
-  "paths": {"swe": "~/.local/bin/swe", "api_keys": "~/.quiver/secrets/providers/.api_keys",
-            "mcp_servers": "~/.quiver/mcp/servers"},
+  "paths": {"swe": "~/.local/bin/swe", "api_keys": "~/.swe/secrets/providers/.api_keys",
+            "mcp_servers": "~/.swe/mcp/servers"},
   "session_search": {"enabled": true, "running": false, "exists": true, "schema_version": "1",
                      "files": {"current": 909}, "sessions_by_agent": {"claude": 850, "codex": 58},
                      "sessions": 908, "messages": 326558, "last_error": null,
@@ -229,7 +229,7 @@ starts a pass when the index stays on — a 409 `busy` while a pass holds
 bad_enabled` when `enabled` isn't a boolean.
 
 `POST /v1/app/settings/sync`, body `{}`: Integrations › GitHub › Sync
-now, `swe gh sync --json` in process (`quiver.github.manage.sync_catalog`)
+now, `swe gh sync --json` in process (`swe.github.manage.sync_catalog`)
 with the hub's `gh` login, into the hub's catalog. It probes `gh` afresh
 first. Answers `{"github": {"env", "catalog"}, "failed": [{"owner",
 "error"}]}`: the GitHub card read again, and the owners whose listing
@@ -248,9 +248,9 @@ replaces the line in place, or adds the key where Add key says above.
 `POST /v1/app/settings/key_remove`, body `{"name", "stamp"}`: drops the
 line, and its heading once nothing is left under it. Both write as the
 Mac app's `APIKeysStore` does: the previous file copied to
-`~/.quiver/backups/api-keys/api_keys.bak` (folder mode 700), the new one
+`~/.swe/backups/api-keys/api_keys.bak` (folder mode 700), the new one
 written mode 600 through a temp file and a rename (through a symlink to
-its target), `~/.quiver/secrets` given its own `.gitignore` of `*`, and
+its target), `~/.swe/secrets` given its own `.gitignore` of `*`, and
 the file checked again just before the swap. They answer `{"providers"}`
 in the `get` shape, never a value. `stamp` is an HMAC of the file's bytes
 keyed per hub process; a file that no longer matches it is a 409

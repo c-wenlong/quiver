@@ -8,7 +8,7 @@ import Foundation
 /// next to the installed app, swaps them only when the copy is good,
 /// unregisters the Trash copy with LaunchServices, and opens the new app.
 /// Every failure path reopens the old app. Output lands in
-/// ~/.quiver/cache/relaunch.log.
+/// ~/.swe/cache/relaunch.log.
 enum AppRelauncher {
 
     /// The detached script. $1 = our pid, $2 = built app path, $3 = the
@@ -31,8 +31,8 @@ enum AppRelauncher {
         # another running copy must not delete it under us.
         src_dir="$(dirname "$src")"
         case "$src_dir" in
-          "$HOME/.quiver/cache/rebuild/"*)
-            case "${src_dir#"$HOME/.quiver/cache/rebuild/"}" in
+          "$HOME/.swe/cache/rebuild/"*)
+            case "${src_dir#"$HOME/.swe/cache/rebuild/"}" in
               ""|*/*) ;;
               *) echo $$ > "$src_dir/owner.pid" ;;
             esac ;;
@@ -69,8 +69,8 @@ enum AppRelauncher {
         # The build came from a per-build folder under the rebuild cache;
         # remove it, but only ever a direct child of that cache.
         case "$src_dir" in
-          "$HOME/.quiver/cache/rebuild/"*)
-            case "${src_dir#"$HOME/.quiver/cache/rebuild/"}" in
+          "$HOME/.swe/cache/rebuild/"*)
+            case "${src_dir#"$HOME/.swe/cache/rebuild/"}" in
               ""|*/*) ;;
               *) rm -rf "$src_dir" ;;
             esac ;;
@@ -84,7 +84,7 @@ enum AppRelauncher {
     static func relaunch(into builtAppURL: URL) {
         let fm = FileManager.default
         let log = fm.homeDirectoryForCurrentUser
-            .appending(path: ".quiver/cache/relaunch.log")
+            .appending(path: ".swe/cache/relaunch.log")
         try? fm.createDirectory(at: log.deletingLastPathComponent(),
                                 withIntermediateDirectories: true)
         let scriptURL = fm.temporaryDirectory

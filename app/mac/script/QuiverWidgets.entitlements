@@ -5,10 +5,13 @@
   <!-- macOS loads only sandboxed app extensions. -->
   <key>com.apple.security.app-sandbox</key>
   <true/>
-  <!-- Read the snapshot the app writes, and nothing else under ~/.quiver. -->
+  <!-- Read the snapshot the app writes, and nothing else under ~/.swe.
+       The ~/.quiver grant stays for machines still on the pre-rename
+       layout (the compat symlink resolves through it either way). -->
   <key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
   <array>
     <string>/.quiver/cache/widgets/</string>
+    <string>/.swe/cache/widgets/</string>
   </array>
 </dict>
 </plist>

@@ -4,26 +4,26 @@
     "sources": 1,
     "drift": [
       {
-        "id": "claude:unregistered:/tmp/quiver-fixture-home/.quiver/plugins/fixture-market",
+        "id": "claude:unregistered:/tmp/quiver-fixture-home/.swe/plugins/fixture-market",
         "harness": "claude",
         "marketplace": "fixture-market",
         "plugin": null,
         "ref": "fixture-market",
         "kind": "unregistered",
-        "detail": "/tmp/quiver-fixture-home/.quiver/plugins/fixture-market is not a claude marketplace",
-        "fix": "claude plugin marketplace add /tmp/quiver-fixture-home/.quiver/plugins/fixture-market",
+        "detail": "/tmp/quiver-fixture-home/.swe/plugins/fixture-market is not a claude marketplace",
+        "fix": "claude plugin marketplace add /tmp/quiver-fixture-home/.swe/plugins/fixture-market",
         "runnable": true,
         "paths": []
       },
       {
-        "id": "codex:unregistered:/tmp/quiver-fixture-home/.quiver/plugins/fixture-market",
+        "id": "codex:unregistered:/tmp/quiver-fixture-home/.swe/plugins/fixture-market",
         "harness": "codex",
         "marketplace": "fixture-market",
         "plugin": null,
         "ref": "fixture-market",
         "kind": "unregistered",
-        "detail": "/tmp/quiver-fixture-home/.quiver/plugins/fixture-market is not a codex marketplace",
-        "fix": "codex plugin marketplace add /tmp/quiver-fixture-home/.quiver/plugins/fixture-market",
+        "detail": "/tmp/quiver-fixture-home/.swe/plugins/fixture-market is not a codex marketplace",
+        "fix": "codex plugin marketplace add /tmp/quiver-fixture-home/.swe/plugins/fixture-market",
         "runnable": true,
         "paths": []
       }

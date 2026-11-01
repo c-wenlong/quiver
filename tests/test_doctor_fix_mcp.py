@@ -5,8 +5,8 @@ import sys
 import unittest
 from pathlib import Path
 
-from quiver.harness import doctor_fix
-from quiver.harness.doctor import _mcp_local_problem
+from swe.harness import doctor_fix
+from swe.harness.doctor import _mcp_local_problem
 
 try:  # `unittest discover -s tests` puts tests/ itself on sys.path
     from _tempdir import temp_dir
@@ -35,7 +35,7 @@ class McpSyncTest(unittest.TestCase):
     def setUp(self):
         self.home = temp_dir(self)
         write_registry(self.home, {"claude": {"command": "claude"}})
-        (self.home / ".quiver" / "AGENTS.md").write_text("# shared\n")
+        (self.home / ".swe" / "AGENTS.md").write_text("# shared\n")
         self.claude_json = self.home / ".claude.json"
         self.claude_json.write_text(json.dumps({
             "theme": "dark",
@@ -44,7 +44,7 @@ class McpSyncTest(unittest.TestCase):
                 "other": {"type": "stdio", "command": "/nope/bin/other", "args": []},
                 "fine": {"type": "stdio", "command": sys.executable, "args": []},
             }}))
-        (self.home / ".quiver" / "mcp.json").write_text(json.dumps({
+        (self.home / ".swe" / "mcp.json").write_text(json.dumps({
             "mcpServers": {"tool": {"command": sys.executable, "args": ["-V"]}}}))
 
     def mcp(self, data):
@@ -78,7 +78,7 @@ class McpSyncTest(unittest.TestCase):
         self.assertEqual(after["mcpServers"]["tool"]["command"], sys.executable)
         self.assertEqual(after["mcpServers"]["other"]["command"], "/nope/bin/other")
         self.assertEqual(after["theme"], "dark")
-        backups = list((self.home / ".quiver" / "backups").iterdir())
+        backups = list((self.home / ".swe" / "backups").iterdir())
         self.assertEqual(len(backups), 1)
         self.assertIn("/nope/bin/tool", backups[0].read_text())
         self.assertIn({"check": "mcp.server", "message": "claude: tool: binary not found"},
@@ -99,11 +99,11 @@ class McpSyncTest(unittest.TestCase):
         done = self.fix("claude: tool: binary not found")
         self.assertEqual(done.returncode, 1)
         self.assertEqual(self.claude_json.read_text(), before)
-        self.assertFalse((self.home / ".quiver" / "backups").exists())
+        self.assertFalse((self.home / ".swe" / "backups").exists())
         self.assertIn("mcp-sync", doctor_fix.CLICK)
 
     def hub(self, entry):
-        (self.home / ".quiver" / "mcp.json").write_text(json.dumps({"mcpServers": {"tool": entry}}))
+        (self.home / ".swe" / "mcp.json").write_text(json.dumps({"mcpServers": {"tool": entry}}))
 
     def test_a_hub_copy_that_cannot_run_offers_nothing(self):
         for entry in ({}, {"command": sys.executable, "env": {"TOKEN": "${NOT_STORED}"}},
@@ -119,7 +119,7 @@ class McpSyncTest(unittest.TestCase):
         self.claude_json.symlink_to(real)
         done = self.fix("claude: tool: binary not found")
         self.assertEqual(decode(done)["data"]["ran"][0]["error"], None, done.stderr)
-        (backup,) = (self.home / ".quiver" / "backups").iterdir()
+        (backup,) = (self.home / ".swe" / "backups").iterdir()
         self.assertFalse(backup.is_symlink())
         self.assertIn("/nope/bin/tool", backup.read_text())
         self.assertEqual(json.loads(real.read_text())["mcpServers"]["tool"]["command"],
@@ -136,9 +136,9 @@ class McpSyncTest(unittest.TestCase):
         data["mcpServers"]["my tool"] = {"type": "stdio", "command": "/nope/x", "args": []}
         self.claude_json.write_text(json.dumps(data))
         self.hub({"command": sys.executable})
-        hub = json.loads((self.home / ".quiver" / "mcp.json").read_text())
+        hub = json.loads((self.home / ".swe" / "mcp.json").read_text())
         hub["mcpServers"]["my tool"] = {"command": sys.executable}
-        (self.home / ".quiver" / "mcp.json").write_text(json.dumps(hub))
+        (self.home / ".swe" / "mcp.json").write_text(json.dumps(hub))
         found = self.mcp(decode(run_swe(self.home, "doctor", "--json"))["data"])
         self.assertIn("'--only=my tool'", found["claude: my tool: binary not found"]["fix"])
 

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Edit-ish tool calls rendered as a diff, ported from `toolDiff()` in
-/// `src/quiver/webapp/static/pages/chat.js` so every client shows the same
+/// `src/swe/webapp/static/pages/chat.js` so every client shows the same
 /// lines (iOS's copy lives in `app/ios/.../Hub/ToolDiff.swift`).
 public struct DiffLine: Equatable, Sendable {
     public enum Kind: Sendable { case context, added, removed, meta }

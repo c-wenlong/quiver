@@ -1,10 +1,10 @@
 # Harness support
 
-Quiver knows about more harnesses than it has features for. This page shows,
+SWE knows about more harnesses than it has features for. This page shows,
 per harness, what actually works today. **Yes** means fully supported.
 **Partial** means it works with a limitation, spelled out in the notes under
 each table. **No** means not implemented, usually because the harness writes
-no data Quiver can read.
+no data SWE can read.
 
 Only harnesses `swe discover` can find are listed, plus Jules and Mastracode,
 which `swe install` knows but discovery does not.
@@ -43,13 +43,13 @@ Notes:
 - **Cursor, plugins:** `swe plugins` lists Cursor's installed plugins, but
   install, uninstall, enable and disable only run through the Claude and
   Codex CLIs.
-- **Copilot, instructions:** Quiver links its shared skills directory but
+- **Copilot, instructions:** SWE links its shared skills directory but
   has no confirmed instructions file for Copilot, so `AGENTS.md` is not
   linked there.
 - **Cline, instructions:** linked at `~/.agents/AGENTS.md`, the shared
   location Cline reads.
 - **MCP, Partial:** these harnesses sync through the conventional
-  `~/.<name>/mcp.json` path, which Quiver cannot confirm the harness
+  `~/.<name>/mcp.json` path, which SWE cannot confirm the harness
   actually reads. Claude, Cursor, Copilot, Cline, Gemini, OpenCode, Kilo,
   Codex and Droid have verified config locations instead.
 - **Jules and Mastracode:** install-only. They are not in the discovery
@@ -128,22 +128,22 @@ Notes:
 Notes:
 
 - **Tokens and cost:** Claude, Codex, OpenCode, Devin and Pi write logs
-  Quiver prices per request. Droid and Cline give Quiver each session's
+  SWE prices per request. Droid and Cline give SWE each session's
   totals instead, so their spend shows as a lump at the session's end. Every
   other harness shows no spend on the Overview and no cost next to its
   sessions.
 - **Cursor:** tokens and cost come from Cursor's own usage feed, which
   covers the editor, `cursor-agent` and cloud agents; the cost is Cursor's
-  figure, not Quiver's price list. Calendar activity still comes from the
+  figure, not SWE's price list. Calendar activity still comes from the
   editor's own database, so feed events never draw a second calendar row.
 - **Grok Bot:** uses the Cursor account, so the same feed gives it tokens
   and cost (listed as Grok Bot) and a calendar row; it has no limits meter
   of its own.
 - **Droid and Cline, tokens and cost:** both keep token totals per
-  session rather than per request, so Quiver counts the whole session at
+  session rather than per request, so SWE counts the whole session at
   its last activity (Droid) or its end (Cline). Droid reports credits,
-  not dollars, so its cost comes from Quiver's price list.
-- **Freebuff:** the calendar reads its session files, but Quiver doesn't
+  not dollars, so its cost comes from SWE's price list.
+- **Freebuff:** the calendar reads its session files, but SWE doesn't
   import its token counts yet, so it contributes time, not spend.
 - **Usage limits:** meters exist for Claude, Codex, Copilot, Cursor, Devin,
   Droid and Freebuff. Devin and Cursor report several quota windows; the

@@ -6,8 +6,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quiver.console import visible_len
-from quiver.sessions.commands import (
+from swe.console import visible_len
+from swe.sessions.commands import (
     _display_title,
     _filter_search,
     _launch_tool_name,
@@ -15,8 +15,8 @@ from quiver.sessions.commands import (
     _resume_cmd_args,
     cmd_session,
 )
-from quiver.console import strip_ansi
-from quiver.sessions.models import Session
+from swe.console import strip_ansi
+from swe.sessions.models import Session
 
 
 class SessionCommandsTest(unittest.TestCase):
@@ -222,7 +222,7 @@ class SessionCommandsTest(unittest.TestCase):
         self.assertIn("takes a value", buf.getvalue())
 
     def test_models_help_token_routes_to_help(self):
-        from quiver.sessions.commands import cmd_models
+        from swe.sessions.commands import cmd_models
 
         buf = io.StringIO()
         with patch("sys.stdout", buf):
@@ -250,11 +250,11 @@ class SessionInteractiveTest(unittest.TestCase):
             for i in range(3)
         ]
 
-    @patch("quiver.sessions.commands.terminal_width", return_value=200)
-    @patch("quiver.harness.commands.cmd_use")
+    @patch("swe.sessions.commands.terminal_width", return_value=200)
+    @patch("swe.harness.commands.cmd_use")
     @patch("os.chdir")
-    @patch("quiver.sessions.commands.pick_session")
-    @patch("quiver.sessions.commands.get_all_sessions")
+    @patch("swe.sessions.commands.pick_session")
+    @patch("swe.sessions.commands.get_all_sessions")
     def test_interactive_resumes_chosen_session(
         self, mock_get_all, mock_pick, mock_chdir, mock_cmd_use, _mock_width
     ):
@@ -273,11 +273,11 @@ class SessionInteractiveTest(unittest.TestCase):
         mock_chdir.assert_called_once_with(self._tmpdirs[1])
         self.assertTrue(mock_cmd_use.called)
 
-    @patch("quiver.sessions.commands.terminal_width", return_value=200)
-    @patch("quiver.harness.commands.cmd_use")
+    @patch("swe.sessions.commands.terminal_width", return_value=200)
+    @patch("swe.harness.commands.cmd_use")
     @patch("os.chdir")
-    @patch("quiver.sessions.commands.pick_session")
-    @patch("quiver.sessions.commands.get_all_sessions")
+    @patch("swe.sessions.commands.pick_session")
+    @patch("swe.sessions.commands.get_all_sessions")
     def test_interactive_cancelled_does_not_resume(
         self, mock_get_all, mock_pick, mock_chdir, mock_cmd_use, _mock_width
     ):
@@ -290,11 +290,11 @@ class SessionInteractiveTest(unittest.TestCase):
         mock_chdir.assert_not_called()
         mock_cmd_use.assert_not_called()
 
-    @patch("quiver.sessions.commands.terminal_width", return_value=100)
-    @patch("quiver.harness.commands.cmd_use")
+    @patch("swe.sessions.commands.terminal_width", return_value=100)
+    @patch("swe.harness.commands.cmd_use")
     @patch("os.chdir")
-    @patch("quiver.sessions.commands.pick_session")
-    @patch("quiver.sessions.commands.get_all_sessions")
+    @patch("swe.sessions.commands.pick_session")
+    @patch("swe.sessions.commands.get_all_sessions")
     def test_interactive_rows_leave_room_for_the_picker_pointer(
         self, mock_get_all, mock_pick, mock_chdir, mock_cmd_use, _mock_width
     ):
@@ -349,7 +349,7 @@ class SessionPreviewTest(unittest.TestCase):
         )
 
     def test_preview_is_the_conversation_without_labels_or_tool_detail(self):
-        from quiver.sessions.commands import _session_preview
+        from swe.sessions.commands import _session_preview
 
         lines = [strip_ansi(line) for line in _session_preview(self.session)]
         self.assertEqual(lines, [
@@ -368,7 +368,7 @@ class SessionPreviewTest(unittest.TestCase):
     def test_a_run_of_tool_calls_collapses_to_one_count(self):
         import json
 
-        from quiver.sessions.commands import _session_preview
+        from swe.sessions.commands import _session_preview
 
         path = self.home / ".claude/projects/-work-project/fork-a.jsonl"
         path.write_text("".join(json.dumps(r) + "\n" for r in [
@@ -389,7 +389,7 @@ class SessionPreviewTest(unittest.TestCase):
     def test_a_trailing_run_of_tool_calls_is_still_counted(self):
         import json
 
-        from quiver.sessions.commands import _session_preview
+        from swe.sessions.commands import _session_preview
 
         path = self.home / ".claude/projects/-work-project/fork-a.jsonl"
         path.write_text("".join(json.dumps(r) + "\n" for r in [
@@ -402,9 +402,9 @@ class SessionPreviewTest(unittest.TestCase):
         self.assertEqual("  called 1 tool", lines[-1])
 
     def test_a_prompt_is_painted_and_nothing_else_is(self):
-        from quiver.console import COLORS
+        from swe.console import COLORS
 
-        from quiver.sessions.commands import _session_preview
+        from swe.sessions.commands import _session_preview
 
         lines = _session_preview(self.session)
         self.assertNotIn("\x1b[", lines[1])                 # source path, never cut
@@ -414,7 +414,7 @@ class SessionPreviewTest(unittest.TestCase):
     def test_an_assistant_body_is_rendered_as_markdown(self):
         import json
 
-        from quiver.sessions.commands import _session_preview
+        from swe.sessions.commands import _session_preview
 
         path = self.home / ".claude/projects/-work-project/fork-a.jsonl"
         path.write_text(json.dumps({
@@ -428,15 +428,15 @@ class SessionPreviewTest(unittest.TestCase):
         self.assertEqual(strip_ansi(body), "The root cause is here.")
 
     def test_missing_transcript_explains_instead_of_raising(self):
-        from quiver.sessions.commands import _session_preview
+        from swe.sessions.commands import _session_preview
 
         self.session.session_id = "nope"
         lines = _session_preview(self.session)
         self.assertEqual(lines, ["(no preview: transcript file not found)"])
 
-    @patch("quiver.sessions.commands.terminal_width", return_value=200)
-    @patch("quiver.sessions.commands.pick_session", return_value=None)
-    @patch("quiver.sessions.commands.get_all_sessions")
+    @patch("swe.sessions.commands.terminal_width", return_value=200)
+    @patch("swe.sessions.commands.pick_session", return_value=None)
+    @patch("swe.sessions.commands.get_all_sessions")
     def test_interactive_hands_the_picker_a_preview_for_each_row(
         self, mock_get_all, mock_pick, _width
     ):
@@ -444,6 +444,6 @@ class SessionPreviewTest(unittest.TestCase):
         self.assertEqual(cmd_session(["-i"]), 0)
         preview = mock_pick.call_args.kwargs["preview"]
         self.assertEqual(strip_ansi(preview(0)[-1]), "ship it")
-        with patch("quiver.sessions.commands._session_preview") as again:
+        with patch("swe.sessions.commands._session_preview") as again:
             preview(0)
             again.assert_not_called()          # memoised per picker run

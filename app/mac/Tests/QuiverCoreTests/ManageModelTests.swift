@@ -92,11 +92,11 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         let agents = try folder.write("AGENTS.md", "x")
         let runner = ScriptedRunner([
             (["init", "--check", "--json"], check(agentsFile: agents.path)),
-            (["init"], CommandResult(status: 1, stdout: Data(), stderr: "Fix or remove ~/.quiver/.linkignore\n")),
+            (["init"], CommandResult(status: 1, stdout: Data(), stderr: "Fix or remove ~/.swe/.linkignore\n")),
         ])
         let model = AgentsModel()
         await model.link(swe: SweClient(runner: runner))
-        #expect(model.linkError == "Fix or remove ~/.quiver/.linkignore")
+        #expect(model.linkError == "Fix or remove ~/.swe/.linkignore")
         #expect(runner.calls.last == ["init", "--check", "--json"])
     }
 

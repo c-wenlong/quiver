@@ -12,9 +12,9 @@ from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from quiver.find import commands as find_commands
-from quiver.find.tree import agents_tree, flat_skills, plugin_tree, skills_tree
-from quiver.harness import registry
+from swe.find import commands as find_commands
+from swe.find.tree import agents_tree, flat_skills, plugin_tree, skills_tree
+from swe.harness import registry
 
 
 def _skill(root: Path, name: str) -> None:
@@ -39,15 +39,15 @@ def _in_home(home: Path):
                               Path("/nonexistent/harness.json")), \
             mock.patch.object(registry, "TOOLS_FILE",
                               Path("/nonexistent/tools.json")), \
-            mock.patch("quiver.mcp.cli.get_hub_servers", return_value={}):
+            mock.patch("swe.mcp.cli.get_hub_servers", return_value={}):
         yield
 
 
 def _home(tmp: str) -> Path:
     home = Path(tmp)
-    shared = home / ".quiver" / "skills"
+    shared = home / ".swe" / "skills"
     _skill(shared, "alpha")
-    (home / ".quiver" / "AGENTS.md").write_text("rules\n")
+    (home / ".swe" / "AGENTS.md").write_text("rules\n")
     for rel in (".claude", ".codex"):
         (home / rel).mkdir(parents=True)
     return home
@@ -57,9 +57,9 @@ class AgentsTreeTest(unittest.TestCase):
     def test_reports_linked_and_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            (home / ".claude/CLAUDE.md").symlink_to(home / ".quiver/AGENTS.md")
+            (home / ".claude/CLAUDE.md").symlink_to(home / ".swe/AGENTS.md")
             canonical, nodes = agents_tree(home)
-            self.assertEqual(canonical, home / ".quiver/AGENTS.md")
+            self.assertEqual(canonical, home / ".swe/AGENTS.md")
             by = {n.label: n for n in nodes}
             self.assertEqual(by["claude"].state, "linked")
             self.assertEqual(by["claude"].kind, "symlink")
@@ -70,10 +70,10 @@ class AgentsTreeTest(unittest.TestCase):
     def test_symlink_target_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            (home / ".claude/CLAUDE.md").symlink_to(home / ".quiver/AGENTS.md")
+            (home / ".claude/CLAUDE.md").symlink_to(home / ".swe/AGENTS.md")
             _, nodes = agents_tree(home)
             claude = next(n for n in nodes if n.label == "claude")
-            self.assertEqual(claude.target, home / ".quiver/AGENTS.md")
+            self.assertEqual(claude.target, home / ".swe/AGENTS.md")
 
 
 class SkillsTreeTest(unittest.TestCase):
@@ -109,7 +109,7 @@ class SkillsTreeTest(unittest.TestCase):
 class PluginTreeTest(unittest.TestCase):
     def _build(self, home: Path) -> None:
         for market, name in (("dv", "eng"), ("dv", "cloudflare"), ("rf", "reasoning")):
-            plug = home / ".quiver" / "plugins" / market / name
+            plug = home / ".swe" / "plugins" / market / name
             (plug / ".claude-plugin").mkdir(parents=True)
             _skill(plug / "skills", f"{name}-one")
 
@@ -127,7 +127,7 @@ class PluginTreeTest(unittest.TestCase):
         # Before the marketplace split, plugins sat directly under plugins/.
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            plug = home / ".quiver" / "plugins" / "solo"
+            plug = home / ".swe" / "plugins" / "solo"
             (plug / ".claude-plugin").mkdir(parents=True)
             _skill(plug / "skills", "solo-one")
             plugins = plugin_tree(home)
@@ -151,7 +151,7 @@ class CmdFindTest(unittest.TestCase):
     def test_amd_renders_the_agents_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            (home / ".claude/CLAUDE.md").symlink_to(home / ".quiver/AGENTS.md")
+            (home / ".claude/CLAUDE.md").symlink_to(home / ".swe/AGENTS.md")
             code, out = self._run(home, ["amd", "--root", "--full"])
             self.assertEqual(code, 0)
             self.assertIn("AGENTS.md", out)
@@ -167,7 +167,7 @@ class CmdFindTest(unittest.TestCase):
     def test_skills_renders_plugins_and_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
-            plug = home / ".quiver" / "plugins" / "dv" / "eng"
+            plug = home / ".swe" / "plugins" / "dv" / "eng"
             (plug / ".claude-plugin").mkdir(parents=True)
             _skill(plug / "skills", "tdd")
             code, out = self._run(home, ["skills", "--root", "--full"])
@@ -216,7 +216,7 @@ class TrieSanitizeTest(unittest.TestCase):
     """Hostile filenames: cleaned for display, never merged as keys."""
 
     def _node(self, path):
-        from quiver.find.tree import Node
+        from swe.find.tree import Node
 
         return Node(label=path.name, path=path, kind="file", state="keep")
 
@@ -246,7 +246,7 @@ if __name__ == "__main__":
 
 
 class ScopeTest(unittest.TestCase):
-    """--root scans from where ~/.quiver lives; default scans the cwd."""
+    """--root scans from where ~/.swe lives; default scans the cwd."""
 
     def _tree(self, tmp: str) -> Path:
         home = _home(tmp)
@@ -264,7 +264,7 @@ class ScopeTest(unittest.TestCase):
         return home
 
     def test_cwd_scope_finds_project_files(self):
-        from quiver.find.tree import scan_agents
+        from swe.find.tree import scan_agents
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._tree(tmp)
@@ -273,7 +273,7 @@ class ScopeTest(unittest.TestCase):
             self.assertEqual(names, {"AGENTS.md", "sub/CLAUDE.md"})
 
     def test_pruned_directories_are_never_walked(self):
-        from quiver.find.tree import scan_agents
+        from swe.find.tree import scan_agents
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._tree(tmp)
@@ -281,7 +281,7 @@ class ScopeTest(unittest.TestCase):
             self.assertFalse(any("node_modules" in str(n.path) for n in found))
 
     def test_root_scope_reaches_further_than_cwd(self):
-        from quiver.find.tree import scan_agents
+        from swe.find.tree import scan_agents
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._tree(tmp)
@@ -290,24 +290,24 @@ class ScopeTest(unittest.TestCase):
             self.assertGreater(len(wide), len(deep))
 
     def test_canonical_file_is_excluded_from_its_own_scan(self):
-        from quiver.find.tree import scan_agents
+        from swe.find.tree import scan_agents
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._tree(tmp)
             found = scan_agents(home, home)
-            self.assertNotIn(home / ".quiver" / "AGENTS.md", [n.path for n in found])
+            self.assertNotIn(home / ".swe" / "AGENTS.md", [n.path for n in found])
 
     def test_symlink_to_canonical_reads_as_linked(self):
-        from quiver.find.tree import scan_agents
+        from swe.find.tree import scan_agents
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._tree(tmp)
-            (home / ".claude/CLAUDE.md").symlink_to(home / ".quiver/AGENTS.md")
+            (home / ".claude/CLAUDE.md").symlink_to(home / ".swe/AGENTS.md")
             found = {n.path: n for n in scan_agents(home, home)}
             self.assertEqual(found[home / ".claude/CLAUDE.md"].state, "linked")
 
     def test_empty_skills_dirs_are_skipped_in_a_scan(self):
-        from quiver.find.tree import scan_skill_roots
+        from swe.find.tree import scan_skill_roots
 
         with tempfile.TemporaryDirectory() as tmp:
             home = self._tree(tmp)
@@ -346,7 +346,7 @@ class ScopeClassificationTest(unittest.TestCase):
     """
 
     def _nodes(self, home: Path):
-        from quiver.find.tree import Node
+        from swe.find.tree import Node
 
         def n(rel, state="unlinked"):
             return Node("x", home / rel, "file", state)
@@ -361,14 +361,14 @@ class ScopeClassificationTest(unittest.TestCase):
         ]
 
     def test_direct_child_of_a_harness_root_is_global(self):
-        from quiver.find.tree import scope_of
+        from swe.find.tree import scope_of
 
         home = Path("/home/u")
         self.assertEqual(scope_of(home / ".claude/CLAUDE.md", home), "global")
         self.assertEqual(scope_of(home / ".config/opencode/AGENTS.md", home), "global")
 
     def test_one_level_deeper_is_vendored_not_global(self):
-        from quiver.find.tree import scope_of
+        from swe.find.tree import scope_of
 
         home = Path("/home/u")
         self.assertEqual(
@@ -377,7 +377,7 @@ class ScopeClassificationTest(unittest.TestCase):
             scope_of(home / ".hermes/hermes-agent/AGENTS.md", home), "vendored")
 
     def test_project_paths_are_local(self):
-        from quiver.find.tree import scope_of
+        from swe.find.tree import scope_of
 
         home = Path("/home/u")
         self.assertEqual(scope_of(home / "Desktop/proj/AGENTS.md", home), "local")
@@ -386,14 +386,14 @@ class ScopeClassificationTest(unittest.TestCase):
     def test_a_synced_root_is_global_however_deep(self):
         # ~/.astrbot/data/skills is two levels down but quiver linked it, so it
         # loads everywhere. Link state has to beat the path rule.
-        from quiver.find.tree import Node, node_scope
+        from swe.find.tree import Node, node_scope
 
         home = Path("/home/u")
         deep = Node("astrbot", home / ".astrbot/data/skills", "symlink", "linked")
         self.assertEqual(node_scope(deep, home), "global")
 
     def test_filter_counts_vendored_even_when_hiding_them(self):
-        from quiver.find.tree import filter_scope
+        from swe.find.tree import filter_scope
 
         home = Path("/home/u")
         nodes = self._nodes(home)
@@ -402,7 +402,7 @@ class ScopeClassificationTest(unittest.TestCase):
         self.assertEqual(vendored, 2)
 
     def test_local_scope_excludes_global_and_vendored(self):
-        from quiver.find.tree import filter_scope
+        from swe.find.tree import filter_scope
 
         home = Path("/home/u")
         shown, _ = filter_scope(self._nodes(home), "local", home)
@@ -411,7 +411,7 @@ class ScopeClassificationTest(unittest.TestCase):
                             for n in shown))
 
     def test_all_scope_hides_nothing(self):
-        from quiver.find.tree import filter_scope
+        from swe.find.tree import filter_scope
 
         home = Path("/home/u")
         shown, vendored = filter_scope(self._nodes(home), "all", home)
@@ -461,14 +461,14 @@ class ElideTest(unittest.TestCase):
     """
 
     def test_short_paths_are_untouched(self):
-        from quiver.console import elide
-        from quiver.find.commands import PATH_WIDTH
+        from swe.console import elide
+        from swe.find.commands import PATH_WIDTH
 
         self.assertEqual(elide("./.claude/CLAUDE.md", PATH_WIDTH), "./.claude/CLAUDE.md")
 
     def test_long_paths_keep_head_and_tail(self):
-        from quiver.console import elide
-        from quiver.find.commands import PATH_WIDTH
+        from swe.console import elide
+        from swe.find.commands import PATH_WIDTH
 
         # Built from the constant so widening PATH_WIDTH cannot silently stop
         # exercising the elision path.
@@ -480,28 +480,28 @@ class ElideTest(unittest.TestCase):
         self.assertTrue(out.endswith("AGENTS.md"), out)
 
     def test_result_never_exceeds_the_width(self):
-        from quiver.console import elide
-        from quiver.find.commands import PATH_WIDTH
+        from swe.console import elide
+        from swe.find.commands import PATH_WIDTH
 
         for n in range(1, 200):
             self.assertLessEqual(len(elide("x" * n, PATH_WIDTH)), PATH_WIDTH)
 
     def test_exactly_at_width_is_not_elided(self):
-        from quiver.console import elide
-        from quiver.find.commands import PATH_WIDTH
+        from swe.console import elide
+        from swe.find.commands import PATH_WIDTH
 
         text = "a" * PATH_WIDTH
         self.assertEqual(elide(text, PATH_WIDTH), text)
 
     def test_tiny_widths_do_not_crash(self):
-        from quiver.console import elide
-        from quiver.find.commands import PATH_WIDTH
+        from swe.console import elide
+        from swe.find.commands import PATH_WIDTH
 
         for w in (1, 2, 3):
             self.assertLessEqual(len(elide("some/long/path/AGENTS.md", w)), w)
 
     def test_rendered_column_is_the_declared_width(self):
-        from quiver.find.commands import PATH_WIDTH, _rel
+        from swe.find.commands import PATH_WIDTH, _rel
 
         home = Path("/home/u")
         deep = home / ("nested/" * 12) / "AGENTS.md"
@@ -513,8 +513,8 @@ class TreeRenderTest(unittest.TestCase):
     """Paths nest instead of repeating a shared prefix on every row."""
 
     def _rows(self, home: Path, rels):
-        from quiver.find.commands import _build_trie, _collapse, _walk_trie
-        from quiver.find.tree import Node
+        from swe.find.commands import _build_trie, _collapse, _walk_trie
+        from swe.find.tree import Node
 
         nodes = [Node("x", home / r, "file", "unlinked") for r in rels]
         return list(_walk_trie(_collapse(_build_trie(nodes, home, home))))
@@ -590,10 +590,10 @@ class ColumnWidthTest(unittest.TestCase):
     """Elide only when something genuinely overruns the cap."""
 
     def _width(self, home: Path, rels):
-        from quiver.find.commands import (
+        from swe.find.commands import (
             PATH_WIDTH, _build_trie, _collapse, _walk_trie)
 
-        from quiver.find.tree import Node
+        from swe.find.tree import Node
         nodes = [Node("x", home / r, "file", "unlinked") for r in rels]
         rows = list(_walk_trie(_collapse(_build_trie(nodes, home, home))))
         lengths = sorted(len(i + l) for i, l, _ in rows)
@@ -612,7 +612,7 @@ class ColumnWidthTest(unittest.TestCase):
         self.assertEqual(sum(1 for x in lengths if x > width), 0)
 
     def test_one_outlier_does_not_stretch_every_row(self):
-        from quiver.find.commands import PATH_WIDTH
+        from swe.find.commands import PATH_WIDTH
 
         home = Path("/h")
         rels = [f".t{i}/AGENTS.md" for i in range(40)]
@@ -631,7 +631,7 @@ class DeepSkillCountTest(unittest.TestCase):
     """
 
     def test_counts_skills_nested_several_levels_down(self):
-        from quiver.find.tree import count_skills
+        from swe.find.tree import count_skills
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "skills"
@@ -640,7 +640,7 @@ class DeepSkillCountTest(unittest.TestCase):
             self.assertEqual(count_skills(root), 2)
 
     def test_follows_symlinks_into_another_tree(self):
-        from quiver.find.tree import count_skills
+        from swe.find.tree import count_skills
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -651,7 +651,7 @@ class DeepSkillCountTest(unittest.TestCase):
             self.assertEqual(count_skills(root), 1)
 
     def test_a_symlink_loop_does_not_hang(self):
-        from quiver.find.tree import count_skills
+        from swe.find.tree import count_skills
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "skills"
@@ -662,7 +662,7 @@ class DeepSkillCountTest(unittest.TestCase):
     def test_duplicate_names_count_once(self):
         # ~/.pane/skills keeps a fetched copy under .sources beside the
         # expanded one: 155 SKILL.md files for 61 actual skills.
-        from quiver.find.tree import count_skills
+        from swe.find.tree import count_skills
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "skills"
@@ -673,7 +673,7 @@ class DeepSkillCountTest(unittest.TestCase):
     def test_hidden_directories_are_searched(self):
         # Real skills live under dot-directories: .pane/skills/dcouple/parsa/
         # .codex/skills/ and .codex/vendor_imports/skills/skills/.curated/.
-        from quiver.find.tree import count_skills
+        from swe.find.tree import count_skills
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "skills"
@@ -681,7 +681,7 @@ class DeepSkillCountTest(unittest.TestCase):
             self.assertEqual(count_skills(root), 1)
 
     def test_a_root_with_only_nested_skills_is_not_dropped(self):
-        from quiver.find.tree import scan_skill_roots
+        from swe.find.tree import scan_skill_roots
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -690,8 +690,8 @@ class DeepSkillCountTest(unittest.TestCase):
             self.assertIn(home / ".pane" / "skills", found)
 
     def test_find_and_init_report_the_same_number(self):
-        from quiver.find.tree import count_skills
-        from quiver.init.layout import skill_folder_names
+        from swe.find.tree import count_skills
+        from swe.init.layout import skill_folder_names
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "skills"
@@ -700,7 +700,7 @@ class DeepSkillCountTest(unittest.TestCase):
             self.assertEqual(count_skills(root), len(skill_folder_names(root)))
 
     def test_backup_directories_are_not_listed(self):
-        from quiver.find.tree import scan_skill_roots
+        from swe.find.tree import scan_skill_roots
 
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
@@ -720,8 +720,8 @@ class NestedResultTest(unittest.TestCase):
     """
 
     def _rows(self, home: Path, rels):
-        from quiver.find.commands import _build_trie, _collapse, _walk_trie
-        from quiver.find.tree import Node
+        from swe.find.commands import _build_trie, _collapse, _walk_trie
+        from swe.find.tree import Node
 
         nodes = [Node("x", home / r, "dir", "keep") for r in rels]
         return list(_walk_trie(_collapse(_build_trie(nodes, home, home))))

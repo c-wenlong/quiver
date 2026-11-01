@@ -31,7 +31,7 @@ extension SweError: LocalizedError {
 
 /// Talks to `swe … --json`.
 ///
-/// Every reply is `{"schema": N, "data": …}` (see src/quiver/json_output.py).
+/// Every reply is `{"schema": N, "data": …}` (see src/swe/json_output.py).
 /// A schema the app does not know is refused rather than half-decoded.
 public struct SweClient: Sendable {
     public static let supportedSchema = 1

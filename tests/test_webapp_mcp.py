@@ -12,8 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quiver.mcp import cli as mcp_cli
-from quiver.webapp.pages import PageError, mcp
+from swe.mcp import cli as mcp_cli
+from swe.webapp.pages import PageError, mcp
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp import app_js_function
@@ -166,10 +166,10 @@ class TestFolders(unittest.TestCase):
 
 
 def _no_hub_secrets(case):
-    """Keep get()'s secrets join off the real ~/.quiver/mcp.json and
+    """Keep get()'s secrets join off the real ~/.swe/mcp.json and
     secrets store, which these cases don't set up."""
     for p in (patch.object(mcp, "_hub_refs", return_value={}),
-              patch("quiver.mcp.secrets.load_secrets", return_value={})):
+              patch("swe.mcp.secrets.load_secrets", return_value={})):
         p.start()
         case.addCleanup(p.stop)
 
@@ -179,10 +179,10 @@ class TestPayload(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.home, True)
         _no_hub_secrets(self)
-        root = self.home / ".quiver" / "mcp" / "servers" / "custom" / "linear-mcp"
+        root = self.home / ".swe" / "mcp" / "servers" / "custom" / "linear-mcp"
         root.mkdir(parents=True)
         (root / "package.json").write_text("{}")
-        self.servers_root = self.home / ".quiver" / "mcp" / "servers"
+        self.servers_root = self.home / ".swe" / "mcp" / "servers"
 
     def test_rows_carry_a_summary_not_the_command_line(self):
         with patch.object(mcp, "inventory", return_value=(["claude", "codex"], _pairs(self.servers_root))), \
@@ -215,7 +215,7 @@ class TestPayload(unittest.TestCase):
 
     def test_health_only_when_asked(self):
         with patch.object(mcp, "inventory", return_value=(["claude"], _pairs())), \
-                patch("quiver.mcp.cli.probe_server_health",
+                patch("swe.mcp.cli.probe_server_health",
                       side_effect=[("ok", None), ("error", "url unreachable")]) as probe:
             body = mcp.get(_ctx(self.home), {"health": "1"})
         self.assertEqual(probe.call_count, 2)
@@ -240,7 +240,7 @@ class TestPayload(unittest.TestCase):
                 release.wait(5)
             return "ok", None
 
-        with patch("quiver.mcp.cli.probe_server_health", side_effect=slow):
+        with patch("swe.mcp.cli.probe_server_health", side_effect=slow):
             results = mcp.probe_all(_pairs(), deadline=0.3)
         self.assertEqual(results, [("ok", None), ("unknown", "check timed out")])
 
@@ -249,12 +249,12 @@ class TestPayload(unittest.TestCase):
             "claude": {"linear": {"command": "node", "args": ["a.js"], "env": {"LINEAR_API_KEY": SECRET}}},
             "cursor": {"linear": {"command": "node", "args": ["b.js"]}},
         }
-        with patch("quiver.harness.registry.load_registry_readonly", return_value={"claude": {}, "cursor": {}}), \
-                patch("quiver.mcp.cli.get_mcp_tools", return_value={"claude": {}, "cursor": {}}), \
-                patch("quiver.mcp.cli._display_tools", side_effect=lambda tools: tools), \
-                patch("quiver.mcp.cli.get_tool_servers", side_effect=lambda name: tool_data[name]), \
-                patch("quiver.mcp.cli.get_hub_servers", return_value={}), \
-                patch("quiver.mcp.inventory.load_secrets", return_value={}):
+        with patch("swe.harness.registry.load_registry_readonly", return_value={"claude": {}, "cursor": {}}), \
+                patch("swe.mcp.cli.get_mcp_tools", return_value={"claude": {}, "cursor": {}}), \
+                patch("swe.mcp.cli._display_tools", side_effect=lambda tools: tools), \
+                patch("swe.mcp.cli.get_tool_servers", side_effect=lambda name: tool_data[name]), \
+                patch("swe.mcp.cli.get_hub_servers", return_value={}), \
+                patch("swe.mcp.inventory.load_secrets", return_value={}):
             harnesses, pairs = mcp.inventory()
         self.assertEqual(harnesses, ["claude", "cursor"])
         row = pairs[0][0]
@@ -271,7 +271,7 @@ class TestRoute(HubBase):
     def test_needs_a_device_and_returns_the_inventory(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/mcp")[0], 401)
         with patch.object(mcp, "inventory", return_value=(["claude"], _pairs())), \
-                patch("quiver.mcp.cli.probe_server_health") as probe:
+                patch("swe.mcp.cli.probe_server_health") as probe:
             status, data = self.srv.request("GET", "/v1/app/mcp", headers=self.auth())
         self.assertEqual(status, 200, data)
         probe.assert_not_called()
@@ -282,7 +282,7 @@ class TestRoute(HubBase):
 
     def test_health_query_probes(self):
         with patch.object(mcp, "inventory", return_value=(["claude"], _pairs())), \
-                patch("quiver.mcp.cli.probe_server_health", return_value=("ok", None)):
+                patch("swe.mcp.cli.probe_server_health", return_value=("ok", None)):
             status, data = self.srv.request("GET", "/v1/app/mcp?health=1", headers=self.auth())
         self.assertEqual(status, 200, data)
         self.assertEqual({s["health"] for s in json.loads(data)["servers"]}, {"ok"})
@@ -308,7 +308,7 @@ class _SyncHome:
                       "label": "Codex", "format": "standard", "io_type": "toml_region"},
         }
         self.claude, self.cursor, self.codex = (cmap[n]["path"] for n in ("claude", "cursor", "codex"))
-        self.hub = self.home / ".quiver" / "mcp.json"
+        self.hub = self.home / ".swe" / "mcp.json"
         self.hub.parent.mkdir(parents=True)
         self.cursor.parent.mkdir()
         self.codex.parent.mkdir()
@@ -330,7 +330,7 @@ class _SyncHome:
             patch.object(mcp_cli, "MCP_CONFIG_MAP", cmap),
             patch.object(mcp_cli, "MCP_SOURCE_FILE", self.hub),
             patch.object(mcp_cli, "_load_registry", return_value=REGISTRY),
-            patch("quiver.harness.registry.load_registry_readonly", return_value=REGISTRY),
+            patch("swe.harness.registry.load_registry_readonly", return_value=REGISTRY),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -340,7 +340,7 @@ class _SyncHome:
                 for p in (self.claude, self.cursor, self.codex, self.hub)}
 
     def set_secret(self, name, value):
-        path = self.home / ".quiver" / "secrets" / "mcp" / ".api_keys"
+        path = self.home / ".swe" / "secrets" / "mcp" / ".api_keys"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"export {name}={value}\n")
 
@@ -608,7 +608,7 @@ class TestSecrets(_SyncHome, unittest.TestCase):
         reply = mcp.post(_ctx(), "secret_set", {"name": "NOTION_TOKEN", "value": f"  {self.TOKEN}\n"})
         self.assertNotIn(self.TOKEN, json.dumps(reply))
         self.assertTrue(self.notion(reply["page"])["secrets"][0]["set"])
-        from quiver.mcp.secrets import load_secrets
+        from swe.mcp.secrets import load_secrets
         self.assertEqual(load_secrets()["NOTION_TOKEN"], self.TOKEN)
 
     def test_value_answers_one_set_secret(self):
@@ -633,7 +633,7 @@ class TestSecrets(_SyncHome, unittest.TestCase):
             self.assertNotIn("zz_secretvalue", caught.exception.message)
 
     def test_mask_matches_the_mac_apps(self):
-        from quiver.webapp.pages._secrets import mask
+        from swe.webapp.pages._secrets import mask
         self.assertEqual(mask(""), "")
         self.assertEqual(mask("short"), "••••••••")
         self.assertEqual(mask("sk-ant-api03-abcdefghijWXYZ"), "sk-ant-••••••••WXYZ")
@@ -715,7 +715,7 @@ class TestAdd(_SyncHome, unittest.TestCase):
 
     def refused(self, **body):
         before = self.snapshot()
-        store = self.home / ".quiver" / "secrets" / "mcp" / ".api_keys"
+        store = self.home / ".swe" / "secrets" / "mcp" / ".api_keys"
         had = store.read_bytes() if store.exists() else None
         with self.assertRaises(PageError) as caught:
             self.add(**body)
@@ -736,7 +736,7 @@ class TestAdd(_SyncHome, unittest.TestCase):
         hub = json.loads(self.hub.read_text())["mcpServers"]["github"]
         self.assertEqual(hub, {"command": "npx", "args": ["-y", "server-github"],
                                "env": {"GITHUB_TOKEN": "${GITHUB_GITHUB_TOKEN}", "DEBUG": "1"}})
-        from quiver.mcp.secrets import load_secrets
+        from swe.mcp.secrets import load_secrets
         self.assertEqual(load_secrets()["GITHUB_GITHUB_TOKEN"], self.TOKEN)
         claude = json.loads(self.claude.read_text())["mcpServers"]["github"]
         self.assertEqual(claude["env"]["GITHUB_TOKEN"], self.TOKEN)
@@ -772,7 +772,7 @@ class TestAdd(_SyncHome, unittest.TestCase):
         self.assertEqual((error.status, error.code), (422, "secret_clash"))
 
     def test_a_failed_add_puts_the_secret_store_back(self):
-        from quiver.mcp.secrets import load_secrets, set_secret
+        from swe.mcp.secrets import load_secrets, set_secret
         set_secret("KEPT_API_KEY", "old-value-00000000")
         before = load_secrets()
         vars_ = [{"key": "API_KEY", "value": self.TOKEN, "secret": True},
@@ -786,7 +786,7 @@ class TestAdd(_SyncHome, unittest.TestCase):
                 self.assertEqual(load_secrets(), before)
 
     def test_a_failed_secret_write_puts_the_earlier_ones_back(self):
-        from quiver.mcp import secrets
+        from swe.mcp import secrets
         real = secrets.set_secret
         calls = []
 
@@ -805,7 +805,7 @@ class TestAdd(_SyncHome, unittest.TestCase):
         self.assertEqual(secrets.load_secrets(), {})
 
     def test_secrets_stay_when_the_hub_was_written_before_a_harness_failed(self):
-        from quiver.mcp.secrets import load_secrets
+        from swe.mcp.secrets import load_secrets
         real = mcp_cli.add_server
 
         def hub_then_fail(name, canonical, targets, **kw):
@@ -820,7 +820,7 @@ class TestAdd(_SyncHome, unittest.TestCase):
         self.assertEqual(load_secrets()["HALF_API_KEY"], self.TOKEN)
 
     def test_cleanup_leaves_a_value_that_changed_since(self):
-        from quiver.mcp.secrets import load_secrets, set_secret
+        from swe.mcp.secrets import load_secrets, set_secret
 
         def someone_else_then_fail(*a, **kw):
             set_secret("RACE_API_KEY", "written-by-another-0")
@@ -842,7 +842,7 @@ class TestAdd(_SyncHome, unittest.TestCase):
         # Replacing the same server may change its own value.
         self.add(name="a-b", kind="command", command=["x"], targets=[], force=True,
                  vars=[{"key": "TOKEN", "value": "second-value-000", "secret": True}])
-        from quiver.mcp.secrets import load_secrets
+        from swe.mcp.secrets import load_secrets
         self.assertEqual(load_secrets()["A_B_TOKEN"], "second-value-000")
 
     def test_a_bearer_token_is_a_stored_secret_in_the_header(self):
@@ -852,7 +852,7 @@ class TestAdd(_SyncHome, unittest.TestCase):
         hub = json.loads(self.hub.read_text())["mcpServers"]["lin"]
         self.assertEqual(hub, {"url": "https://mcp.linear.app/mcp",
                                "headers": {"Authorization": "Bearer ${LIN_TOKEN}"}})
-        from quiver.mcp.secrets import load_secrets
+        from swe.mcp.secrets import load_secrets
         self.assertEqual(load_secrets()["LIN_TOKEN"], self.TOKEN)
         claude = json.loads(self.claude.read_text())["mcpServers"]["lin"]
         self.assertEqual(claude["headers"]["Authorization"], f"Bearer {self.TOKEN}")
@@ -929,9 +929,9 @@ class TestRemove(_SyncHome, unittest.TestCase):
         self.assertEqual(list(json.loads(self.cursor.read_text())["mcpServers"]), ["keep"])
         self.assertNotIn("linear", [s["name"] for s in reply["page"]["servers"]])
 
-    def test_the_hub_is_quiver(self):
+    def test_the_hub_is_swe(self):
         reply = self.remove(server="notion", **{"from": ["quiver"]})
-        self.assertEqual(reply["removed"], ["quiver"])
+        self.assertEqual(reply["removed"], ["swe"])
         self.assertEqual(json.loads(self.hub.read_text())["mcpServers"], {})
 
     def test_a_place_left_off_the_confirm_keeps_it(self):
@@ -1039,7 +1039,7 @@ class TestLeavingForgetsSecrets(unittest.TestCase):
     draft and the values a server's sheet revealed or had typed in."""
 
     def test_leaving_drops_the_add_draft_and_revealed_values(self):
-        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/mcp.js"
+        page = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/mcp.js"
         prelude = (
             "const listeners = [];\n"
             "globalThis.window = { addEventListener(t, f) { if (t === 'hashchange') listeners.push(f); } };\n"

@@ -12,8 +12,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import quote
 
-from quiver.webapp.pages import PageError
-from quiver.webapp.pages import skills as page
+from swe.webapp.pages import PageError
+from swe.webapp.pages import skills as page
 
 from tests.test_remote_hub import HubBase
 from tests.test_webapp import app_js_function
@@ -71,7 +71,7 @@ class TestPlacement(unittest.TestCase):
         own = _skill("lint", plugin / "skills" / "lint", source="plugin", harnesses=["claude"])
         loose = _skill("stray", base / "elsewhere", source="plugin", harnesses=["claude"])
         mine = _skill("tdd", base / "mine")
-        with patch("quiver.plugins.catalog.build_catalog", return_value=_catalog(plugin)):
+        with patch("swe.plugins.catalog.build_catalog", return_value=_catalog(plugin)):
             placed, moved, error = page.placement([own, loose, mine], base)
         self.assertEqual([s["plugin"] for s in placed], ["tools@market", None, None])
         self.assertEqual((moved, error), (1, None))
@@ -79,11 +79,11 @@ class TestPlacement(unittest.TestCase):
     def test_placement_reuses_the_plugins_pages_catalog(self):
         # build_catalog walks every marketplace: one read serves both
         # pages until it expires or a plugin change drops it.
-        from quiver.webapp.pages import plugins
+        from swe.webapp.pages import plugins
         base = Path(tempfile.mkdtemp())
         self.addCleanup(plugins.clear_cache)
         skills = [_skill("lint", base / "lint", source="plugin")]
-        with patch("quiver.plugins.catalog.build_catalog",
+        with patch("swe.plugins.catalog.build_catalog",
                    return_value={"marketplaces": []}) as build:
             page.placement(skills, base)
             page.placement(skills, base)
@@ -94,7 +94,7 @@ class TestPlacement(unittest.TestCase):
 
     def test_unreadable_catalog_keeps_every_skill(self):
         skills = [_skill("lint", "/x/lint", source="plugin")]
-        with patch("quiver.plugins.catalog.build_catalog", side_effect=ValueError("bad json")):
+        with patch("swe.plugins.catalog.build_catalog", side_effect=ValueError("bad json")):
             placed, moved, error = page.placement(skills, Path("/x"))
         self.assertEqual((placed, moved, error), ([{**skills[0], "plugin": None}], 0, "bad json"))
 
@@ -147,8 +147,8 @@ class TestDetail(unittest.TestCase):
         self.assertIn("hooks", names)
 
     def test_editable_only_under_quiver_outside_cache(self):
-        self.assertTrue(page.editable(str(self.home / ".quiver" / "skills" / "x"), self.home))
-        self.assertFalse(page.editable(str(self.home / ".quiver" / "cache" / "x"), self.home))
+        self.assertTrue(page.editable(str(self.home / ".swe" / "skills" / "x"), self.home))
+        self.assertFalse(page.editable(str(self.home / ".swe" / "cache" / "x"), self.home))
         self.assertFalse(page.editable(str(self.root), self.home))
 
     def test_file_view_stays_inside_the_folder(self):
@@ -194,7 +194,7 @@ class TestPageScripts(unittest.TestCase):
 
 
 def pages_dir():
-    from quiver.webapp import pages
+    from swe.webapp import pages
     return pages.STATIC
 
 
@@ -202,19 +202,19 @@ class TestRoute(HubBase):
     def setUp(self):
         super().setUp()
         self.inventory = {
-            "shared_dir": str(self.srv.home / ".quiver" / "skills"),
+            "shared_dir": str(self.srv.home / ".swe" / "skills"),
             "harnesses": [{"name": "claude", "label": "claude", "path": "/c", "state": "linked",
                            "detail": "", "archived": False}],
             "skills": [_skill("lint", "/p/lint", source="plugin", harnesses=["claude"]),
                        _skill("tdd", "/h/tdd")],
         }
-        patcher = patch("quiver.skills.inventory.installed_skills", return_value=self.inventory)
+        patcher = patch("swe.skills.inventory.installed_skills", return_value=self.inventory)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def test_needs_a_device_and_lists_standalone_skills(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/skills")[0], 401)
-        with patch("quiver.plugins.catalog.build_catalog", return_value=_catalog("/p")):
+        with patch("swe.plugins.catalog.build_catalog", return_value=_catalog("/p")):
             status, data = self.srv.request("GET", "/v1/app/skills", headers=self.auth())
         self.assertEqual(status, 200, data)
         body = json.loads(data)
@@ -243,7 +243,7 @@ def _skills_home(home: Path) -> Path:
     codex has none yet (create), claude holds a skill found nowhere else
     (keep), cursor holds a copy of the shared one (absorb, needs --force)
     and kilo an empty folder (absorb, empty)."""
-    shared = home / ".quiver" / "skills" / "tdd"
+    shared = home / ".swe" / "skills" / "tdd"
     shared.mkdir(parents=True)
     (shared / "SKILL.md").write_text("---\nname: tdd\ndescription: Test first\n---\n")
     (home / ".codex").mkdir()
@@ -263,13 +263,13 @@ class _WriteHome:
     def make_home(self, home: Path):
         self.home = home
         self.shared = _skills_home(home)
-        self.records = home / ".quiver" / "config" / "skill_links.json"
-        for target, value in (("quiver.skills.layout.SKILL_LINKS_FILE", self.records),
-                              ("quiver.skills.layout.CONFIG_DIR", self.records.parent)):
+        self.records = home / ".swe" / "config" / "skill_links.json"
+        for target, value in (("swe.skills.layout.SKILL_LINKS_FILE", self.records),
+                              ("swe.skills.layout.CONFIG_DIR", self.records.parent)):
             patcher = patch(target, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        catalog = patch("quiver.plugins.catalog.build_catalog", return_value={"marketplaces": []})
+        catalog = patch("swe.plugins.catalog.build_catalog", return_value={"marketplaces": []})
         catalog.start()
         self.addCleanup(catalog.stop)
 
@@ -316,9 +316,9 @@ class TestWrites(_WriteHome, unittest.TestCase):
         (macOS's /var -> /private/var) still names the skill."""
         alias = Path(self.enterContext(tempfile.TemporaryDirectory())) / "home"
         alias.symlink_to(self.home)
-        reply = self.post("link", {"harness": self.path("codex"), "skill": str(alias / ".quiver" / "skills" / "tdd")})
+        reply = self.post("link", {"harness": self.path("codex"), "skill": str(alias / ".swe" / "skills" / "tdd")})
         self.assertEqual(reply["skill"]["path"], os.path.realpath(self.shared))
-        detail = page.get(self.ctx, {"skill": str(alias / ".quiver" / "skills" / "tdd")})
+        detail = page.get(self.ctx, {"skill": str(alias / ".swe" / "skills" / "tdd")})
         self.assertEqual(detail["skill"]["path"], os.path.realpath(self.shared))
 
     def test_a_symlink_to_a_folder_off_the_list_is_still_unknown(self):
@@ -356,7 +356,7 @@ class TestWrites(_WriteHome, unittest.TestCase):
     def test_copies_of_shared_skills_are_backed_up_then_linked(self):
         reply = self.post("link", {"harness": self.path("cursor"), "expect": "absorb"})
         self.assertEqual(self.states(reply)["cursor"], "linked")
-        backups = list((self.home / ".quiver" / "backups").iterdir())
+        backups = list((self.home / ".swe" / "backups").iterdir())
         self.assertEqual(len(backups), 1)
         self.assertTrue((backups[0] / "tdd" / "SKILL.md").is_file())
 
@@ -387,7 +387,7 @@ class TestWrites(_WriteHome, unittest.TestCase):
         self.assertEqual((err.status, err.code), (409, "state_changed"))
         self.assertIn("Linking backs it up", err.message)
         self.assertFalse(kilo.is_symlink())
-        self.assertFalse((self.home / ".quiver" / "backups").exists())
+        self.assertFalse((self.home / ".swe" / "backups").exists())
         reply = self.post("link", {"harness": str(kilo), "expect": "absorb",
                                    "expect_detail": "1 skills, all already shared"})
         self.assertEqual(reply["harness"]["state"], "linked")
@@ -424,7 +424,7 @@ class TestWrites(_WriteHome, unittest.TestCase):
         states = self.states(reply)
         self.assertEqual((states["codex"], states["kilo"], states["claude"], states["cursor"]),
                          ("linked", "linked", "keep", "absorb"))
-        self.assertFalse((self.home / ".quiver" / "backups").exists())
+        self.assertFalse((self.home / ".swe" / "backups").exists())
         self.assertIn("kilo", reply["skill"]["harnesses"])
 
     def test_link_all_only_links_the_folders_the_confirm_named(self):
@@ -443,7 +443,7 @@ class TestWrites(_WriteHome, unittest.TestCase):
         self.assertFalse(os.path.lexists(gone))
 
     def test_archived_folders_are_left_out_of_link_all_but_link_on_a_click(self):
-        config = self.home / ".quiver" / "config"
+        config = self.home / ".swe" / "config"
         config.mkdir(parents=True, exist_ok=True)
         (config / "harness.json").write_text(json.dumps({"codex": {"state": "archived"}}))
         reply = self.post("link_all", {})
@@ -457,7 +457,7 @@ class TestWrites(_WriteHome, unittest.TestCase):
     def test_refusals_for_bad_input(self):
         for action, body, status, code in (
             ("link", {"harness": "/etc"}, 404, "unknown_harness"),
-            ("link", {"harness": str(self.home / ".quiver" / "skills")}, 404, "unknown_harness"),
+            ("link", {"harness": str(self.home / ".swe" / "skills")}, 404, "unknown_harness"),
             ("link", {}, 422, "bad_harness"),
             ("link", {"harness": 3}, 422, "bad_harness"),
             ("link", {"harness": self.path("codex"), "expect": 1}, 422, "bad_expect"),
@@ -480,7 +480,7 @@ class TestWrites(_WriteHome, unittest.TestCase):
 
 
 class TestNewSkill(_WriteHome, unittest.TestCase):
-    """New skill: swe skills new, writing ~/.quiver/skills/<name>/SKILL.md."""
+    """New skill: swe skills new, writing ~/.swe/skills/<name>/SKILL.md."""
 
     def setUp(self):
         self.make_home(Path(tempfile.mkdtemp()))
@@ -488,7 +488,7 @@ class TestNewSkill(_WriteHome, unittest.TestCase):
 
     def test_writes_the_skeleton_and_lists_it(self):
         reply = page.post(self.ctx, "new", {"name": "review-pr", "description": "When a PR needs review"})
-        target = self.home / ".quiver" / "skills" / "review-pr" / "SKILL.md"
+        target = self.home / ".swe" / "skills" / "review-pr" / "SKILL.md"
         self.assertEqual(reply["created"], str(target))
         text = target.read_text()
         self.assertIn("name: 'review-pr'", text)
@@ -499,7 +499,7 @@ class TestNewSkill(_WriteHome, unittest.TestCase):
 
     def test_a_blank_description_takes_the_default(self):
         page.post(self.ctx, "new", {"name": "plain", "description": "  "})
-        text = (self.home / ".quiver" / "skills" / "plain" / "SKILL.md").read_text()
+        text = (self.home / ".swe" / "skills" / "plain" / "SKILL.md").read_text()
         self.assertIn("Describe when an agent should use this skill.", text)
 
     def test_refusals_say_why(self):
@@ -513,7 +513,7 @@ class TestNewSkill(_WriteHome, unittest.TestCase):
                 page.post(self.ctx, "new", body)
             self.assertEqual((refused.exception.status, refused.exception.code), (422, "bad_skill"), body)
             self.assertIn(words, refused.exception.message, body)
-        self.assertFalse((self.home / ".quiver" / "skills" / "x").exists())
+        self.assertFalse((self.home / ".swe" / "skills" / "x").exists())
 
 
 class TestExplanation(unittest.TestCase):
@@ -566,11 +566,11 @@ class TestWriteRoute(_WriteHome, HubBase):
         status, data = self.srv.request("POST", "/v1/app/skills/new", body={"name": "hub-skill"},
                                         headers={**self.auth(), "Origin": self.origin()})
         self.assertEqual(status, 200, data)
-        self.assertTrue((self.srv.home / ".quiver" / "skills" / "hub-skill" / "SKILL.md").is_file())
+        self.assertTrue((self.srv.home / ".swe" / "skills" / "hub-skill" / "SKILL.md").is_file())
         status, _ = self.srv.request("POST", "/v1/app/skills/new", body={"name": "evil"},
                                      headers={**self.auth(), "Origin": "https://evil.example"})
         self.assertEqual(status, 403)
-        self.assertFalse((self.srv.home / ".quiver" / "skills" / "evil").exists())
+        self.assertFalse((self.srv.home / ".swe" / "skills" / "evil").exists())
 
     def test_a_cross_site_origin_is_refused(self):
         status, data = self.srv.request("POST", "/v1/app/skills/link_all", body={},
@@ -607,7 +607,7 @@ class TestFileSheetReplies(unittest.TestCase):
     after the same file name in skill B was opened."""
 
     def test_a_late_reply_for_another_opening_is_dropped(self):
-        script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/skills.js"
+        script = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/skills.js"
         prelude = (
             (script.parents[1] / "format.js").read_text(encoding="utf-8") + "\n"
             "const esc = (s) => String(s); function registerPage() {}\n"
@@ -635,7 +635,7 @@ class TestFileSheetFailures(unittest.TestCase):
     unreachable hub says so instead of "The hub answered 0."."""
 
     def read_file(self, reply):
-        script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/skills.js"
+        script = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/skills.js"
         prelude = (
             (script.parents[1] / "format.js").read_text(encoding="utf-8") + "\n"
             "const esc = (s) => String(s); function registerPage() {}\n"

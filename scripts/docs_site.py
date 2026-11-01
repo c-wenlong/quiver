@@ -31,10 +31,10 @@ SOURCES = {
 # Titles and descriptions for the rendered <head>; "cli" has no source
 # file because it is generated from `swe help`.
 TITLES = {
-    "overview": ("Documentation — quiver", "Install, configure and use quiver."),
-    "cli": ("CLI reference — quiver", "Every swe command and flag."),
-    "changelog": ("Changelog — quiver", "Notable changes to quiver."),
-    "contributing": ("Contributing — quiver", "How to work on quiver."),
+    "overview": ("Documentation — swe", "Install, configure and use swe."),
+    "cli": ("CLI reference — swe", "Every swe command and flag."),
+    "changelog": ("Changelog — swe", "Notable changes to swe."),
+    "contributing": ("Contributing — swe", "How to work on swe."),
 }
 
 # Repo files a staged page may link to that are copied into the site as-is.
@@ -63,7 +63,7 @@ def strip_ansi(text: str) -> str:
 def cli_page(root: Path) -> str:
     """The `swe help` output rendered as one page, one H3 per command."""
     sys.path.insert(0, str(root / "src"))
-    from quiver.help_text import COMMAND_CATEGORIES, HELP  # noqa: PLC0415
+    from swe.help_text import COMMAND_CATEGORIES, HELP  # noqa: PLC0415
 
     out = ["# CLI reference", "",
            "> Generated from `swe help` by `scripts/docs_site.py` — do not edit.",
@@ -239,7 +239,7 @@ def _nav() -> str:
     return """<header class="top">
   <div class="wrap">
     <nav>
-      <a class="brand" href="../"><img src="../icon.png" alt="">quiver</a>
+      <a class="brand" href="../"><img src="../logo-rounded.svg" alt="">swe</a>
       <div class="links">
         <a href="../overview/">Docs</a>
         <a href="../cli/">CLI reference</a>
@@ -261,7 +261,7 @@ _GH_SVG = ('<svg width="0" height="0" style="position:absolute" aria-hidden="tru
 
 def _footer() -> str:
     return """<footer>
-  <span>quiver is MIT licensed.</span>
+  <span>swe is MIT licensed.</span>
   <div class="right">
     <a href="../overview/">Docs</a>
     <a href="../changelog/">Changelog</a>
@@ -330,7 +330,10 @@ def render_page(slug: str, body_html: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <meta name="description" content="{desc}">
-<link rel="icon" href="../icon.png">
+<link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="../favicon-32.png" type="image/png" sizes="32x32">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">

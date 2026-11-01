@@ -3,7 +3,7 @@ import Foundation
 /// Reads the status pages politely: each page at most every five minutes
 /// (one minute for a manual refresh), conditional requests so an unchanged
 /// page costs a 304, and a provider's `Retry-After` honoured. Readings are
-/// kept in a cache file under ~/.quiver/cache so a relaunch does not poll
+/// kept in a cache file under ~/.swe/cache so a relaunch does not poll
 /// again, and a reading older than an hour is never shown as current.
 public actor ServiceStatusService {
     /// The answer to "can Quiver read this page": the page URL it finally

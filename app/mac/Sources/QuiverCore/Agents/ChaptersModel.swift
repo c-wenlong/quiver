@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// Text edits on `~/.quiver/AGENTS_MD/index.txt`, kept pure so the model
+/// Text edits on `~/.swe/AGENTS_MD/index.txt`, kept pure so the model
 /// applies them through an InstructionDocument and its conflict checks.
 ///
 /// The file is an ordered list: one relative .md path per line, blank
@@ -87,7 +87,7 @@ public enum ChapterIndex {
 }
 
 /// The chapter-based way of editing the shared AGENTS.md: an ordered list
-/// of `~/.quiver/AGENTS_MD/*.md` files compiled by `swe instructions build`.
+/// of `~/.swe/AGENTS_MD/*.md` files compiled by `swe instructions build`.
 ///
 /// Edits land in the chapter files through InstructionDocument; order,
 /// add and remove edits land in index.txt the same way, so a watcher or
@@ -295,7 +295,7 @@ public final class ChaptersModel {
         buildError = nil
         do {
             buildNote = try await swe.instructionsBuild()
-                ? "Rebuilt ~/.quiver/AGENTS.md" : "Already current"
+                ? "Rebuilt ~/.swe/AGENTS.md" : "Already current"
         } catch {
             buildNote = nil
             buildError = error.localizedDescription

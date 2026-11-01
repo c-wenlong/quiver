@@ -11,8 +11,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from quiver.remote import protocol, supervise
-from quiver.sessions.models import Session
+from swe.remote import protocol, supervise
+from swe.sessions.models import Session
 
 from tests._tempdir import temp_dir
 
@@ -652,7 +652,7 @@ class TestAdoptPending(unittest.TestCase):
         transcript = proj / "sess.jsonl"
         transcript.write_text("{}\n")
         rows = [(protocol.session_key("claude", "s1", str(proj)), sess, "active")]
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=transcript):
             adopted = supervise.adopt_pending(self.home, rows)
         self.assertEqual(len(adopted), 1)
@@ -680,7 +680,7 @@ class TestAdoptPending(unittest.TestCase):
             ("opencode:stale", oc("stale", now - 600), "done"),
             ("opencode:new", oc("new", now + 3), "active"),
         ]
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=None):
             self.assertEqual(supervise.adopt_pending(self.home, rows),
                              ["opencode:new"])
@@ -719,7 +719,7 @@ class TestAdoptPending(unittest.TestCase):
         ]
         transcript = proj / "t.jsonl"
         transcript.write_text("{}\n")
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=transcript):
             self.assertEqual(supervise.adopt_pending(self.home, rows), [])
         self.assertTrue((folder / "qv-new.json").exists())
@@ -746,7 +746,7 @@ class TestAdoptPending(unittest.TestCase):
         )
         transcript = MagicMock()
         transcript.stat.return_value = fake_stat
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=transcript):
             self.assertEqual(supervise.adopt_pending(self.home, rows), [])
         self.assertTrue((folder / "qv-new.json").exists())  # stays pending
@@ -766,7 +766,7 @@ class TestAdoptPending(unittest.TestCase):
                  _session(path=str(proj)), "done")]
         transcript = proj / "t.jsonl"
         transcript.write_text("{}\n")  # created now — mtime alone would pass
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=transcript):
             self.assertEqual(supervise.adopt_pending(self.home, rows), [])
 
@@ -806,7 +806,7 @@ class TestAdoptPending(unittest.TestCase):
         rows = [(key, _session(path=str(proj)), "active")]
         transcript = proj / "t.jsonl"
         transcript.write_text("{}\n")
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=transcript):
             self.assertEqual(supervise.adopt_pending(self.home, rows), [])
         self.assertTrue((folder / "qv-new.json").exists())  # stays pending
@@ -1099,7 +1099,7 @@ class TestLaunchTuning(unittest.TestCase):
         # harness.json wins over the fallback either way.
         reg = {"gemini": {"capabilities": {"yolo": {"argv": ["--yes-all"]}}},
                "claude": {"capabilities": {"yolo": {"supported": False}}}}
-        with patch("quiver.harness.registry.load_registry_readonly",
+        with patch("swe.harness.registry.load_registry_readonly",
                    return_value=reg):
             (ok, _n, _), _pp, _st = self._launch("gemini", yolo=True)
             self.assertTrue(ok)
@@ -1517,7 +1517,7 @@ class TestAttachMtime(unittest.TestCase):
     def test_fresh_transcript_refused(self):
         fresh = temp_dir(self) / "live.jsonl"
         fresh.write_text("{}\n")  # mtime = now
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=fresh), \
              patch.object(supervise, "_stop_local_writers"):
             ok, note = supervise.attach(
@@ -1533,7 +1533,7 @@ class TestAttachMtime(unittest.TestCase):
         import os
         stale = time.time() - 3600
         os.utime(old, (stale, stale))
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=old), \
              patch("shutil.which", return_value="/x/claude"), \
              patch.object(supervise, "_stop_local_writers"):
@@ -1552,7 +1552,7 @@ class TestAttachMtime(unittest.TestCase):
         import os
         stale = time.time() - 3600
         os.utime(old, (stale, stale))
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=old), \
              patch.object(supervise, "launch_tmux",
                           return_value=None) as launch, \
@@ -1595,7 +1595,7 @@ class TestAttachMtime(unittest.TestCase):
         stale = time.time() - 3600
         os.utime(old, (stale, stale))
         order = []
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=old), \
              patch.object(supervise, "launch_tmux",
                           side_effect=lambda *a, **k: order.append(
@@ -1624,7 +1624,7 @@ class TestAttachMtime(unittest.TestCase):
         import os
         stale = time.time() - 3600
         os.utime(old, (stale, stale))
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=old), \
              patch.object(supervise, "launch_tmux", return_value="qv-new"), \
              patch.object(supervise, "boot_pane", return_value="❯") as boot, \
@@ -1648,7 +1648,7 @@ class TestAttachMtime(unittest.TestCase):
         import os
         stale = time.time() - 3600
         os.utime(old, (stale, stale))
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=old), \
              patch.object(supervise, "launch_tmux", return_value="qv-new"), \
              patch.object(supervise, "boot_pane", return_value=None), \
@@ -1673,7 +1673,7 @@ class TestAttachMtime(unittest.TestCase):
         stale = time.time() - 3600
         os.utime(old, (stale, stale))
         live = [111]
-        with patch("quiver.remote.tail.resolve_jsonl_path",
+        with patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=old), \
              patch.object(supervise, "_local_writer_pids",
                           side_effect=lambda _s: list(live)), \
@@ -1786,7 +1786,7 @@ class TestResolveMode(unittest.TestCase):
         home = temp_dir(self)
         session = _session(sid="abc")
         with patch("shutil.which", return_value=None), \
-             patch("quiver.remote.tail.resolve_jsonl_path",
+             patch("swe.remote.tail.resolve_jsonl_path",
                    return_value=None):
             ok, note = supervise.attach(
                 home, "claude:abc", session,

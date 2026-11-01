@@ -6,9 +6,9 @@ macOS (libproc, IOKit, the SMC); the hub is usually Linux, so the web page
 keeps the Mac page's layout and meaning and reads Linux's own sources.
 Stdlib only.
 
-Code: `src/quiver/webapp/compute.py` (sampler, attribution, meters,
-history), `src/quiver/webapp/pages/compute.py` (the route),
-`src/quiver/webapp/static/pages/compute.{js,css}` (the page).
+Code: `src/swe/webapp/compute.py` (sampler, attribution, meters,
+history), `src/swe/webapp/pages/compute.py` (the route),
+`src/swe/webapp/static/pages/compute.{js,css}` (the page).
 
 ## What it shows
 
@@ -168,7 +168,7 @@ history again, as an app relaunch does.
   Everything else the sheet holds (the badge and flag thresholds, the
   tab, the interval, the temperature lines) is per-browser display state.
 - **Fan control is Mac only.** The fan button and its popover write the
-  SMC through Quiver's privileged helper on a Mac; there is no Linux
+  SMC through SWE's privileged helper on a Mac; there is no Linux
   counterpart, so the page has no fan button and no "Fans up above"
   threshold line. Fan readings still shade the Temperature chart when
   hwmon reports them.

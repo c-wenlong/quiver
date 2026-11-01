@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from quiver.remote import launchd
+from swe.remote import launchd
 
 from tests._tempdir import temp_dir
 
@@ -25,7 +25,7 @@ class FakeLaunchctl:
 class LaunchdTest(unittest.TestCase):
     def setUp(self):
         self.home = temp_dir(self)
-        self.log = self.home / ".quiver" / "data" / "remote" / "serve.log"
+        self.log = self.home / ".swe" / "data" / "remote" / "serve.log"
 
     def test_install_writes_a_keepalive_agent_and_loads_it(self):
         run = FakeLaunchctl(fail={"bootout"})  # not loaded yet: normal

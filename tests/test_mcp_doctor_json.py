@@ -5,7 +5,7 @@ prints one ``{"schema": 1, "data": ...}`` document and nothing else. These
 run the real CLI against a throwaway HOME with fixture harness configs.
 
 MCP configs carry API keys in ``env`` and ``headers``, and the hub keeps
-``${REF}`` placeholders that resolve from ``~/.quiver/secrets/mcp/.api_keys``.
+``${REF}`` placeholders that resolve from ``~/.swe/secrets/mcp/.api_keys``.
 Nothing here may ever put a secret value on stdout.
 """
 
@@ -21,10 +21,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from quiver.harness.commands import cmd_doctor
-from quiver.harness.drift import Finding
-from quiver.console import strip_ansi
-from quiver.harness.path_health import NodeEnv, OffPathHit
+from swe.harness.commands import cmd_doctor
+from swe.harness.drift import Finding
+from swe.console import strip_ansi
+from swe.harness.path_health import NodeEnv, OffPathHit
 
 try:  # `unittest discover -s tests` puts tests/ itself on sys.path
     from test_json_output import decode, run_swe, write_registry
@@ -387,12 +387,12 @@ class McpListSecretSafetyTest(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
         write_registry(self.home, REGISTRY)
-        secrets = self.home / ".quiver" / "secrets"
+        secrets = self.home / ".swe" / "secrets"
         secrets.mkdir(parents=True)
         (secrets / ".api_keys").write_text(
             f"export GITHUB_TOKEN={FAKE_KEY}\n"
             "export DOCS_KEY=short-docs-key\n")
-        write_json(self.home / ".quiver" / "mcp.json", {"mcpServers": {
+        write_json(self.home / ".swe" / "mcp.json", {"mcpServers": {
             "github": {"command": "npx", "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}},
         }})
         write_claude(self.home, {
@@ -496,7 +496,7 @@ class ScrubTest(unittest.TestCase):
     """The display scrubbing behind `url` and `args`, on its own."""
 
     def test_url_keeps_host_path_and_references(self):
-        from quiver.mcp.secrets import scrub_url
+        from swe.mcp.secrets import scrub_url
 
         self.assertEqual(
             scrub_url("https://api.example.com/v1/mcp?token=${API_TOKEN}", {}),
@@ -506,19 +506,19 @@ class ScrubTest(unittest.TestCase):
             "https://api.example.com/v1/mcp?flag&team=***#***")
 
     def test_url_hides_a_username_that_is_the_credential(self):
-        from quiver.mcp.secrets import scrub_url
+        from swe.mcp.secrets import scrub_url
 
         self.assertEqual(
             scrub_url("https://" + LITERAL_KEY + "@host.example.com/", {}),
             "https://***@host.example.com/")
 
     def test_url_that_cannot_be_parsed_is_hidden_whole(self):
-        from quiver.mcp.secrets import scrub_url
+        from swe.mcp.secrets import scrub_url
 
         self.assertEqual(scrub_url("http://[bad", {}), "***")
 
     def test_args_hide_values_of_credential_flags_only(self):
-        from quiver.mcp.secrets import scrub_args
+        from swe.mcp.secrets import scrub_args
 
         self.assertEqual(
             scrub_args(["--port", "8080", "--api-key", "abc", "--token=xyz",
@@ -527,21 +527,21 @@ class ScrubTest(unittest.TestCase):
              "--verbose", "--password", "-q", "plain"])
 
     def test_args_keep_a_reference_and_its_header_name(self):
-        from quiver.mcp.secrets import scrub_args
+        from swe.mcp.secrets import scrub_args
 
         self.assertEqual(
             scrub_args(["-H", "Authorization: Bearer ${GH}", "--header=X-Id: 42"], {}),
             ["-H", "Authorization: Bearer ${GH}", "--header=X-Id: ***"])
 
     def test_args_scrub_a_url_argument(self):
-        from quiver.mcp.secrets import scrub_args
+        from swe.mcp.secrets import scrub_args
 
         self.assertEqual(
             scrub_args(["mcp-remote", "https://r.example.com/mcp?k=v"], {}),
             ["mcp-remote", "https://r.example.com/mcp?k=***"])
 
     def test_args_scrub_a_url_given_as_a_flag_value(self):
-        from quiver.mcp.secrets import scrub_args
+        from swe.mcp.secrets import scrub_args
 
         self.assertEqual(
             scrub_args(["--url=https://h.example/mcp?token=literal-secret",
@@ -551,7 +551,7 @@ class ScrubTest(unittest.TestCase):
 
     def test_args_hide_an_inline_env_assignment(self):
         # `env API_KEY=... npx server` is a common wrapper in configs.
-        from quiver.mcp.secrets import scrub_args
+        from swe.mcp.secrets import scrub_args
 
         self.assertEqual(
             scrub_args(["env", "OPENAI_API_KEY=sk-live-123", "LOG_LEVEL=debug",
@@ -665,14 +665,14 @@ class DoctorTextNvmTest(unittest.TestCase):
             for path_value in (str(bin_dir), "/usr/bin"):
                 with self.subTest(PATH=path_value), patch.dict(
                     "os.environ", {"NVM_DIR": str(nvm), "PATH": path_value}
-                ), patch("quiver.harness.commands.load_registry", return_value={}), patch(
-                    "quiver.harness.path_health.probe_node_env", return_value=HEALTHY
+                ), patch("swe.harness.commands.load_registry", return_value={}), patch(
+                    "swe.harness.path_health.probe_node_env", return_value=HEALTHY
                 ), patch(
-                    "quiver.harness.path_health.find_off_path_tools", return_value=[]
+                    "swe.harness.path_health.find_off_path_tools", return_value=[]
                 ), patch(
-                    "quiver.harness.drift.run_drift_checks", return_value=[]
-                ), patch("quiver.harness.doctor.setup_findings", return_value=[]), patch(
-                    "quiver.harness.doctor.issue_findings", return_value=[]
+                    "swe.harness.drift.run_drift_checks", return_value=[]
+                ), patch("swe.harness.doctor.setup_findings", return_value=[]), patch(
+                    "swe.harness.doctor.issue_findings", return_value=[]
                 ):
                     out = io.StringIO()
                     with redirect_stdout(out):
@@ -690,18 +690,18 @@ class DoctorJsonChecksTest(unittest.TestCase):
         which = which or env.npm
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             "os.environ", {"NVM_DIR": str(Path(tmp) / "missing-nvm")}
-        ), patch("quiver.harness.commands.load_registry", return_value={}), patch(
-            "quiver.harness.path_health.probe_node_env", return_value=env
+        ), patch("swe.harness.commands.load_registry", return_value={}), patch(
+            "swe.harness.path_health.probe_node_env", return_value=env
         ), patch(
-            "quiver.harness.path_health.preferred_npm_bin", return_value=preferred
+            "swe.harness.path_health.preferred_npm_bin", return_value=preferred
         ), patch(
-            "quiver.harness.path_health.nvm_bin_dirs", return_value=list(nvm)
+            "swe.harness.path_health.nvm_bin_dirs", return_value=list(nvm)
         ), patch(
-            "quiver.harness.path_health.find_off_path_tools",
+            "swe.harness.path_health.find_off_path_tools",
             return_value=list(orphans),
-        ), patch("quiver.harness.commands.shutil.which", return_value=which), patch(
-            "quiver.harness.drift.run_drift_checks", return_value=list(drift)
-        ), patch("quiver.harness.doctor.setup_findings", return_value=[]):
+        ), patch("swe.harness.commands.shutil.which", return_value=which), patch(
+            "swe.harness.drift.run_drift_checks", return_value=list(drift)
+        ), patch("swe.harness.doctor.setup_findings", return_value=[]):
             out = io.StringIO()
             with redirect_stdout(out):
                 code = cmd_doctor(["--json"])
@@ -742,7 +742,7 @@ class DoctorJsonChecksTest(unittest.TestCase):
 
     def test_off_path_harness_is_an_error_with_an_install_fix(self):
         hit = OffPathHit("claude", "/tmp/npm/bin/claude", "nvm")
-        with patch("quiver.harness.doctor.install_method", return_value=None):
+        with patch("swe.harness.doctor.install_method", return_value=None):
             code, doc = self.run_doctor(orphans=[("claude", "claude", hit)])
         self.assertEqual(code, 1)
         self.assertEqual(doc["data"]["findings"], [{
@@ -760,7 +760,7 @@ class DoctorJsonChecksTest(unittest.TestCase):
 
     def test_off_path_with_an_installer_on_path_offers_install(self):
         hit = OffPathHit("claude", "/tmp/npm/bin/claude", "nvm")
-        with patch("quiver.harness.doctor.install_method", return_value="npm"):
+        with patch("swe.harness.doctor.install_method", return_value="npm"):
             _, doc = self.run_doctor(orphans=[("claude", "claude", hit)])
         finding = doc["data"]["findings"][0]
         self.assertEqual((finding["fix"], finding["action"], finding["via"]),
@@ -810,21 +810,21 @@ class DoctorJsonChecksTest(unittest.TestCase):
         env = dataclasses.replace(HEALTHY, npm="/usr/bin/npm")
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             "os.environ", {"NVM_DIR": str(Path(tmp) / "missing-nvm")}
-        ), patch("quiver.harness.commands.load_registry", return_value={}), patch(
-            "quiver.harness.path_health.probe_node_env", return_value=env
+        ), patch("swe.harness.commands.load_registry", return_value={}), patch(
+            "swe.harness.path_health.probe_node_env", return_value=env
         ), patch(
-            "quiver.harness.path_health.preferred_npm_bin",
+            "swe.harness.path_health.preferred_npm_bin",
             return_value="/opt/homebrew/bin/npm"
         ), patch(
-            "quiver.harness.path_health.nvm_bin_dirs", return_value=[]
+            "swe.harness.path_health.nvm_bin_dirs", return_value=[]
         ), patch(
-            "quiver.harness.path_health.find_off_path_tools", return_value=[]
+            "swe.harness.path_health.find_off_path_tools", return_value=[]
         ), patch(
-            "quiver.harness.commands.shutil.which", return_value="/usr/bin/npm"
+            "swe.harness.commands.shutil.which", return_value="/usr/bin/npm"
         ), patch(
-            "quiver.harness.doctor.is_dir_on_path", return_value=False
-        ), patch("quiver.harness.drift.run_drift_checks", return_value=[]
-        ), patch("quiver.harness.doctor.setup_findings", return_value=[]):
+            "swe.harness.doctor.is_dir_on_path", return_value=False
+        ), patch("swe.harness.drift.run_drift_checks", return_value=[]
+        ), patch("swe.harness.doctor.setup_findings", return_value=[]):
             out = io.StringIO()
             with redirect_stdout(out):
                 code = cmd_doctor(["--json"])

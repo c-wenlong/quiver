@@ -7,9 +7,9 @@ each one in `InferenceCatalog.all`
 those values came from. Researched 2026-10-19 from each vendor's own docs;
 plans change monthly, so recheck before relying on a price or a model id.
 
-## What Quiver does with a plan
+## What SWE does with a plan
 
-Quiver stores the plan key in `~/.quiver/secrets/providers/.api_keys` under its own variable name
+SWE stores the plan key in `~/.swe/secrets/providers/.api_keys` under its own variable name
 (`GLM_CODING_PLAN_KEY`, not `ZAI_API_KEY`). Every vendor below either uses a
 separate plan key or a separate plan endpoint, and a plan key sent to the
 pay-as-you-go endpoint bills the account balance instead of the plan (Z.ai's
@@ -19,7 +19,7 @@ used against the wrong endpoint. Where the plan key and endpoint are the
 vendor's ordinary ones (Ollama, Synthetic, Poe), the variable is the vendor's
 own name.
 
-Quiver does not point any harness at a plan yet. How harnesses should pick
+SWE does not point any harness at a plan yet. How harnesses should pick
 plan keys up (some autodetect variables) is still open.
 
 ## Key checks

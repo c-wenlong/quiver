@@ -23,7 +23,7 @@ class CaWarningGoesToStderrTest(unittest.TestCase):
     """1: a warning on stdout corrupts `swe list --json --usage`."""
 
     def test_warn_untrusted_ca_prints_to_stderr_only(self):
-        from quiver.harness import rate_limits
+        from swe.harness import rate_limits
 
         rate_limits._CA_WARNED = False
         out, err = io.StringIO(), io.StringIO()
@@ -40,7 +40,7 @@ class ModelsByToolSeparatorsTest(unittest.TestCase):
     """2: blank separators belong between tool groups, not above."""
 
     def test_separator_sits_between_tool_groups(self):
-        from quiver.sessions.commands import cmd_models
+        from swe.sessions.commands import cmd_models
 
         raw = {
             "claude": {("", "m-one"): 3},
@@ -48,7 +48,7 @@ class ModelsByToolSeparatorsTest(unittest.TestCase):
         }
         out = io.StringIO()
         with patch(
-            "quiver.sessions.commands.collect_model_usage", return_value=raw
+            "swe.sessions.commands.collect_model_usage", return_value=raw
         ), redirect_stdout(out):
             cmd_models(["-t"])
         lines = out.getvalue().splitlines()
@@ -58,7 +58,7 @@ class ModelsByToolSeparatorsTest(unittest.TestCase):
         self.assertEqual(lines[i2 - 1], "")
 
     def test_one_separator_per_group_not_per_row(self):
-        from quiver.sessions.commands import cmd_models
+        from swe.sessions.commands import cmd_models
 
         raw = {
             "claude": {("", "m-a"): 3},
@@ -66,7 +66,7 @@ class ModelsByToolSeparatorsTest(unittest.TestCase):
         }
         out = io.StringIO()
         with patch(
-            "quiver.sessions.commands.collect_model_usage", return_value=raw
+            "swe.sessions.commands.collect_model_usage", return_value=raw
         ), redirect_stdout(out):
             cmd_models(["-t"])
         lines = out.getvalue().splitlines()
@@ -82,8 +82,8 @@ class RateLimitCacheMergeTest(unittest.TestCase):
     """3: a filtered run must not drop unrequested providers' readings."""
 
     def test_filtered_run_preserves_other_providers_cache_entries(self):
-        from quiver.harness import rate_limits
-        from quiver.harness.models import RateLimitInfo
+        from swe.harness import rate_limits
+        from swe.harness.models import RateLimitInfo
 
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp) / "rate_limits.json"
@@ -123,13 +123,13 @@ class ConfigGetNullTest(unittest.TestCase):
     """4: an explicit null differs from an absent key."""
 
     def _run(self, args, config):
-        from quiver.config_commands import cmd_config
+        from swe.config_commands import cmd_config
 
         out = io.StringIO()
         with patch(
-            "quiver.config_commands.load_resolved_config", return_value=config
+            "swe.config_commands.load_resolved_config", return_value=config
         ), patch(
-            "quiver.config_commands.load_config", return_value=config
+            "swe.config_commands.load_config", return_value=config
         ), redirect_stdout(out):
             rc = cmd_config(args)
         return rc, out.getvalue()
@@ -152,7 +152,7 @@ class CopilotStrictArgsTest(unittest.TestCase):
     """5: absent args and args: [] are the same conversion outcome."""
 
     def test_absent_args_is_not_lossy(self):
-        from quiver.mcp.formats import get_conversion_issues
+        from swe.mcp.formats import get_conversion_issues
 
         issues = get_conversion_issues(
             {"command": "run-server"}, "standard", "copilot"
@@ -170,7 +170,7 @@ class DoubleEscTest(unittest.TestCase):
         return r
 
     def test_esc_esc_returns_escape(self):
-        from quiver.keys import read_key
+        from swe.keys import read_key
 
         fd = self._pipe(b"\x1b\x1b")
         try:
@@ -179,7 +179,7 @@ class DoubleEscTest(unittest.TestCase):
             os.close(fd)
 
     def test_arrows_still_parse(self):
-        from quiver.keys import read_key
+        from swe.keys import read_key
 
         fd = self._pipe(b"\x1b[A")
         try:
@@ -192,7 +192,7 @@ class JsoncWritePreservesCommentsTest(unittest.TestCase):
     """7: saving into a .jsonc file keeps its comments and siblings."""
 
     def test_comments_outside_the_managed_key_survive(self):
-        from quiver.mcp.cli import get_tool_saver, load_json
+        from swe.mcp.cli import get_tool_saver, load_json
 
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "kilo.jsonc"
@@ -210,7 +210,7 @@ class JsoncWritePreservesCommentsTest(unittest.TestCase):
             self.assertEqual(data["mcp"], {"new": {"command": "ok"}})
 
     def test_missing_key_inserts_without_touching_comments(self):
-        from quiver.mcp.cli import get_tool_saver, load_json
+        from swe.mcp.cli import get_tool_saver, load_json
 
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "kilo.jsonc"
@@ -225,7 +225,7 @@ class BrokenCountsPreservedTest(unittest.TestCase):
     """9: a cache-fed second pass must not erase recorded failures."""
 
     def test_second_save_keeps_broken_list(self):
-        from quiver.sessions import usage
+        from swe.sessions import usage
 
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp) / "counts.json"
@@ -241,7 +241,7 @@ class BrokenCountsPreservedTest(unittest.TestCase):
     def test_fresh_scan_replaces_broken_list(self):
         # A fresh parse is authoritative: a recovered file must stop
         # reading as broken once the scan runs clean.
-        from quiver.sessions import usage
+        from swe.sessions import usage
 
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp) / "counts.json"
@@ -258,8 +258,8 @@ class HereFilterSkipsBadPathsTest(unittest.TestCase):
     """10: empty/relative paths never match --here."""
 
     def test_empty_and_relative_paths_never_match(self):
-        from quiver.sessions import aggregator
-        from quiver.sessions.models import Session
+        from swe.sessions import aggregator
+        from swe.sessions.models import Session
 
         with tempfile.TemporaryDirectory() as tmp:
             inside = str(Path(tmp) / "sub")
@@ -283,8 +283,8 @@ class ClaudeWorkingStatusTest(unittest.TestCase):
     """11: a background job's \"working\" state is active, not done."""
 
     def test_working_job_reports_active(self):
-        from quiver.sessions.models import Session
-        from quiver.sessions import status
+        from swe.sessions.models import Session
+        from swe.sessions import status
 
         sess = Session(timestamp=0, agent="claude", path="/p",
                        session_id="s1", tool_name="claude")
@@ -299,8 +299,8 @@ class DevinFallbackRowidTest(unittest.TestCase):
     ties or lexicographic order must not pick a sibling branch."""
 
     def test_fallback_reads_last_inserted_node(self):
-        from quiver.sessions.models import Session
-        from quiver.sessions import status
+        from swe.sessions.models import Session
+        from swe.sessions import status
 
         with tempfile.TemporaryDirectory() as tmp:
             dbdir = Path(tmp) / ".local" / "share" / "devin" / "cli"
@@ -347,7 +347,7 @@ class ClaudeCwdDedupeTest(unittest.TestCase):
     transcript map points at the live copy."""
 
     def test_transcript_paths_keep_newest_mtime(self):
-        from quiver.sessions.parsers import _claude_transcript_paths
+        from swe.sessions.parsers import _claude_transcript_paths
 
         with tempfile.TemporaryDirectory() as tmp:
             old_dir = Path(tmp) / "-old"
@@ -364,8 +364,8 @@ class ClaudeCwdDedupeTest(unittest.TestCase):
         self.assertEqual(paths["s1"], str(new))
 
     def test_parse_dedupes_resumed_session_rows(self):
-        from quiver.sessions import parsers
-        from quiver.sessions.models import Session
+        from swe.sessions import parsers
+        from swe.sessions.models import Session
 
         older = Session(timestamp=1, agent="claude", path="/a",
                         session_id="s1", tool_name="claude")
@@ -383,8 +383,8 @@ class ClaudeCwdDedupeTest(unittest.TestCase):
         self.assertIs(sessions[0], newer)
 
     def test_probe_reads_newest_transcript_copy(self):
-        from quiver.sessions import status
-        from quiver.sessions.models import Session
+        from swe.sessions import status
+        from swe.sessions.models import Session
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / ".claude" / "projects"
@@ -416,7 +416,7 @@ class TablePlaceholderTest(unittest.TestCase):
     """15: a missing key renders the marker, not a traceback."""
 
     def test_missing_key_in_numeric_and_timestamp_columns(self):
-        from quiver.table import Table
+        from swe.table import Table
 
         t = Table()
         t.add_column("n", "N", width=6, kind="number")
@@ -433,7 +433,7 @@ class CodexPluginEnabledPlacementTest(unittest.TestCase):
     """16: enabled need not be the first line of a plugins block."""
 
     def test_enabled_after_other_keys_is_found(self):
-        from quiver.find.plugins import _from_codex_toml
+        from swe.find.plugins import _from_codex_toml
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -453,11 +453,11 @@ class CompletionSanitisedTest(unittest.TestCase):
     """17: newlines in a description cannot inject protocol lines."""
 
     def test_control_chars_flattened(self):
-        from quiver.cli import cmd_complete
+        from swe.cli import cmd_complete
 
         out = io.StringIO()
         with patch(
-            "quiver.completion.get_completions",
+            "swe.completion.get_completions",
             return_value=[("cand", "line1\nline2\textra")],
         ), redirect_stdout(out):
             cmd_complete([])
@@ -473,7 +473,7 @@ class CrLfReadLineTest(unittest.TestCase):
         import threading
         import time
 
-        from quiver import prompt
+        from swe import prompt
 
         r, w = os.pipe()
         os.write(w, b"a\r")
@@ -504,8 +504,8 @@ class WideGlyphTableTest(unittest.TestCase):
     """19: CJK cells measure two columns, so padding lines up."""
 
     def test_cjk_cell_pads_to_column_width(self):
-        from quiver.console import cell_len
-        from quiver.table import Table
+        from swe.console import cell_len
+        from swe.table import Table
 
         t = Table()
         t.add_column("name", "NAME", width=8, fit="fixed", kind="text")
@@ -516,13 +516,13 @@ class WideGlyphTableTest(unittest.TestCase):
             self.assertEqual(cell_len(line), 11 + 2)  # 8 + gap 2 + 3
 
     def test_truncate_cells_never_exceeds_budget(self):
-        from quiver.console import cell_len, truncate_cells
+        from swe.console import cell_len, truncate_cells
 
         cut = truncate_cells("開発テスト", 5)
         self.assertLessEqual(cell_len(cut), 5)
 
     def test_vs16_promotion_counts_in_the_cut(self):
-        from quiver.console import cell_len, truncate_cells
+        from swe.console import cell_len, truncate_cells
 
         # ❤ + VS16 renders 2 cells each; a naive per-char scan let the
         # ellipsis push the result to 7 cells and shifted later columns.
@@ -534,7 +534,7 @@ class C1StStripTest(unittest.TestCase):
     """20: a C1 ST terminates an OSC sequence — text after it survives."""
 
     def test_osc_terminated_by_c1_st(self):
-        from quiver.console import strip_ansi
+        from swe.console import strip_ansi
 
         self.assertEqual(
             strip_ansi("\x1b]8;;https://example.com\x9cVISIBLE"),
@@ -547,7 +547,7 @@ class CellWidthEdgeCasesTest(unittest.TestCase):
     the cell-measured truncate/elide helpers."""
 
     def test_zero_width_classes_measure_zero(self):
-        from quiver.console import _char_cells
+        from swe.console import _char_cells
 
         self.assertEqual(_char_cells("\u0301"), 0)       # combining mark
         self.assertEqual(_char_cells("\u200d"), 0)       # ZWJ
@@ -559,21 +559,21 @@ class CellWidthEdgeCasesTest(unittest.TestCase):
         self.assertEqual(_char_cells("x"), 1)
 
     def test_joined_sequences_still_count_once(self):
-        from quiver.console import cell_len
+        from swe.console import cell_len
 
         self.assertEqual(cell_len("a\u200db"), 1)                 # ZWJ merge
         self.assertEqual(cell_len("\U0001f1fa\U0001f1f8"), 2)     # flag pair
         self.assertEqual(cell_len("e\u0301"), 1)                  # precomposed-ish
 
     def test_take_cells_end_drops_dangling_mark(self):
-        from quiver.console import _take_cells_end
+        from swe.console import _take_cells_end
 
         # Scanning backwards ends on the combining mark whose base char
         # was cut — leaving it would paint the mark against the ellipsis.
         self.assertEqual(_take_cells_end("q\u0301zz", 2), "zz")
 
     def test_truncate_and_elide_edges(self):
-        from quiver.console import elide_cells, truncate_cells
+        from swe.console import elide_cells, truncate_cells
 
         self.assertEqual(truncate_cells("abcdef", 0), "")
         # A budget too small for "..." falls back to a bare cut.
@@ -587,7 +587,7 @@ class EscAbortsSequenceTest(unittest.TestCase):
     sees a single cancel rather than a swallowed pair."""
 
     def test_esc_mid_sequence_is_escape(self):
-        from quiver.keys import read_key
+        from swe.keys import read_key
 
         r, w = os.pipe()
         os.write(w, b"\x1b[\x1b")
@@ -603,7 +603,7 @@ class JsoncEdgeCasesTest(unittest.TestCase):
     and the caller falls back to a full save with a stderr warning."""
 
     def test_key_span_returns_none_on_unmapped_layouts(self):
-        from quiver.mcp.cli import _jsonc_key_span
+        from swe.mcp.cli import _jsonc_key_span
 
         self.assertIsNone(_jsonc_key_span("[1, 2]", "mcp"))        # not an object
         self.assertIsNone(_jsonc_key_span("{}", "mcp"))            # key absent
@@ -612,7 +612,7 @@ class JsoncEdgeCasesTest(unittest.TestCase):
         self.assertIsNone(_jsonc_key_span('{"mcp": {', "mcp"))     # unterminated
 
     def test_block_comments_are_skipped(self):
-        from quiver.mcp.cli import _jsonc_key_span
+        from swe.mcp.cli import _jsonc_key_span
 
         # A /* */ before the root, ahead of the value, and mid-value.
         text = ('/* head */\n{\n  "mcp": /* inline */ '
@@ -622,7 +622,7 @@ class JsoncEdgeCasesTest(unittest.TestCase):
         self.assertIsNone(_jsonc_key_span('{/* never closed', "mcp"))
 
     def test_slice_save_insert_paths_and_failures(self):
-        from quiver.mcp.cli import _save_jsonc_slice, load_json
+        from swe.mcp.cli import _save_jsonc_slice, load_json
 
         with tempfile.TemporaryDirectory() as tmp:
             # Empty object: member inserted after the opening brace.
@@ -657,7 +657,7 @@ class JsoncEdgeCasesTest(unittest.TestCase):
                 _save_jsonc_slice(Path(tmp) / "absent.jsonc", "mcp", {}))
 
     def test_unmapped_layout_warns_then_fails_cleanly(self):
-        from quiver.mcp.cli import CorruptConfigurationError, get_tool_saver
+        from swe.mcp.cli import CorruptConfigurationError, get_tool_saver
 
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "kilo.jsonc"
@@ -674,7 +674,7 @@ class JsoncEdgeCasesTest(unittest.TestCase):
             self.assertEqual(p.read_text(), "// only a comment, no object\n")
 
     def test_unreadable_file_falls_back_without_warning(self):
-        from quiver.mcp.cli import CorruptConfigurationError, get_tool_saver
+        from swe.mcp.cli import CorruptConfigurationError, get_tool_saver
 
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "kilo.jsonc"
@@ -692,8 +692,8 @@ class RateLimitLegacyNoDataTest(unittest.TestCase):
     also survives a filtered run."""
 
     def test_legacy_list_no_data_entries_carry_over(self):
-        from quiver.harness import rate_limits
-        from quiver.harness.models import RateLimitInfo
+        from swe.harness import rate_limits
+        from swe.harness.models import RateLimitInfo
 
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp) / "rate_limits.json"
@@ -728,8 +728,8 @@ class RateLimitMergeRobustnessTest(unittest.TestCase):
     empty, and carried readings keep their original age."""
 
     def _run_filtered(self, cache, now=1_700_000_000.0):
-        from quiver.harness import rate_limits
-        from quiver.harness.models import RateLimitInfo
+        from swe.harness import rate_limits
+        from swe.harness.models import RateLimitInfo
 
         def fake():
             return RateLimitInfo(
@@ -786,7 +786,7 @@ class ClaudeWorkingJobStalenessTest(unittest.TestCase):
         os.utime(f, (old, old))
 
     def test_stale_working_state_is_dropped(self):
-        from quiver.sessions import status
+        from swe.sessions import status
 
         with tempfile.TemporaryDirectory() as tmp:
             self._write_state(tmp, "working", status._JOB_WORKING_STALE_S + 10)
@@ -794,7 +794,7 @@ class ClaudeWorkingJobStalenessTest(unittest.TestCase):
                 self.assertEqual(status._claude_job_states(), {})
 
     def test_fresh_working_state_is_kept(self):
-        from quiver.sessions import status
+        from swe.sessions import status
 
         with tempfile.TemporaryDirectory() as tmp:
             self._write_state(tmp, "working", 0)
@@ -808,7 +808,7 @@ class CopilotStrictNullArgsTest(unittest.TestCase):
     conversion when the emitter stamps ``args: []``."""
 
     def test_null_args_is_not_lossy(self):
-        from quiver.mcp.formats import (
+        from swe.mcp.formats import (
             McpFormatHandler, get_conversion_issues, register_format_handler,
         )
 
@@ -823,7 +823,7 @@ class CopilotStrictNullArgsTest(unittest.TestCase):
         try:
             issues = get_conversion_issues({}, "_stub_null_args", "copilot")
         finally:
-            from quiver.mcp import formats
+            from swe.mcp import formats
             formats._FORMAT_MCP_HANDLERS.pop("_stub_null_args", None)
         self.assertNotIn("args", "; ".join(issues))
 
@@ -833,7 +833,7 @@ class CodexPluginNoFlagTest(unittest.TestCase):
     an indented header still counts as a header."""
 
     def test_indented_header_is_found(self):
-        from quiver.find.plugins import _from_codex_toml
+        from swe.find.plugins import _from_codex_toml
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -847,7 +847,7 @@ class CodexPluginNoFlagTest(unittest.TestCase):
         self.assertEqual([p.name for p in found], ["nested"])
 
     def test_block_without_enabled_is_skipped(self):
-        from quiver.find.plugins import _from_codex_toml
+        from swe.find.plugins import _from_codex_toml
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -868,7 +868,7 @@ class ClaudeTranscriptStatFailureTest(unittest.TestCase):
     and a sid-less session survives the dedupe filter."""
 
     def test_stat_oserror_falls_back_to_zero(self):
-        from quiver.sessions import parsers
+        from swe.sessions import parsers
 
         class _Entry:
             def __init__(self, name, path, is_dir=False, broken=False):
@@ -898,8 +898,8 @@ class ClaudeTranscriptStatFailureTest(unittest.TestCase):
         self.assertEqual(paths["s1"], "/proj/s1.jsonl")
 
     def test_dedupe_keeps_sessions_without_id(self):
-        from quiver.sessions import parsers
-        from quiver.sessions.models import Session
+        from swe.sessions import parsers
+        from swe.sessions.models import Session
 
         anon = Session(timestamp=0, agent="claude", path="/x",
                        session_id="", tool_name="claude")
@@ -926,8 +926,8 @@ class ClaudeProbeStatFailureTest(unittest.TestCase):
     back to glob order rather than dropping the probe."""
 
     def test_getmtime_failure_still_probes(self):
-        from quiver.sessions import status
-        from quiver.sessions.models import Session
+        from swe.sessions import status
+        from swe.sessions.models import Session
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / ".claude" / "projects"

@@ -18,7 +18,7 @@ remembering CLI commands.
 | Kept from TokenTracker | Sessions and Limits (the most important), menu bar and widgets, Skills (built on quiver hub), Service Status (extended to more services), Settings, Tokens overview. Claude IP Check at low priority. |
 | Out of scope | Leaderboard, Achievements, Pet. Cloud sync narrowed by M9: syncing app state stays out, remote access to sessions is in. |
 | Other apps' data | None shared. Quiver replaces Switchboard, TokenTracker, AIUsage and OpenUsage, which get deleted, so it never reads or writes their files, settings or caches, not even to import. |
-| Profile store | Switchboard's model (one config home and one desktop data folder per profile, launched with the env var and `--user-data-dir`), kept under `~/.quiver/accounts` |
+| Profile store | Switchboard's model (one config home and one desktop data folder per profile, launched with the env var and `--user-data-dir`), kept under `~/.swe/accounts` |
 
 ## Borrowed code
 
@@ -49,7 +49,7 @@ remembering CLI commands.
 - [x] CI job on a macOS 26 runner: build and `swift test`
 
 ### M2. Accounts
-- [x] Profile store and directory layout under `~/.quiver/accounts`
+- [x] Profile store and directory layout under `~/.swe/accounts`
 - [x] Open a desktop app or terminal per profile (Claude, Codex)
 - [x] Limit fetchers: Claude and Codex natively, per account; Devin, Cursor and Copilot through `swe list --usage --json`, which already polls them with its safeguards
 - [x] Carry over the safeguards in `rate_limits.py`: honor provider cooldowns
@@ -61,9 +61,9 @@ remembering CLI commands.
 
 ### M3. Overview
 - [x] Incremental scanner for Claude and Codex JSONL, sqlite for OpenCode and Devin
-  (`QuiverCore/Ledger`, persisted to `~/.quiver/data/ledger/ledger.sqlite`)
+  (`QuiverCore/Ledger`, persisted to `~/.swe/data/ledger/ledger.sqlite`)
 - [x] Pricing from a bundled LiteLLM snapshot, refreshed daily before a scan
-  (`PricingStore`, kept with every past price in `~/.quiver/data/catalog/catalog.sqlite`)
+  (`PricingStore`, kept with every past price in `~/.swe/data/catalog/catalog.sqlite`)
 - [x] Overview page: total tokens and cost, harness split, daily table, heatmap
 - [x] Cost donut in the menu bar panel (Today, Yesterday, 30 days)
 
@@ -100,22 +100,22 @@ Modelled on TokenTracker's Sessions page.
 
 ### M7. Service status
 - [x] Status of the services the harnesses depend on (Anthropic, OpenAI, GitHub, Cursor and more), from their public status pages
-  (`QuiverCore/Status`: Statuspage feeds plus Google Cloud's for Gemini, cached at `~/.quiver/cache/service-status.json`)
+  (`QuiverCore/Status`: Statuspage feeds plus Google Cloud's for Gemini, cached at `~/.swe/cache/service-status.json`)
 - [x] Incidents surfaced in the menu bar when a service is degraded
 
 ### M8. Download and first run (DMG)
 
-Goal: someone downloads a DMG onto a Mac with no `~/.quiver`, no `swe`, no
+Goal: someone downloads a DMG onto a Mac with no `~/.swe`, no `swe`, no
 Python, no keys and no MCP servers. From there they reach a working setup,
 and add or edit everything from the app, without a terminal. The audit
-behind this list ran on 2026-10-19 and covered packaging, the `~/.quiver`
+behind this list ran on 2026-10-19 and covered packaging, the `~/.swe`
 layout, keys, the Manage pages, and the usage and system pages.
 
 Phases in order. Phase 4 can run alongside 1 to 3.
 
 **Phase 0. Quick fixes**
 - [x] `swe` version probe tried `claude version` first, which starts a Claude session ([#370](https://github.com/c-wenlong/quiver/pull/370))
-- [x] Seeded `~/.quiver/.gitignore` lists `secrets/` ([#369](https://github.com/c-wenlong/quiver/pull/369))
+- [x] Seeded `~/.swe/.gitignore` lists `secrets/` ([#369](https://github.com/c-wenlong/quiver/pull/369))
 - [x] A missing `swe` shows raw `env: swe: No such file or directory`. `ProcessRunner` runs `/usr/bin/env`, so exit 127 lands as `commandFailed`, never `.notInstalled` (`CommandRunner.swift`, `SweClient.swift`). Map 127 to `.notInstalled`, and replace its "Install quiver with pip" text, since the PyPI name belongs to someone else. ([#408](https://github.com/c-wenlong/quiver/pull/408))
 - [x] `swe providers add` tells users `~/.api_keys/<name>` is a directory of files, but the app reads `~/.api_keys` as one file and fails on a directory. Make them agree. ([#408](https://github.com/c-wenlong/quiver/pull/408))
 
@@ -124,21 +124,21 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 - [x] Check Droid limits with the bundled Python. `rate_limits.py` loads `libcrypto` through ctypes and falls back to an unversioned dylib. ([#413](https://github.com/c-wenlong/quiver/pull/413))
 
 **Phase 2. First-run setup**
-- [x] `swe setup --apply` seeds `~/.quiver` and links AGENTS.md, skills and hooks. `--adopt=<file>` and `--starred=a,b` added ([#373](https://github.com/c-wenlong/quiver/pull/373)).
+- [x] `swe setup --apply` seeds `~/.swe` and links AGENTS.md, skills and hooks. `--adopt=<file>` and `--starred=a,b` added ([#373](https://github.com/c-wenlong/quiver/pull/373)).
 - [x] Four-step setup window: agents, shared AGENTS.md, skills and MCP, look, notifications. Settings › General can open it again ([#375](https://github.com/c-wenlong/quiver/pull/375)).
-- [x] The links step clones your hub repo (`swe setup --hub=<url> --json`) while `~/.quiver` has no hub yet ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+- [x] The links step clones your hub repo (`swe setup --hub=<url> --json`) while `~/.swe` has no hub yet ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 
 **Phase 3. Add and edit from the app.** Every Manage page edits or syncs what exists, but almost none can create.
 - [x] API keys: a provider picker built from `providers/defaults.py` and `APIKeyCheck.swift`, with a "Get a key" link instead of the free-text Provider and Variable fields. Test a key before saving. ([#397](https://github.com/c-wenlong/quiver/pull/397))
 - [x] API keys: offer to add `source ~/.api_keys` to `~/.zshrc` (back it up, ask first). Nothing does this today, so saved keys reach no new terminal, and the page subtitle claims they do. ([#400](https://github.com/c-wenlong/quiver/pull/400))
 - [x] MCP servers: an Add server sheet (stdio command, args and env, or http url and headers) and Remove. `swe mcp` has neither, and `swe mcp edit` needs `$EDITOR`. Needs `swe mcp add|remove --json`. ([#399](https://github.com/c-wenlong/quiver/pull/399))
-- [x] MCP secrets: `${NAME}` values live in `~/.quiver/secrets/.api_keys`, which nothing writes. Add `swe mcp secret set NAME` (0600) and a paste field per unresolved name. `swe mcp sync` writes the literal `${NAME}` into harness configs when a value is missing; refuse instead. ([#398](https://github.com/c-wenlong/quiver/pull/398))
-- [x] Skills: New skill (writes `~/.quiver/skills/<name>/SKILL.md`) and Link all. Needs `swe skills new --json`. ([#401](https://github.com/c-wenlong/quiver/pull/401))
+- [x] MCP secrets: `${NAME}` values live in `~/.swe/secrets/.api_keys`, which nothing writes. Add `swe mcp secret set NAME` (0600) and a paste field per unresolved name. `swe mcp sync` writes the literal `${NAME}` into harness configs when a value is missing; refuse instead. ([#398](https://github.com/c-wenlong/quiver/pull/398))
+- [x] Skills: New skill (writes `~/.swe/skills/<name>/SKILL.md`) and Link all. Needs `swe skills new --json`. ([#401](https://github.com/c-wenlong/quiver/pull/401))
 - [x] Plugins: Add marketplace (GitHub owner/repo or path) through `swe plugins marketplace add --json`. Open Explore first when the hub is empty. ([#402](https://github.com/c-wenlong/quiver/pull/402))
 - [x] Harnesses: a Detect and register button (`swe setup --apply --json`), and a form for a custom harness. ([#403](https://github.com/c-wenlong/quiver/pull/403); harness discovery instead of `swe setup --apply`)
 - [x] Accounts: Sign in opens a terminal that says "command not found" when the CLI isn't installed. Show Install there instead. ([#404](https://github.com/c-wenlong/quiver/pull/404))
 - [x] Empty states: `EmptyCard` is a label only, and several pages tell users to run a command. Give each a button. ([#407](https://github.com/c-wenlong/quiver/pull/407))
-- [x] Doctor: check for a missing `~/.quiver`, a missing AGENTS.md, unlinked harnesses and an empty registry. Each finding gets a Run button. ([#405](https://github.com/c-wenlong/quiver/pull/405))
+- [x] Doctor: check for a missing `~/.swe`, a missing AGENTS.md, unlinked harnesses and an empty registry. Each finding gets a Run button. ([#405](https://github.com/c-wenlong/quiver/pull/405))
 - [x] Services: Sessions and Models say when a Devin or Artificial Analysis key is needed, and link to Settings › Services and the token page. ([#406](https://github.com/c-wenlong/quiver/pull/406))
 
 **Phase 4. Release pipeline**

@@ -7,15 +7,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from quiver.providers.commands import cmd_add, cmd_info, cmd_list, cmd_remove
-from quiver.providers.defaults import DEFAULT_PROVIDERS
-from quiver.providers.discover import discover_provider_keys
+from swe.providers.commands import cmd_add, cmd_info, cmd_list, cmd_remove
+from swe.providers.defaults import DEFAULT_PROVIDERS
+from swe.providers.discover import discover_provider_keys
 
 
 def _registry_patches(config_dir: Path, registry_file: Path):
     return (
-        patch("quiver.providers.registry.CONFIG_DIR", config_dir),
-        patch("quiver.providers.registry.PROVIDERS_REGISTRY_FILE", registry_file),
+        patch("swe.providers.registry.CONFIG_DIR", config_dir),
+        patch("swe.providers.registry.PROVIDERS_REGISTRY_FILE", registry_file),
     )
 
 
@@ -84,7 +84,7 @@ class CommandsSmokeTest(unittest.TestCase):
             config_dir, registry_file, keys_dir = self._setup(tmp_path)
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 cmd_list([])
@@ -98,7 +98,7 @@ class CommandsSmokeTest(unittest.TestCase):
             (keys_dir / "openai").write_text("sk-proj-MyTestKeyValue12345")
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 cmd_list([])
@@ -110,7 +110,7 @@ class CommandsSmokeTest(unittest.TestCase):
             (keys_dir / "openai").write_text("sk-proj-AbCdEfGh12345678")
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 self.assertEqual(cmd_info(["openai"]), 0)
@@ -129,7 +129,7 @@ class CommandsSmokeTest(unittest.TestCase):
             p1, p2 = _registry_patches(config_dir, registry_file)
             out = io.StringIO()
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_file,
             ), redirect_stdout(out):
                 self.assertEqual(
@@ -145,7 +145,7 @@ class CommandsSmokeTest(unittest.TestCase):
             p1, p2 = _registry_patches(config_dir, registry_file)
             out = io.StringIO()
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ), redirect_stdout(out):
                 self.assertEqual(
@@ -158,7 +158,7 @@ class CommandsSmokeTest(unittest.TestCase):
             config_dir, registry_file, keys_dir = self._setup(tmp_path)
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 cmd_add(
@@ -171,7 +171,7 @@ class CommandsSmokeTest(unittest.TestCase):
                     ]
                 )
                 # Verify the file is now in the (mocked) providers.json
-                from quiver.providers.registry import load_registry
+                from swe.providers.registry import load_registry
 
                 providers = load_registry()
                 self.assertIn("myprov", providers)
@@ -193,7 +193,7 @@ class CommandsSmokeTest(unittest.TestCase):
             config_dir, registry_file, keys_dir = self._setup(tmp_path)
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 cmd_add(["myprov", "--env=MY_KEY"])
@@ -206,7 +206,7 @@ class CommandsSmokeTest(unittest.TestCase):
             config_dir, registry_file, keys_dir = self._setup(tmp_path)
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 self.assertEqual(cmd_remove(["does-not-exist"]), 1)
@@ -217,7 +217,7 @@ class CommandsSmokeTest(unittest.TestCase):
             config_dir, registry_file, keys_dir = self._setup(tmp_path)
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 self.assertEqual(
@@ -233,7 +233,7 @@ class CommandsSmokeTest(unittest.TestCase):
             key_file.write_text("sk-proj-DontDeleteMe1234567890")
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 cmd_remove(["openai"])
@@ -249,7 +249,7 @@ class CommandsSmokeTest(unittest.TestCase):
             (other_dir / "openai").write_text("sk-proj-OtherDirTest1234567")
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 cmd_list([f"--api-keys-dir={other_dir}"])
@@ -265,7 +265,7 @@ class CommandsSmokeTest(unittest.TestCase):
             (keys_dir / "openai").write_text(raw_key)
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 buf = io.StringIO()
@@ -292,7 +292,7 @@ class CommandsSmokeTest(unittest.TestCase):
             (keys_dir / "openai").write_text(raw_key)
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 buf = io.StringIO()
@@ -312,7 +312,7 @@ class CommandsSmokeTest(unittest.TestCase):
             config_dir, registry_file, keys_dir = self._setup(tmp_path)
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 buf = io.StringIO()
@@ -337,7 +337,7 @@ class CommandsSmokeTest(unittest.TestCase):
             config_dir, registry_file, keys_dir = self._setup(tmp_path)
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 buf = io.StringIO()
@@ -360,7 +360,7 @@ class CommandsSmokeTest(unittest.TestCase):
             registry_file = config_dir / "providers.json"
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands._display_keys_dir",
+                "swe.providers.commands._display_keys_dir",
                 return_value="~/.api_keys",
             ):
                 buf = io.StringIO()
@@ -372,7 +372,7 @@ class CommandsSmokeTest(unittest.TestCase):
 
     def test_display_keys_dir_helper_under_and_outside_home(self):
         """Direct unit test for the helper."""
-        from quiver.providers.commands import _display_keys_dir
+        from swe.providers.commands import _display_keys_dir
 
         home = Path.home()
         # Inside $HOME → tilde.
@@ -447,7 +447,7 @@ class CommandsSmokeTest(unittest.TestCase):
             )
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=shell_keys,
             ):
                 buf = io.StringIO()
@@ -476,7 +476,7 @@ class CommandsSmokeTest(unittest.TestCase):
             )
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=shell_keys,
             ):
                 buf = io.StringIO()
@@ -500,7 +500,7 @@ class CommandsSmokeTest(unittest.TestCase):
             # keys_dir exists but is empty -> n_with == 0
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ):
                 buf = io.StringIO()
@@ -522,7 +522,7 @@ class CommandsSmokeTest(unittest.TestCase):
             missing_dir = tmp_path / "no_such_dir"
             p1, p2 = _registry_patches(config_dir, registry_file)
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=missing_dir,
             ):
                 buf = io.StringIO()

@@ -5,7 +5,7 @@ import Testing
 
 /// `GitHubNotifier` is the GitHub control plane: an app-lifetime inbox
 /// poll that seeds its delivered-id set on first contact, banners only
-/// new unread ids, persists that set under `~/.quiver/cache/`, and
+/// new unread ids, persists that set under `~/.swe/cache/`, and
 /// invalidates a notified repo's boards. `post` is the seam — tests
 /// capture the banner batches instead of hitting
 /// `UNUserNotificationCenter`.
@@ -209,7 +209,7 @@ struct GitHubNotifierTests {
     }
 
     /// The delivered set survives a relaunch: a new instance over the
-    /// same `~/.quiver` dir does not re-banner what the last run sent.
+    /// same `~/.swe` dir does not re-banner what the last run sent.
     @Test func deliveredIdsPersistAcrossInstances() async throws {
         let dir = quiverDir()
         let posts = Posts()

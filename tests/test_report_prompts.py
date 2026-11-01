@@ -1,6 +1,6 @@
 import unittest
 
-from quiver.reports.prompts import (
+from swe.reports.prompts import (
     REPORT_SECTIONS,
     build_final_report_prompt,
     build_session_summary_prompt,

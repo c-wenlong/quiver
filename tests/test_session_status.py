@@ -1,4 +1,4 @@
-"""Tests for ``quiver.sessions.status`` — the ``swe session`` STATUS column.
+"""Tests for ``swe.sessions.status`` — the ``swe session`` STATUS column.
 
 ``~`` is redirected to a per-test temp dir via ``patch.dict`` on ``HOME``;
 ``now`` is fixed through the ``now`` parameter so the ACTIVE_WINDOW_S
@@ -16,10 +16,10 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from quiver.console import strip_ansi
+from swe.console import strip_ansi
 
-from quiver.sessions.models import Session
-from quiver.sessions.status import (
+from swe.sessions.models import Session
+from swe.sessions.status import (
     ACTIVE,
     ACTIVE_WINDOW_S,
     DONE,
@@ -494,7 +494,7 @@ class DevinStatusTest(StatusTestBase):
         self._write_lock("d14", str(os.getpid()))
         s = _session("devin", "d14", age_s=9999)
         with patch(
-            "quiver.sessions.status._pid_command",
+            "swe.sessions.status._pid_command",
             return_value="/Applications/Devin.app/Contents/Resources/"
             "app/extensions/windsurf/devin/bin/devin acp",
         ):
@@ -505,7 +505,7 @@ class DevinStatusTest(StatusTestBase):
         self._write_lock("d15", str(os.getpid()))
         s = _session("devin", "d15", age_s=0)
         with patch(
-            "quiver.sessions.status._pid_command",
+            "swe.sessions.status._pid_command",
             return_value="/Applications/Devin.app/Contents/Resources/"
             "app/extensions/windsurf/devin/bin/devin acp",
         ):
@@ -942,7 +942,7 @@ class ClineStatusTest(StatusTestBase):
         self.assertEqual(DONE, session_status(s, now=NOW))
 
     def test_pid_liveness_tolerates_missing_meta(self):
-        from quiver.sessions.status import _cline_pid_alive
+        from swe.sessions.status import _cline_pid_alive
 
         self.assertFalse(_cline_pid_alive("nonexistent"))
 
@@ -1042,7 +1042,7 @@ class MiscStatusTest(StatusTestBase):
 
 class TailRecordsTest(unittest.TestCase):
     def test_small_file_is_complete(self):
-        from quiver.sessions.status import _tail_records
+        from swe.sessions.status import _tail_records
 
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
             fh.write(json.dumps({"a": 1}) + "\n" + json.dumps({"b": 2}) + "\n")
@@ -1052,7 +1052,7 @@ class TailRecordsTest(unittest.TestCase):
         self.assertEqual([{"a": 1}, {"b": 2}], records)
 
     def test_large_file_is_incomplete_and_drops_partial_first_line(self):
-        from quiver.sessions.status import _tail_records
+        from swe.sessions.status import _tail_records
 
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
             fh.write(json.dumps({"head": "x" * 500}) + "\n")
@@ -1065,13 +1065,13 @@ class TailRecordsTest(unittest.TestCase):
 
 class StatusLegendTest(unittest.TestCase):
     def test_legend_is_none_when_everything_is_unknown(self):
-        from quiver.sessions.commands import _status_legend
+        from swe.sessions.commands import _status_legend
 
         self.assertIsNone(_status_legend(["", "", ""]))
         self.assertIsNone(_status_legend([]))
 
     def test_legend_lists_all_five_glyphs(self):
-        from quiver.sessions.commands import _status_legend
+        from swe.sessions.commands import _status_legend
 
         line = _status_legend(["done"])
         plain = strip_ansi(line)
@@ -1081,7 +1081,7 @@ class StatusLegendTest(unittest.TestCase):
             self.assertIn(label, plain)
 
     def test_cmd_session_prints_legend_only_when_a_status_is_known(self):
-        from quiver.sessions.commands import cmd_session
+        from swe.sessions.commands import cmd_session
 
         sessions = [_session("claude", "l1"), _session("codex", "l2")]
         for statuses, expect_legend in (
@@ -1089,10 +1089,10 @@ class StatusLegendTest(unittest.TestCase):
             (["", ""], False),
         ):
             with patch(
-                "quiver.sessions.commands.get_all_sessions",
+                "swe.sessions.commands.get_all_sessions",
                 return_value=sessions,
             ), patch(
-                "quiver.sessions.commands.session_statuses",
+                "swe.sessions.commands.session_statuses",
                 return_value=statuses,
             ):
                 buf = io.StringIO()

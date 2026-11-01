@@ -1,5 +1,5 @@
 """Tests for the migration of ``cmd_list`` (providers/commands.py) to
-``quiver.table.Table``.
+``swe.table.Table``.
 
 The migration replaces hand-rolled f-string padding with a single
 5-column Table build (PROVIDER | ALIASES | ENV VAR | API KEY | URL)
@@ -42,15 +42,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from quiver.console import c, strip_ansi, visible_len
-from quiver.providers.commands import cmd_info, cmd_list
-from quiver.providers.defaults import DEFAULT_PROVIDERS
+from swe.console import c, strip_ansi, visible_len
+from swe.providers.commands import cmd_info, cmd_list
+from swe.providers.defaults import DEFAULT_PROVIDERS
 
 
 def _registry_patches(config_dir: Path, registry_file: Path):
     return (
-        patch("quiver.providers.registry.CONFIG_DIR", config_dir),
-        patch("quiver.providers.registry.PROVIDERS_REGISTRY_FILE", registry_file),
+        patch("swe.providers.registry.CONFIG_DIR", config_dir),
+        patch("swe.providers.registry.PROVIDERS_REGISTRY_FILE", registry_file),
     )
 
 
@@ -82,7 +82,7 @@ class CmdListMigrationTest(unittest.TestCase):
         config_dir, registry_file, keys_dir = _setup(tmp_path)
         return _registry_patches(config_dir, registry_file) + (
             patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ),
         )
@@ -196,7 +196,7 @@ class CmdListMigrationTest(unittest.TestCase):
             )
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=keys_dir,
                 ),
             )
@@ -245,7 +245,7 @@ class CmdListMigrationTest(unittest.TestCase):
             )
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=shell_keys,
                 ),
             )
@@ -266,7 +266,7 @@ class CmdListMigrationTest(unittest.TestCase):
             # Defaults with non-empty description include openai and
             # anthropic; their description blurbs contain a known
             # substring (sourced from DEFAULT_PROVIDERS).
-            from quiver.providers.defaults import DEFAULT_PROVIDERS
+            from swe.providers.defaults import DEFAULT_PROVIDERS
             for name, info in DEFAULT_PROVIDERS.items():
                 desc = info.get("description") or ""
                 if desc:
@@ -366,10 +366,10 @@ class CmdListMigrationTest(unittest.TestCase):
                 },
             }
             with p1, p2, patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ), patch(
-                "quiver.providers.commands.load_registry",
+                "swe.providers.commands.load_registry",
                 return_value=fake_providers,
             ):
                 output = _run_cmd_list([])
@@ -455,7 +455,7 @@ class CmdListMigrationTest(unittest.TestCase):
             missing_dir = tmp_path / "no_such_dir"
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=missing_dir,
                 ),
             )
@@ -477,7 +477,7 @@ class CmdListMigrationTest(unittest.TestCase):
             )
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=keys_dir,
                 ),
             )
@@ -498,7 +498,7 @@ class CmdListMigrationTest(unittest.TestCase):
             (keys_dir / "openai").write_text(raw_key)
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=keys_dir,
                 ),
             )
@@ -553,7 +553,7 @@ class CmdInfoMigrationTest(unittest.TestCase):
         config_dir, registry_file, keys_dir = _setup(tmp_path)
         return _registry_patches(config_dir, registry_file) + (
             patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=keys_dir,
             ),
         )
@@ -704,7 +704,7 @@ class CmdInfoMigrationTest(unittest.TestCase):
             )
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=keys_dir,
                 ),
             )
@@ -747,7 +747,7 @@ class CmdInfoMigrationTest(unittest.TestCase):
             )
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=keys_dir,
                 ),
             )
@@ -838,7 +838,7 @@ class CmdInfoMigrationTest(unittest.TestCase):
             )
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=empty_keys,
                 ),
             )
@@ -865,7 +865,7 @@ class CmdInfoMigrationTest(unittest.TestCase):
             )
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=shell_keys,
                 ),
             )
@@ -894,7 +894,7 @@ class CmdInfoMigrationTest(unittest.TestCase):
             )
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=shell_keys,
                 ),
             )
@@ -947,7 +947,7 @@ class CmdInfoMigrationTest(unittest.TestCase):
             (keys_dir / "openai").write_text("")
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=keys_dir,
                 ),
             )
@@ -967,7 +967,7 @@ class CmdInfoMigrationTest(unittest.TestCase):
             )
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=keys_dir,
                 ),
             )
@@ -985,7 +985,7 @@ class CmdInfoMigrationTest(unittest.TestCase):
             (keys_dir / "openai").write_text(raw_key)
             patches = _registry_patches(config_dir, registry_file) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=keys_dir,
                 ),
             )
@@ -1037,7 +1037,7 @@ class CmdAddTest(unittest.TestCase):
         return _registry_patches(config_dir, registry_file), registry_file
 
     def _run_add(self, args):
-        from quiver.providers.commands import cmd_add
+        from swe.providers.commands import cmd_add
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -1084,7 +1084,7 @@ class CmdAddTest(unittest.TestCase):
             saved = self._read_registry(registry_file)
             loaded = {}
             with patches[0], patches[1]:
-                from quiver.providers.registry import load_registry
+                from swe.providers.registry import load_registry
                 loaded = load_registry()
         self.assertEqual(rc, 0)
         self.assertEqual(saved["_removed"], ["deepseek"])
@@ -1164,7 +1164,7 @@ class CmdRemoveHelpTest(unittest.TestCase):
     def test_remove_help_token_prints_help_not_lookup(self):
         # `providers remove --help` used to look up a provider literally
         # named "--help" and report it missing.
-        from quiver.providers.commands import cmd_remove
+        from swe.providers.commands import cmd_remove
 
         # The help token is checked against the live registry (a provider
         # could legitimately alias "help"), so patch the registry paths
@@ -1185,7 +1185,7 @@ class CmdRemoveHelpTest(unittest.TestCase):
     def test_remove_can_still_remove_a_provider_named_help(self):
         # `help` is a valid derived alias (env HELP_API_KEY) — the help
         # route must yield when the token resolves to a real provider.
-        from quiver.providers.commands import cmd_remove
+        from swe.providers.commands import cmd_remove
 
         with TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / ".config" / "swe"
@@ -1209,13 +1209,13 @@ class CmdRemoveHelpTest(unittest.TestCase):
     def test_remove_help_survives_a_broken_registry(self):
         # A corrupt providers.json must not block `remove --help`:
         # help is exactly what a user needs when the registry broke.
-        from quiver.providers.commands import cmd_remove
+        from swe.providers.commands import cmd_remove
 
         for argv in (["--help"], ["-h"], ["help"]):
             with self.subTest(argv=argv):
                 buf = io.StringIO()
                 with patch(
-                    "quiver.providers.commands.load_registry",
+                    "swe.providers.commands.load_registry",
                     side_effect=Exception("corrupt"),
                 ), redirect_stdout(buf):
                     rc = cmd_remove(argv)
@@ -1227,7 +1227,7 @@ class CmdStoreWordingTest(unittest.TestCase):
     """Printed key-store instructions must match the layout that is read.
 
     The default store is one shell-export file
-    (``~/.quiver/secrets/providers/.api_keys``); a directory of
+    (``~/.swe/secrets/providers/.api_keys``); a directory of
     bare-key files only exists under ``--api-keys-dir=DIR`` or a legacy
     ``~/.api_keys/`` directory.
     """
@@ -1244,10 +1244,10 @@ class CmdStoreWordingTest(unittest.TestCase):
         # cannot write.
         with TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            missing_store = tmp_path / ".quiver" / "secrets" / "providers" / ".api_keys"
+            missing_store = tmp_path / ".swe" / "secrets" / "providers" / ".api_keys"
             patches = self._patches(tmp_path) + (
                 patch(
-                    "quiver.providers.commands.default_keys_dir",
+                    "swe.providers.commands.default_keys_dir",
                     return_value=missing_store,
                 ),
             )
@@ -1277,7 +1277,7 @@ class CmdStoreWordingTest(unittest.TestCase):
                            env_vars=("OPENAI_API_KEY",)) -> str:
         import json
 
-        from quiver.providers.commands import cmd_remove
+        from swe.providers.commands import cmd_remove
 
         config_dir = tmp_path / ".config" / "swe"
         registry_file = config_dir / "providers.json"
@@ -1287,7 +1287,7 @@ class CmdStoreWordingTest(unittest.TestCase):
         }))
         patches = _registry_patches(config_dir, registry_file) + (
             patch(
-                "quiver.providers.commands.default_keys_dir",
+                "swe.providers.commands.default_keys_dir",
                 return_value=store,
             ),
         )

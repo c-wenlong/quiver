@@ -12,8 +12,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from quiver.remote import agent as agent_mod
-from quiver.remote import inject, protocol, stream, supervise
+from swe.remote import agent as agent_mod
+from swe.remote import inject, protocol, stream, supervise
 from tests._tempdir import temp_dir
 from tests.test_remote_adapters import _FakeServeProc
 from tests.test_remote_hub import HubBase, _session
@@ -607,7 +607,7 @@ class TestHubRelay(HubBase):
         supervise.mark(self.srv.home, "codex:t",
                        {"mode": "appserver", "tool_name": "codex"})
         handler = type("H", (), {"_state": self.srv.state})()
-        from quiver.remote.hub import _Handler
+        from swe.remote.hub import _Handler
         inj = _Handler._injector(handler, "codex:t")
         self.assertIs(inj._inner.deltas, self.srv.state.deltas)
 

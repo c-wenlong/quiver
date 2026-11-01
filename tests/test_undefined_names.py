@@ -1,4 +1,4 @@
-"""No module under src/quiver reads a global name it never defines.
+"""No module under src/swe reads a global name it never defines.
 
 `swe doctor` shipped calling `is_dir_on_path` from a module that never
 imported it, so it raised NameError on every machine with an nvm node.
@@ -13,7 +13,7 @@ import symtable
 import unittest
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / "src" / "quiver"
+SRC = Path(__file__).resolve().parent.parent / "src" / "swe"
 
 _IMPLICIT = set(dir(builtins))
 

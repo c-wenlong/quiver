@@ -5,9 +5,9 @@ import threading
 import unittest
 from pathlib import Path
 
-from quiver.remote import protocol
-from quiver.remote import journal as journal_mod
-from quiver.remote.journal import Journal
+from swe.remote import protocol
+from swe.remote import journal as journal_mod
+from swe.remote.journal import Journal
 
 from tests._tempdir import temp_dir
 
@@ -66,7 +66,7 @@ class TestJournal(unittest.TestCase):
             for i in range(300):
                 fh.write(json.dumps({"seq": i + 1, "type": "t", "data": "x" * 5000}) + "\n")
         from unittest.mock import patch
-        from quiver.remote import journal as journal_mod
+        from swe.remote import journal as journal_mod
         real_open = open
         reads = []
 
@@ -82,7 +82,7 @@ class TestJournal(unittest.TestCase):
         self.assertEqual(self.journal.last_seq(key), 350)
 
     def test_counted_journal_still_trims_past_ring_max(self):
-        from quiver.remote import journal as journal_mod
+        from swe.remote import journal as journal_mod
         key = "a:grow"
         path = self.journal.dir / f"{protocol.key_slug(key)}.jsonl"
         with open(path, "w") as fh:
