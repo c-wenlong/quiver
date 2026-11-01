@@ -4,7 +4,8 @@
 # and attaches both files to the matching GitHub release.  The `macos-app`
 # job builds Quiver.app on a macOS 26 runner, signs and notarizes it when
 # the secrets below are configured, and attaches the DMG plus a Sparkle
-# `appcast.xml` the same way.
+# `appcast.xml` the same way.  `bump-homebrew-tap` then points the
+# c-wenlong/homebrew-quiver cask and formula at the new DMG and wheel.
 #
 # It does NOT create the release and it does NOT merge or tag anything: the
 # maintainer publishes the release by hand, and this workflow only attaches
@@ -457,6 +458,10 @@ jobs:
     permissions:
       # Only this job gets a writable token, and only for release assets.
       contents: write
+    outputs:
+      # "true" only when a published release got a signed, versioned DMG:
+      # the one case the Homebrew tap should follow.
+      attached: ${{ steps.upload.outputs.attached }}
 
     steps:
       - name: Download the distributions
@@ -475,6 +480,7 @@ jobs:
         # Deliberately does not create the release.  If the maintainer has not
         # written the notes yet, this leaves a notice and the files stay on the
         # workflow run; re-running the workflow afterwards attaches them.
+        id: upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -495,9 +501,99 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
             echo "Attached ${assets[*]} to release $RELEASE_TAG"
+            if [ "${#versioned[@]}" -eq 1 ]; then
+              echo "attached=true" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "::notice::No published GitHub release for $RELEASE_TAG yet. Publish the release, then re-run this workflow to attach the artifacts."
           fi
+
+  bump-homebrew-tap:
+    # Points c-wenlong/homebrew-quiver at this release: the `quiver` cask
+    # at the DMG, the `swe` formula at the wheel. Runs only when the
+    # upload above put a signed DMG on a published release, so an unsigned
+    # scaffold run or a tag with no release yet never moves the tap.
+    #
+    # Required secret: HOMEBREW_TAP_TOKEN, a fine-grained token with
+    # Contents read/write on c-wenlong/homebrew-quiver only. Without it
+    # the job leaves a notice and does nothing.
+    name: Bump the Homebrew tap
+    needs: attach-to-release
+    if: needs.attach-to-release.outputs.attached == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check the token and that this is the latest release
+        id: gate
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN is not set; the Homebrew tap stays on its current version."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # `gh release view` with no tag is the latest published release,
+          # never a draft or prerelease. A manual re-run for an older tag
+          # must not roll the tap back.
+          latest="$(gh release view --json tagName --jq .tagName)"
+          if [ "$latest" != "$RELEASE_TAG" ]; then
+            echo "::notice::$RELEASE_TAG is not the latest release ($latest); the Homebrew tap stays as it is."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "go=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.gate.outputs.go == 'true'
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          sparse-checkout: scripts/bump_tap.py
+          sparse-checkout-cone-mode: false
+
+      - name: Hash the uploaded DMG and wheel
+        # Hashes what the release now serves, the bytes `brew` will fetch,
+        # rather than the copies this run uploaded.
+        if: steps.gate.outputs.go == 'true'
+        id: sha
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          dir="$RUNNER_TEMP/assets"
+          gh release download "$RELEASE_TAG" --dir "$dir" \
+            --pattern "Quiver-$version.dmg" \
+            --pattern "quiver-$version-py3-none-any.whl"
+          echo "dmg=$(sha256sum "$dir/Quiver-$version.dmg" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "wheel=$(sha256sum "$dir/quiver-$version-py3-none-any.whl" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Push the bump to the tap
+        if: steps.gate.outputs.go == 'true'
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          DMG_SHA: ${{ steps.sha.outputs.dmg }}
+          WHEEL_SHA: ${{ steps.sha.outputs.wheel }}
+        run: |
+          tap="$RUNNER_TEMP/homebrew-quiver"
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/c-wenlong/homebrew-quiver.git" "$tap"
+          python3 scripts/bump_tap.py "$tap" "$RELEASE_TAG" "$DMG_SHA" "$WHEEL_SHA"
+          cd "$tap"
+          if git diff --quiet; then
+            echo "The tap already points at $RELEASE_TAG."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "quiver ${RELEASE_TAG#v}" \
+            -m "Bumped by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          git push origin HEAD:main
 
   # ---------------------------------------------------------------------------
   # PyPI publishing — BLOCKED, not yet possible.

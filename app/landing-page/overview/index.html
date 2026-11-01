@@ -230,7 +230,14 @@ moved to 3.11 afterwards. Pin that tag:</p>
 pin or a newer interpreter. Debian 12 (3.11), Ubuntu 24.04 (3.12) and current
 Fedora and Homebrew are all fine as they are.</p>
 </blockquote>
-<h3 id="pipx-recommended"><a class="anchor" href="#pipx-recommended"></a>pipx (recommended)</h3>
+<h3 id="homebrew-macos"><a class="anchor" href="#homebrew-macos"></a>Homebrew (macOS)</h3>
+<pre><code class="language-bash">brew install --cask c-wenlong/quiver/quiver   # the Mac app (Apple silicon, macOS 26+)
+brew install c-wenlong/quiver/swe             # the swe CLI on its own
+</code></pre>
+<p>Both come from the <a href="https://github.com/c-wenlong/homebrew-quiver">c-wenlong/homebrew-quiver</a>
+tap, which each release updates. The app updates itself through Sparkle, so
+<code>brew upgrade</code> leaves it alone unless you pass <code>--greedy</code>.</p>
+<h3 id="pipx"><a class="anchor" href="#pipx"></a>pipx</h3>
 <pre><code class="language-bash">pipx install git+https://github.com/c-wenlong/quiver.git
 swe --help
 </code></pre>

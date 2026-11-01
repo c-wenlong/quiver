@@ -98,7 +98,18 @@ extra that adds a real dependency, and you opt into it.
 > pin or a newer interpreter. Debian 12 (3.11), Ubuntu 24.04 (3.12) and current
 > Fedora and Homebrew are all fine as they are.
 
-### pipx (recommended)
+### Homebrew (macOS)
+
+```bash
+brew install --cask c-wenlong/quiver/quiver   # the Mac app (Apple silicon, macOS 26+)
+brew install c-wenlong/quiver/swe             # the swe CLI on its own
+```
+
+Both come from the [c-wenlong/homebrew-quiver](https://github.com/c-wenlong/homebrew-quiver)
+tap, which each release updates. The app updates itself through Sparkle, so
+`brew upgrade` leaves it alone unless you pass `--greedy`.
+
+### pipx
 
 ```bash
 pipx install git+https://github.com/c-wenlong/quiver.git
