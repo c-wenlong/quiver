@@ -675,8 +675,10 @@ to use their own login state and environment."""
   {c('cyan', 'swe setup --apply')}            Apply safe discovery changes without prompts
   {c('cyan', 'swe setup --json')}             Print the discovery preview as JSON
   {c('cyan', 'swe setup --non-interactive')}  Preview without prompts or writes
-  {c('cyan', 'swe setup --hub=<git url>')}    Clone your hub repo as ~/.swe first, then
-                               run any of the above (only while ~/.swe has no hub yet)
+  {c('cyan', 'swe setup --hub=<git url>')}    Clone your hub repo as ~/.swe first, install
+                               its plugins and sync its MCP servers into each
+                               harness, then run any of the above (only while
+                               ~/.swe has no hub yet)
 
   While ~/.swe has no hub yet (no AGENTS.md, no .git), the wizard first asks
   for your hub repo's URL; a blank answer starts an empty hub.

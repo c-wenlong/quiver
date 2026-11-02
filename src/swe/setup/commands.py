@@ -11,7 +11,7 @@ from swe.harness.discover_commands import cmd_discover
 from swe.mcp.discover import apply_mcp_findings, discover_mcp_servers
 from swe.prompt import read_line
 from swe.skills.symlinks import apply_skills_symlink_hints, skills_symlink_hints
-from swe.setup.wizard import SECTION_ALIASES, run_setup_wizard
+from swe.setup.wizard import SECTION_ALIASES, print_hub_installs, run_setup_wizard
 from swe.init.commands import (
     adopt_instructions,
     agents_file_customised,
@@ -111,9 +111,11 @@ def _setup_help():
                                 catalog ones that aren't registered yet)
   {c('cyan', 'swe setup --json')}       Print the discovery preview as JSON
   {c('cyan', 'swe setup --non-interactive')}  Preview without prompts or writes
-  {c('cyan', 'swe setup --hub=<git url>')}  Clone your hub repo as ~/.swe first, then
-                                carry on with any of the above. Only while
-                                ~/.swe has no hub yet; fork a hub repo first
+  {c('cyan', 'swe setup --hub=<git url>')}  Clone your hub repo as ~/.swe first, install
+                                its plugins and sync its MCP servers into each
+                                harness, then carry on with any of the above.
+                                Only while ~/.swe has no hub yet; fork a hub
+                                repo first
 
 {c('bold', 'Steps')}
   First, only while ~/.swe has no hub yet: your hub repo's URL
@@ -153,9 +155,11 @@ def _take_hub(args: list[str]) -> tuple[list[str], str | None]:
 
 
 def _clone_hub(home: Path, url: str, *, quiet: bool) -> dict | None:
-    """``--hub``: clone the hub as ``~/.swe`` and register its plugin
-    marketplaces. Returns what was cloned, or None after saying why not
-    (on stderr when ``quiet``, so --json keeps stdout for its document)."""
+    """``--hub``: clone the hub as ``~/.swe``, register its plugin
+    marketplaces, install their plugins and sync its MCP servers into
+    each harness. Returns what was cloned, or None after saying why not
+    (on stderr when ``quiet``, so --json keeps stdout for its document).
+    A plugin or server that didn't make it is a row, never a failure."""
     from swe.init.hub import HubError, clone_and_register, public_url
 
     if not quiet:
@@ -168,6 +172,7 @@ def _clone_hub(home: Path, url: str, *, quiet: bool) -> dict | None:
     if not quiet:
         print(c("green", "  Cloned."))
         _print_marketplaces(cloned["marketplaces"])
+        print_hub_installs(cloned)
     return cloned
 
 
@@ -203,6 +208,8 @@ def _print_hub_hint(home: Path) -> None:
         return
     print(c("dim", "  ~/.swe has no hub yet. To start from your own hub repo:\n"))
     print(f"    {c('cyan', 'swe setup --hub=<git url>')}")
+    print(c("dim", "    It clones the hub, installs its plugins and syncs its MCP servers"))
+    print(c("dim", "    into each harness; a server whose secret has no value waits for it."))
     print(c("dim", f"    {FORK_NOTE}"))
     if DEMO_HUB_URL:
         print(c("dim", f"    Demo hub: {DEMO_HUB_URL}"))

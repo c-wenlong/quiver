@@ -20,6 +20,7 @@ Run 'swe mcp <command> help' for detailed help on each command.
 """
 
 import fnmatch
+import io
 import json
 import os
 import re
@@ -1195,11 +1196,17 @@ def cmd_sync(args):
     return emit(report)
 
 
-def _sync(args, report: dict | None):
+def _sync(args, report: dict | None, skip_missing: bool = False):
     """The body of ``swe mcp sync``; fills ``report`` when one is given.
 
     ``report`` takes names, never configs: the server definitions carry
     resolved secrets.
+
+    A hub server whose ``${NAME}`` has no value stops the whole run, so
+    nothing is half synced behind the user's back. ``skip_missing`` (what
+    ``swe setup --hub`` runs, never a flag) leaves just those servers out
+    instead and names them in ``report["missing"]`` as ``{server:
+    [NAME, ...]}``.
     """
     allowed_flags = {"--force", "--skip-conflicts", "--all", "--no-interactive", "--dry-run", "--strict", "--prune"}
     unknown_flags = [
@@ -1364,7 +1371,19 @@ def _sync(args, report: dict | None):
                 continue
             for var in unresolved_names(hub_servers.get(server_name, {}), secrets):
                 missing.setdefault(var, []).append(server_name)
-        if missing:
+        if missing and skip_missing:
+            left_out: dict[str, list[str]] = {}
+            for var in sorted(missing):
+                for server_name in missing[var]:
+                    left_out.setdefault(server_name, []).append(var)
+            if report is not None:
+                report["missing"] = left_out
+            selected = [name for name in selected if name not in left_out]
+            if report is not None:
+                report["selected"] = list(selected)
+            if not selected:
+                return 0
+        elif missing:
             for var in sorted(missing):
                 used_by = ", ".join(missing[var])
                 print(f"Not syncing: no value for {var} (used by {used_by}). "
@@ -1529,6 +1548,29 @@ def _sync(args, report: dict | None):
             print(f"\n  {target}: nothing changed")
 
     return 0
+
+
+def sync_hub_to(target: str) -> dict:
+    """``swe mcp sync swe <target> --no-interactive --skip-conflicts`` in
+    process, for ``swe setup --hub``: says nothing, and a server whose
+    ``${NAME}`` has no value is left out (``missing``) rather than
+    stopping the rest.
+
+    Returns ``swe mcp sync --json``'s report for that one target plus
+    ``missing`` (``{server: [NAME]}``), ``code`` (the exit status) and
+    ``said`` (what the sync would have printed, for a failure's reason).
+    A server already in the target is left as it is (``skipped``).
+    Raises what the sync raises, a corrupt target config among them.
+    """
+    report = {"source": None, "dry_run": False, "selected": [], "targets": [],
+              "missing": {}}
+    said = io.StringIO()
+    with redirect_stdout(said):
+        code = _sync([HUB_LABEL, target, "--no-interactive", "--skip-conflicts"],
+                     report, skip_missing=True)
+    report["code"] = code
+    report["said"] = strip_ansi(said.getvalue()).strip()
+    return report
 
 
 _SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")

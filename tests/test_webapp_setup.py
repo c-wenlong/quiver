@@ -442,10 +442,33 @@ class TestHubClone(_HubClone, unittest.TestCase):
         self.assertFalse(hub["can_clone"])
         self.assertEqual(self.agents_md().read_text(), "# from the hub\n")
         self.assertTrue(self.registry_file.parent.is_dir())  # the local state stayed
-        self.register.assert_called_once_with(self.home)
+        self.register.assert_called_once()
+        self.assertEqual(self.register.call_args.args, (self.home,))
         # The setup lock is free again: apply runs on the cloned hub.
         self.assertTrue(setup_page._LOCK.acquire(blocking=False))
         setup_page._LOCK.release()
+
+    def test_the_clone_syncs_mcp_servers_under_the_mcp_pages_lock(self):
+        # An MCP page add or remove while the clone wrote the same harness
+        # configs could be lost. Only the sync holds it: the plugin
+        # installs before it take minutes.
+        from swe.webapp import pages
+
+        held = {}
+
+        def step(name):
+            def run(*_a, **_k):
+                held[name] = pages.CONFIG_LOCK.locked()
+                return []
+            return run
+
+        with patch("swe.init.hub.install_hub_plugins", side_effect=step("plugins")), \
+                patch("swe.init.hub.sync_hub_mcp", side_effect=step("mcp")):
+            self.clone(str(self.src))
+            hub = _wait_for_clone(self.home)
+        self.assertEqual(hub["job"]["state"], "done", hub)
+        self.assertEqual(held, {"plugins": False, "mcp": True})
+        self.assertFalse(pages.CONFIG_LOCK.locked())
 
     def test_an_unreachable_url_fails_with_why_and_no_token(self):
         def fail(args, timeout, run):
@@ -681,6 +704,46 @@ class TestLoadOrder(unittest.TestCase):
             " answers[0]({ status: 401, data: null }); await polling;"
             " process.stdout.write(JSON.stringify({ reads: answers.length, gates, polling: page.hubPolling }));")
         self.assertEqual(out, {"reads": 1, "gates": [True], "polling": False})
+
+    _NAMES = ("globalThis.esc = (s) => String(s); globalThis.Fmt = { harnessName: (id) => id };"
+              " page.data = { machine: 'mac' };")
+
+    def test_a_clone_from_an_older_swe_keeps_the_old_done_wording(self):
+        """With no plugins or mcp lists the card said both had run."""
+        out = self.run_js(
+            self._NAMES +
+            " const old = hubClonedSummary({ marketplaces: [] });"
+            " const now = hubClonedSummary({ marketplaces: [], plugins: [], mcp: [] });"
+            " process.stdout.write(JSON.stringify({ old, now, notes: hubInstallNotes({}) }));")
+        self.assertEqual(out["old"], "Its AGENTS.md, skills, plugins and MCP servers are on mac now. "
+                                     "Set up links them into each agent.")
+        self.assertEqual(out["now"], "Its plugins are installed and its MCP servers synced into each "
+                                     "agent on mac. Set up links its AGENTS.md and skills.")
+        self.assertEqual(out["notes"], [])
+
+    def test_install_notes_name_what_was_left_out(self):
+        rows = {
+            "plugins": [
+                {"harness": "claude", "name": "ok", "marketplace": "m", "skipped": None,
+                 "error": None, "retry": None},
+                {"harness": "codex", "name": "had", "marketplace": "m",
+                 "skipped": "already installed", "error": None, "retry": None},
+                {"harness": "codex", "name": "late", "marketplace": "m",
+                 "skipped": "not attempted: setup ran out of time", "error": None,
+                 "retry": "swe plugins install late@m --harness=codex"},
+            ],
+            "mcp": [
+                {"harness": "", "name": "", "skipped": None, "needs": [],
+                 "error": "Cannot parse JSON in /h/.swe/mcp.json: fix or remove the file"},
+            ],
+        }
+        out = self.run_js(self._NAMES +
+                          f" process.stdout.write(JSON.stringify(hubInstallNotes({json.dumps(rows)})));")
+        self.assertEqual(out, [
+            "late@m isn't installed in codex: not attempted: setup ran out of time; "
+            "retry with: swe plugins install late@m --harness=codex",
+            "Cannot parse JSON in /h/.swe/mcp.json: fix or remove the file",
+        ])
 
     def test_leaving_still_ends_the_read(self):
         out = self.run_js("const a = load(1); routeGen = 2; answers[0]({ status: 200, data: { n: 1 } });"

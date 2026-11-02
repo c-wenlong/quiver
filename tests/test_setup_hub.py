@@ -63,7 +63,10 @@ class SetupHubCloneTest(_HubHarness):
         self.assertFalse(data["hub"]["can_clone"])
         # The preview is of the cloned hub: its AGENTS.md is already there.
         self.assertTrue(data["instructions"]["agents_file_exists"])
-        self.register.assert_called_once_with(self.home)
+        self.register.assert_called_once()
+        self.assertEqual(self.register.call_args.args, (self.home,))
+        # Registration shares the post-clone install budget (#1510).
+        self.assertIsNotNone(self.register.call_args.kwargs.get("budget"))
 
     def test_space_form_with_apply_clones_then_links(self):
         src = _hub_repo(self.scratch)

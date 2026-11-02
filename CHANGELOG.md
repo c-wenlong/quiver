@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe setup --hub` brings the hub's plugins and MCP servers in too.**
+  After cloning the hub and registering its plugin marketplaces, setup
+  installs every plugin those marketplaces list into Claude Code and
+  Codex (skipping ones already installed, and archived harnesses), and
+  syncs the hub's `mcp.json` servers into every installed harness with a
+  known MCP config, as `swe plugins install` and `swe mcp sync swe
+  <targets>` do. A server whose `${NAME}` secret has no value is skipped
+  with the command that sets it (`swe mcp secret set NAME`) while the
+  rest sync, and a server a harness already has is left alone. A failed
+  plugin or server is reported and never fails setup, and so is a hub
+  `mcp.json` that can't be read or parsed. Registering marketplaces and
+  installing plugins share a 150 s budget after the clone (90 s at most
+  per install); a plugin it leaves no time for is reported as not
+  attempted, with the `swe plugins install` command that installs it, so
+  the Mac app always gets its answer. `swe setup --json` adds
+  `hub.cloned.plugins` and `hub.cloned.mcp`, and the web Setup page and
+  the Mac setup sheet name what didn't make it. The web Setup page's
+  clone syncs MCP servers under the MCP page's write lock. Plain `swe mcp
+  sync` still refuses to write anything while a secret is missing. Part of
+  [#524](https://github.com/c-wenlong/swe/issues/524).
 - **Demo hub link on every setup surface.** `DEMO_HUB_URL` now points at
   the public template [c-wenlong/swe-demo-hub](https://github.com/c-wenlong/swe-demo-hub),
   so `swe setup`, the setup wizard, the web Setup page and the Mac setup

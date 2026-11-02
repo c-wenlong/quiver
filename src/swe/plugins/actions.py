@@ -30,7 +30,7 @@ import tomllib
 from contextlib import contextmanager
 from pathlib import Path
 
-from swe.find.plugin_drift import _harness_env
+from swe.find.plugin_drift import _harness_env, took_too_long
 from swe.paths import cache_dir_for, expand_user
 from swe.plugins.models import ActionResult
 from swe.plugins.catalog import ACTIONABLE, READERS, _public
@@ -96,14 +96,14 @@ def _tail(*streams: str | None) -> str:
     return ""
 
 
-def _run(home: Path, argv: list[str], run) -> subprocess.CompletedProcess:
+def _run(home: Path, argv: list[str], run, timeout: int = 300) -> subprocess.CompletedProcess:
     try:
         done = run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                   timeout=300, env=_harness_env(home))
+                   timeout=timeout, env=_harness_env(home))
     except FileNotFoundError:
         raise ActionError(f"{argv[0]} is not on PATH") from None
     except subprocess.TimeoutExpired:
-        raise ActionError(f"{shlex.join(argv)} did not finish in 5 minutes") from None
+        raise ActionError(f"{shlex.join(argv)} did not finish in {took_too_long(timeout)}") from None
     except OSError as exc:
         raise ActionError(f"couldn't run {argv[0]}: {exc.strerror or exc}") from None
     if done.returncode != 0:
@@ -130,8 +130,10 @@ def _noop_reason(action: str, before: dict, harness: str) -> str | None:
     return f"already {action}d" if before["enabled"] is want else None
 
 
-def plugin_action(home: Path, action: str, ref: str, harness: str, run=None) -> dict:
-    """Do ``action`` for ``ref`` in ``harness``; return what happened."""
+def plugin_action(home: Path, action: str, ref: str, harness: str, run=None,
+                  timeout: int = 300) -> dict:
+    """Do ``action`` for ``ref`` in ``harness``; return what happened. The
+    harness CLI gets ``timeout`` seconds."""
     if action not in ACTIONS:
         raise ActionError(f"unknown action {action!r}; use one of {', '.join(ACTIONS)}")
     if harness not in ACTIONABLE:
@@ -147,7 +149,7 @@ def plugin_action(home: Path, action: str, ref: str, harness: str, run=None) -> 
         verb = _VERBS[harness].get(action)
         if verb is not None:
             argv = [harness, "plugin", verb, ref]
-            done = _run(home, argv, run)
+            done = _run(home, argv, run, timeout)
             ran.append(argv)
             output = _tail(done.stdout, done.stderr)
         else:

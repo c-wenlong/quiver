@@ -23,6 +23,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
+from contextlib import nullcontext
 from pathlib import Path
 
 from swe.paths import GITIGNORE_BODY, swe_dir_for
@@ -31,6 +33,22 @@ from swe.paths import GITIGNORE_BODY, swe_dir_for
 # that never answers does not hang a terminal forever.
 REACH_TIMEOUT_S = 30
 CLONE_TIMEOUT_S = 600
+
+# After a clone, registering the hub's marketplaces and installing their
+# plugins (one harness CLI call each, seconds when it works) share this
+# many seconds. Each call gets at most HUB_COMMAND_TIMEOUT_S, never past
+# the budget, and none starts with less than HUB_MIN_START_S left: those
+# are reported as OUT_OF_TIME with the command that does them later. The
+# MCP sync after them writes files in process and takes no budget.
+# REACH + CLONE + this budget must stay well inside the Mac app's limit
+# for `swe setup --hub` (SweClient.hubCloneTimeout, 900 s), which
+# tests/test_setup_hub_installs.py checks.
+HUB_INSTALL_BUDGET_S = 150
+HUB_COMMAND_TIMEOUT_S = 90
+HUB_MIN_START_S = 15
+OUT_OF_TIME = "not attempted: setup ran out of time"
+# What `swe init --hub` and `swe sync` give each call: no shared budget.
+HUB_PLAIN_TIMEOUT_S = 300
 
 # The public demo hub people fork (or use as a template) to start their own
 # (#1446). Every surface that asks for a hub URL shows it as a link line, and
@@ -251,34 +269,226 @@ def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
     return root
 
 
-def clone_and_register(home: Path, url: str, run=subprocess.run) -> dict:
-    """Clone ``url`` as ``~/.swe``, then register its marketplaces.
+class Budget:
+    """The time setup's harness CLI calls after a clone share, so ``swe
+    setup --hub --json`` answers inside the Mac app's limit for it
+    (``SweClient.hubCloneTimeout``) however many plugins a hub lists.
 
-    What ``swe setup --hub`` runs; ``swe init --hub`` does the same with
-    its linking pass in between. Returns ``{"url", "path",
-    "marketplaces": [{"harness", "marketplace", "error"}]}`` with ``url``
-    already stripped of credentials. Raises HubError when nothing was
-    cloned.
+    ``timeout()`` is the limit for the next command: at most
+    ``HUB_COMMAND_TIMEOUT_S``, never past the deadline, and None once too
+    little is left to start one, so that command is not attempted."""
+
+    def __init__(self, seconds: float, clock=time.monotonic):
+        self._clock = clock
+        self._end = clock() + seconds
+
+    def timeout(self) -> int | None:
+        left = self._end - self._clock()
+        if left < HUB_MIN_START_S:
+            return None
+        return int(min(HUB_COMMAND_TIMEOUT_S, left))
+
+
+def clone_and_register(home: Path, url: str, run=subprocess.run, mcp_lock=None) -> dict:
+    """Clone ``url`` as ``~/.swe``, register its marketplaces, install
+    their plugins and sync its MCP servers into each harness.
+
+    What ``swe setup --hub`` runs, and the web Setup page's clone; ``swe
+    init --hub`` only registers the marketplaces. Returns ``{"url",
+    "path", "marketplaces": [{"harness", "marketplace", "error"}],
+    "plugins": [...], "mcp": [...]}`` (see ``install_hub_plugins`` and
+    ``sync_hub_mcp``) with ``url`` already stripped of credentials.
+    Raises HubError when nothing was cloned; nothing after the clone
+    raises, a failure is a row.
+
+    After the clone, registering the marketplaces and installing the
+    plugins share one ``HUB_INSTALL_BUDGET_S`` budget; what it leaves
+    no time for is a row saying so. ``mcp_lock``, when given, is held
+    while the MCP servers are written: the web app passes the lock its
+    MCP page holds for its own writes to the same harness configs.
     """
     root = clone_hub(home, url, run=run)
+    budget = Budget(HUB_INSTALL_BUDGET_S)
+    marketplaces = [
+        {"harness": harness, "marketplace": marketplace, "error": error}
+        for harness, marketplace, error in register_marketplaces(home, budget=budget)
+    ]
+    plugins = install_hub_plugins(home, budget=budget)
+    with mcp_lock if mcp_lock is not None else nullcontext():
+        mcp = sync_hub_mcp(home)
     return {
         "url": public_url(url.strip()),
         "path": str(root),
-        "marketplaces": [
-            {"harness": harness, "marketplace": marketplace, "error": error}
-            for harness, marketplace, error in register_marketplaces(home)
-        ],
+        "marketplaces": marketplaces,
+        "plugins": plugins,
+        "mcp": mcp,
     }
 
 
-def register_marketplaces(home: Path, run=None) -> list[tuple[str, str, str | None]]:
+def _archived(home: Path) -> tuple[dict, set[str]]:
+    """The registry (empty when it can't be read) and its archived names."""
+    from swe.configuration import ConfigurationError
+    from swe.init.layout import archived_names, load_registry
+
+    try:
+        registry = load_registry(home)
+    except ConfigurationError:
+        registry = {}
+    return registry, archived_names(registry)
+
+
+def install_hub_plugins(home: Path, run=None, budget: Budget | None = None) -> list[dict]:
+    """Install every plugin each hub marketplace lists, in each harness
+    that has that marketplace registered and is not archived, as ``swe
+    plugins install <plugin>@<marketplace> --harness=<h>`` does.
+
+    One row per plugin and harness: ``{"harness", "name", "marketplace",
+    "skipped", "error", "retry"}``. ``skipped`` is ``"already installed"``
+    for one that was, or ``OUT_OF_TIME`` for one ``budget`` left no time
+    to start; ``error`` says why an install failed. Installed when both
+    are null. ``retry`` is the command that installs a plugin this left
+    out, null otherwise. A failure never stops the plugins after it. A
+    row with an empty ``harness`` and ``name`` is about the whole hub.
+    """
+    from swe.find.plugin_drift import HARNESSES, registered_hub_plugins
+    from swe.plugins.actions import plugin_action
+
+    rows = []
+    try:
+        _registry, archived = _archived(home)
+        wanted = registered_hub_plugins(home, tuple(h for h in HARNESSES if h not in archived))
+    except Exception as exc:  # a broken manifest must not undo the clone
+        return [{"harness": "", "name": "", "marketplace": "", "skipped": None,
+                 "error": f"couldn't read the hub's plugins: {exc}", "retry": None}]
+    for harness, marketplace, name in wanted:
+        ref = f"{name}@{marketplace}"
+        row = {"harness": harness, "name": name, "marketplace": marketplace,
+               "skipped": None, "error": None, "retry": None}
+        rows.append(row)
+        timeout = budget.timeout() if budget is not None else HUB_PLAIN_TIMEOUT_S
+        if timeout is None:
+            row["skipped"] = OUT_OF_TIME
+        else:
+            try:
+                result = plugin_action(home, "install", ref, harness, run=run, timeout=timeout)
+            except Exception as exc:
+                row["error"] = str(exc)
+            else:
+                if not result["changed"]:
+                    if result["detail"] == "already installed":
+                        row["skipped"] = result["detail"]
+                    else:
+                        row["error"] = result["detail"]
+        if row["error"] or row["skipped"] == OUT_OF_TIME:
+            row["retry"] = f"swe plugins install {ref} --harness={harness}"
+    return rows
+
+
+def mcp_targets(home: Path) -> list[str]:
+    """The harnesses setup links into that have an MCP config format swe
+    knows: installed (its folder is there, or its command is on PATH),
+    not archived, with a verified ``MCP_CONFIG_MAP`` entry. A harness swe
+    would only guess a config path for is left out."""
+    from swe.init.layout import HARNESS_SIGNATURES, harness_installed, registry_name
+    from swe.mcp.cli import MCP_CONFIG_MAP
+
+    registry, archived = _archived(home)
+    targets: list[str] = []
+    for label, sig in HARNESS_SIGNATURES.items():
+        name = registry_name(label)
+        if (name in MCP_CONFIG_MAP and name not in targets and name not in archived
+                and harness_installed(label, sig, home, registry)):
+            targets.append(name)
+    return targets
+
+
+def _hub_server_names(home: Path) -> list[str]:
+    """The hub's ``mcp.json`` server names: none when the file is absent.
+    Raises CorruptConfigurationError when it is there but can't be read
+    or parsed, or its ``mcpServers`` is not an object."""
+    from swe.configuration import CorruptConfigurationError
+    from swe.mcp.cli import load_json
+    from swe.paths import mcp_source_file_for
+
+    path = mcp_source_file_for(home)
+    servers = load_json(path).get("mcpServers", {})
+    if not isinstance(servers, dict):
+        raise CorruptConfigurationError(
+            f"mcpServers in {path} must be a JSON object: fix or remove the file")
+    return sorted(servers)
+
+
+def secret_fix(names: list[str]) -> str:
+    """What to say about a server left out for want of ``${NAME}`` values."""
+    sets = "; ".join(f"swe mcp secret set {name}" for name in names)
+    return (f"no value for {', '.join(names)}; "
+            f"set {'it' if len(names) == 1 else 'them'} with: {sets}")
+
+
+def sync_hub_mcp(home: Path) -> list[dict]:
+    """``swe mcp sync swe <targets>`` for the harnesses ``mcp_targets``
+    names, without asking.
+
+    One row per server and harness: ``{"harness", "name", "skipped",
+    "error", "needs"}``, synced when ``skipped`` and ``error`` are null.
+    A server whose ``${NAME}`` has no value is skipped with the command
+    that sets it (``secret_fix``) and those names in ``needs``, and the
+    rest still sync; a server the harness already has is left as it is.
+    Only names reach a row, never a secret's value. A hub ``mcp.json``
+    that is there but can't be read or parsed is one error row with an
+    empty ``harness`` and ``name``; an absent one syncs nothing.
+    """
+    from swe.configuration import CorruptConfigurationError
+    from swe.mcp.cli import LOCAL_ONLY_NOTE, get_tool_config, sync_hub_to
+
+    try:
+        names = _hub_server_names(home)
+    except CorruptConfigurationError as exc:
+        # One row about the whole file: nothing could sync from it.
+        return [{"harness": "", "name": "", "skipped": None,
+                 "error": str(exc), "needs": []}]
+    if not names:
+        return []
+    rows: list[dict] = []
+    for target in mcp_targets(home):
+        def row(name, skipped=None, error=None, needs=(), target=target):
+            rows.append({"harness": target, "name": name, "skipped": skipped,
+                         "error": error, "needs": list(needs)})
+        try:
+            report = sync_hub_to(target)
+        except Exception as exc:
+            for name in names:
+                row(name, error=str(exc))
+            continue
+        if report["code"]:
+            said = report["said"].splitlines()
+            reason = said[-1] if said else f"swe mcp sync stopped with status {report['code']}"
+            for name in names:
+                row(name, error=reason)
+            continue
+        label = (get_tool_config(target) or {}).get("label", target)
+        done = report["targets"][0] if report["targets"] else {}
+        for name in done.get("added", []) + done.get("updated", []):
+            row(name)
+        for name in done.get("skipped", []):
+            row(name, skipped=f"{label} already has a server by this name; left as it is")
+        for name in done.get("unsupported", []):
+            row(name, skipped=f"a remote server; {label} {LOCAL_ONLY_NOTE}")
+        for name, needs in sorted(report["missing"].items()):
+            row(name, skipped=secret_fix(needs), needs=needs)
+    return rows
+
+
+def register_marketplaces(home: Path, run=None,
+                          budget: Budget | None = None) -> list[tuple[str, str, str | None]]:
     """Register each hub ``plugins/<name>`` marketplace with every harness.
 
     The work is ``swe find plugins``'s own ``unregistered`` fixes, so the
     commands are the ones that module builds (``claude plugin marketplace
     add <dir>``, ``codex plugin marketplace add <dir>``) and a harness that
     is not installed is never asked. Returns ``(harness, marketplace,
-    error)`` per attempt; ``error`` is None when it worked.
+    error)`` per attempt; ``error`` is None when it worked, and
+    ``OUT_OF_TIME`` for one ``budget`` left no time to start.
     """
     from swe.find.plugin_drift import FixError, apply_fix, plugin_drift
 
@@ -286,8 +496,12 @@ def register_marketplaces(home: Path, run=None) -> list[tuple[str, str, str | No
     for finding in plugin_drift(home):
         if finding.kind != "unregistered":
             continue
+        timeout = budget.timeout() if budget is not None else HUB_PLAIN_TIMEOUT_S
+        if timeout is None:
+            results.append((finding.harness, finding.marketplace, OUT_OF_TIME))
+            continue
         try:
-            apply_fix(home, finding.id, run=run)
+            apply_fix(home, finding.id, run=run, timeout=timeout)
         except FixError as exc:
             results.append((finding.harness, finding.marketplace, str(exc)))
         else:

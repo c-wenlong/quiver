@@ -19,7 +19,7 @@ from swe.configuration import (
     report_setup_complete,
     save_config,
 )
-from swe.console import c
+from swe.console import c, sanitize
 from swe.harness.discover import apply_findings, discover_harnesses
 from swe.init import hub as hub_repo
 from swe.mcp.discover import apply_mcp_findings, discover_mcp_servers
@@ -160,8 +160,67 @@ def _stage_hub(
             else:
                 print(f"    {c('yellow', '!')} {row['marketplace']} not registered in "
                       f"{row['harness']}: {row['error']}")
+        print_hub_installs(cloned)
         return StageOutcome("hub", label, "changed", f"cloned {cloned['url']}",
                             (cloned["url"],))
+
+
+def _one_line(text: str | None) -> str | None:
+    """Text from the hub or a harness CLI made safe to print, a
+    multi-line error folded onto the line that names it."""
+    return None if text is None else " ".join(sanitize(str(text)).split())
+
+
+def _grouped(rows: list[dict], key) -> list[tuple[tuple, list[str]]]:
+    """Rows sharing ``key(row)``, in first-seen order, with their harnesses."""
+    groups: dict[tuple, list[str]] = {}
+    for row in rows:
+        groups.setdefault(key(row), []).append(row["harness"])
+    return list(groups.items())
+
+
+def print_hub_installs(cloned: dict) -> None:
+    """What a hub clone installed and synced: its plugins, then its MCP
+    servers, one line per outcome with the harnesses it covers. Skips and
+    failures say why, and a server left out for a missing secret says the
+    commands that bring it in. A row with no name is about the whole hub
+    (a file that couldn't be read) and says just its error."""
+    plugins = cloned.get("plugins") or []
+    if plugins:
+        print(f"  {c('bold', 'Plugins')}")
+        for (ref, skipped, error, left_out), where in _grouped(
+                plugins, lambda r: (_one_line(f"{r['name']}@{r['marketplace']}") if r["name"] else None,
+                                    _one_line(r["skipped"]), _one_line(r["error"]),
+                                    bool(r.get("retry")))):
+            harnesses = ", ".join(where)
+            if ref is None:
+                print(f"    {c('yellow', '!')} {error}")
+            elif error or left_out:
+                print(f"    {c('yellow', '!')} {ref} not installed in {harnesses}: {error or skipped}")
+            elif skipped:
+                print(f"    {c('dim', '·')} {ref} {skipped} in {harnesses}")
+            else:
+                print(f"    {c('green', '✓')} {ref} installed in {harnesses}")
+        if any(r.get("retry") for r in plugins):
+            print(c("dim", "    swe plugins install <plugin>@<marketplace> --harness=<h> installs one."))
+    servers = cloned.get("mcp") or []
+    if servers:
+        print(f"  {c('bold', 'MCP servers')}")
+        for (name, skipped, error, needs), where in _grouped(
+                servers, lambda r: (_one_line(r["name"]), _one_line(r["skipped"]),
+                                    _one_line(r["error"]), tuple(r.get("needs") or ()))):
+            harnesses = ", ".join(where)
+            if not name:
+                print(f"    {c('yellow', '!')} {error}")
+            elif error:
+                print(f"    {c('yellow', '!')} {name} not synced to {harnesses}: {error}")
+            elif needs:
+                print(f"    {c('yellow', '!')} {name} not synced: {skipped}")
+                print(c("dim", f"      then: swe mcp sync swe {' '.join(where)} --only={name}"))
+            elif skipped:
+                print(f"    {c('dim', '·')} {name} not synced to {harnesses}: {skipped}")
+            else:
+                print(f"    {c('green', '✓')} {name} synced to {harnesses}")
 
 
 def _stage_harnesses(

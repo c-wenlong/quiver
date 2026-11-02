@@ -113,6 +113,25 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong><code>swe setup --hub</code> brings the hub's plugins and MCP servers in too.</strong>
+After cloning the hub and registering its plugin marketplaces, setup
+installs every plugin those marketplaces list into Claude Code and
+Codex (skipping ones already installed, and archived harnesses), and
+syncs the hub's <code>mcp.json</code> servers into every installed harness with a
+known MCP config, as <code>swe plugins install</code> and <code>swe mcp sync swe &lt;targets&gt;</code> do. A server whose <code>${NAME}</code> secret has no value is skipped
+with the command that sets it (<code>swe mcp secret set NAME</code>) while the
+rest sync, and a server a harness already has is left alone. A failed
+plugin or server is reported and never fails setup, and so is a hub
+<code>mcp.json</code> that can't be read or parsed. Registering marketplaces and
+installing plugins share a 150 s budget after the clone (90 s at most
+per install); a plugin it leaves no time for is reported as not
+attempted, with the <code>swe plugins install</code> command that installs it, so
+the Mac app always gets its answer. <code>swe setup --json</code> adds
+<code>hub.cloned.plugins</code> and <code>hub.cloned.mcp</code>, and the web Setup page and
+the Mac setup sheet name what didn't make it. The web Setup page's
+clone syncs MCP servers under the MCP page's write lock. Plain <code>swe mcp sync</code> still refuses to write anything while a secret is missing. Part of
+<a href="https://github.com/c-wenlong/swe/issues/524">#524</a>.</p>
+</li>
 <li><p><strong>Demo hub link on every setup surface.</strong> <code>DEMO_HUB_URL</code> now points at
 the public template <a href="https://github.com/c-wenlong/swe-demo-hub">c-wenlong/swe-demo-hub</a>,
 so <code>swe setup</code>, the setup wizard, the web Setup page and the Mac setup

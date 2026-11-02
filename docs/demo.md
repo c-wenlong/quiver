@@ -114,7 +114,9 @@ on_a swe setup --hub="$DEMO_FORK" --apply
 `--apply` runs setup without questions and ends with the same linking pass as
 `swe init`. The interactive wizard (`swe setup --hub=…` without `--apply`)
 links the skills folders but not AGENTS.md or hooks, so after it you would
-also run `swe init`.
+also run `swe init`. Either way, the clone itself registers the hub's plugin
+marketplace, installs its plugin and syncs its MCP servers into every
+harness setup links into.
 
 You should see:
 
@@ -124,9 +126,17 @@ You should see:
   Plugin marketplaces
     ✓ starter registered in claude
     ✓ starter registered in codex
+  Plugins
+    ✓ git-helpers@starter installed in claude, codex
+  MCP servers
+    ✓ context7 synced to claude, codex
+    ! github not synced: no value for GITHUB_TOKEN; set it with: swe mcp secret set GITHUB_TOKEN
+      then: swe mcp sync swe claude codex --only=github
 ```
 
-then one line per coding CLI it found on `PATH` (at least `claude` and
+The MCP lines name every installed coding CLI with a known MCP config, so
+on a Mac with Cursor, opencode and others installed the lists are longer.
+Then one line per coding CLI it found on `PATH` (at least `claude` and
 `codex`), a "Link … skills to the shared tree" line for each one with a
 skills folder, and a summary.
 The rehearsal Mac had nine coding CLIs installed:
@@ -149,8 +159,9 @@ on_a swe init --check
   17 linked, 0 blocked, edit ~/.swe/AGENTS.md to change them all
 ```
 
-Say: "AGENTS.md and the skills folder are now linked into every harness. The
-hook is ignored because the hub ships it switched off."
+Say: "AGENTS.md and the skills folder are now linked into every harness, the
+plugin is installed and the MCP server is synced. The hook is ignored because
+the hub ships it switched off."
 
 Now open SWE.app.
 
@@ -195,41 +206,37 @@ on_a swe skills -d
 ```
 
 ```text
-debug-systematically    shared   ~/.swe/skills/debug-systematically/SKILL.md
-review-checklist        shared   ~/.swe/skills/review-checklist/SKILL.md
-write-pr-description    shared   ~/.swe/skills/write-pr-description/SKILL.md
+commit-message          claude-plugin  ~/.claude/plugins/cache/starter/git-helpers/0.1.0/skills/commit-message/SKILL.md
+debug-systematically    shared         ~/.swe/skills/debug-systematically/SKILL.md
+review-checklist        shared         ~/.swe/skills/review-checklist/SKILL.md
+write-pr-description    shared         ~/.swe/skills/write-pr-description/SKILL.md
 
-  3 skills across 1 roots
+  4 skills across 2 roots
 ```
+
+`commit-message` comes with the `git-helpers` plugin, which setup installed;
+segment 4 shows it.
 
 ### 4. Plugins (0:30)
 
 Open **Plugins**. On the Explore tab, the `starter` marketplace appears under
 **Local** ("Your SWE hub, ~/.swe/plugins"). Expand it: `git-helpers` has a
-chip for Claude Code and one for Codex, both reading **Available**, since
-setup registered the marketplace in both.
+chip for Claude Code and one for Codex, both reading **Enabled**, since
+setup registered the marketplace in both and installed what it lists.
 
-Say: "Setup registered the marketplace. Installing a plugin is still a
-choice per harness."
-
-Install it from the harness chip's menu (**Install in Claude Code**, then
-**Install in Codex**), or in the terminal:
+Say: "Setup registered the marketplace and installed its plugin in both
+harnesses. Turning one off is a choice per harness."
 
 ```bash
-on_a swe plugins install git-helpers@starter --harness=claude
-on_a swe plugins install git-helpers@starter --harness=codex
 on_a swe plugins catalog starter
 ```
 
 ```text
-  ✓ claude git-helpers@starter: installed
-  ✓ codex git-helpers@starter: installed
-
   PLUGIN        CLAUDE     CODEX      DESCRIPTION
   git-helpers   on         on         Small git helpers, starting with a commit message writer.
 ```
 
-Press Refresh (Command-R) on the page: both chips now read **Enabled**.
+The harness chip's menu disables or uninstalls it in one harness only.
 
 Source: `app/mac/Sources/SWECore/Primitives/PluginExplore.swift` (a hub
 marketplace goes under Local with every harness's chip) and `app/mac/Sources/SWECore/Primitives/PluginCatalog.swift`
@@ -238,27 +245,17 @@ marketplace goes under Local with every harness's chip) and `app/mac/Sources/SWE
 ### 5. MCP servers (0:30)
 
 Say: "mcp.json in the hub lists two servers. Secrets stay out of git: the
-GitHub server only holds a `${GITHUB_TOKEN}` reference."
+GitHub server only holds a `${GITHUB_TOKEN}` reference. Setup synced
+`context7` into every harness already, and left `github` out until the token
+has a value."
 
-```bash
-on_a swe mcp sync swe claude codex --only=context7 --no-interactive
-```
+That is the `! github not synced` line from segment 1. To bring it in, store
+a token with `swe mcp secret set GITHUB_TOKEN`, which keeps the value in
+`~/.swe/secrets/`, never in git, then run the `then:` command setup printed
+(`swe mcp sync swe claude codex --only=github`). Do not show a real token on
+camera.
 
-```text
-Selected 1 server(s) from swe
-
-  ✓ claude: 1 added
-
-  ✓ codex: 1 added
-```
-
-`--only=context7` matters: without it, sync refuses to write anything while
-`GITHUB_TOKEN` has no value (`Not syncing: no value for GITHUB_TOKEN (used by
-github)`). To sync both, store a token first with
-`swe mcp secret set GITHUB_TOKEN`, which keeps the value in
-`~/.swe/secrets/`, never in git. Do not show a real token on camera.
-
-Open **MCP servers** and press Refresh. The grid has a Claude Code and a Codex
+Open **MCP servers**. The grid has a Claude Code and a Codex
 column: `context7` has a checkmark in both, and `github` is marked missing in
 both, with a warning triangle whose hover text reads "Needs a value for
 GITHUB_TOKEN".
@@ -474,7 +471,8 @@ on_b swe hooks list
 ```
 
 Machine B has the edited skill, the rebuilt AGENTS.md and the enabled hook,
-and it found no new harnesses because machine A's registry came with the hub.
+and setup installed `git-helpers` and synced `context7` there too. It found
+no new harnesses because machine A's registry came with the hub.
 Now a new skill on machine A, and `swe sync` on both:
 
 ```bash
@@ -499,7 +497,7 @@ Hub sync  single branch main, shared by every machine
 
 explain-a-diff          shared   ~/.swe/skills/explain-a-diff/SKILL.md
   …
-  4 skills across 1 roots
+  5 skills across 2 roots
 ```
 
 Say: "One repo, every harness, every machine."
@@ -509,14 +507,12 @@ Say: "One repo, every harness, every machine."
 These are real behaviours the demo works around; say them out loud or leave
 them out of the cut, but do not hide them in the script.
 
-- **MCP servers are not synced by setup.** `swe setup --hub` copies
-  `mcp.json` into `~/.swe` but writes no harness config. Segment 5 runs
-  `swe mcp sync`, and machine B needs the same command.
-- **One missing secret stops the whole MCP sync.** Without `GITHUB_TOKEN`,
-  `swe mcp sync swe claude codex` writes nothing, hence `--only=context7`.
-- **Plugins are registered, not installed.** Setup adds the marketplace to
-  Claude Code and Codex; installing `git-helpers` is a separate step on each
-  machine.
+- **A server that needs a secret waits until you set it.** Secrets never
+  travel with the hub, so on every machine setup skips `github` until
+  `GITHUB_TOKEN` has a value there, and says so with the two commands that
+  bring it in. The other servers sync without it. A plain
+  `swe mcp sync swe claude codex` run by hand still writes nothing while
+  `GITHUB_TOKEN` is missing; add `--only=context7` to sync the rest.
 - **A hook's declaration lives in the harness's settings, outside the hub.**
   Machine B gets the script linked but not declared, so `swe hooks check`
   there reports it will not fire until you add the same `PreToolUse` entry.
@@ -558,7 +554,7 @@ Then run every bash block of segments 1 to 10 in order. Machine A is
 or `~/.codex`, since every command runs through `on_a` or `on_b`. The
 commands themselves take well under a minute: a scripted run of every block,
 including the clone from GitHub and `claude mcp list` fetching `context7`,
-took 15 seconds. Reading the output as you go is what takes the time.
+took 23 seconds. Reading the output as you go is what takes the time.
 
 ## Reset and clean up
 
