@@ -371,7 +371,16 @@ private struct FindingRow: View {
                     if model.running.contains(finding.id) {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
-                            Text("Running…").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            if remedy.knownAction == .install, let started = model.runStarted {
+                                // An installer can take minutes: count them.
+                                TimelineView(.periodic(from: started, by: 1)) { context in
+                                    Text("Installing… \(Self.elapsed(from: started, to: context.date))")
+                                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                                        .monospacedDigit()
+                                }
+                            } else {
+                                Text("Running…").font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            }
                         }
                     } else {
                         Button("Run") {
