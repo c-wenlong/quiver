@@ -85,7 +85,7 @@ public struct SetupPreview: Decodable, Sendable, Equatable {
         /// No hub in `~/.swe` yet (no AGENTS.md, no .git), so the sheet
         /// offers its hub URL field.
         public let canClone: Bool
-        /// The public demo hub to fork; nil until it exists.
+        /// The public demo hub to fork; nil when swe has none set.
         public let demoUrl: String?
         public let cloned: Cloned?
     }
