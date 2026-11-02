@@ -120,6 +120,17 @@ sheet show it beside the hub URL field. Fork it or use it as a
 template, then run <code>swe setup --hub=&lt;your copy&gt;</code>. Closes
 <a href="https://github.com/c-wenlong/swe/issues/1446">#1446</a>.</p>
 </li>
+<li><p><strong><code>scripts/demo_home.sh</code>: a safe stage for the primitives demo.</strong> It
+builds a bare clone of the demo hub (<code>swe-demo-hub</code>, or <code>--hub=URL</code>)
+that stands in for the viewer's fork, so <code>swe sync</code> pushes stay on
+disk, plus two empty HOMEs (<code>machine-a</code>, <code>machine-b</code>) with a neutral
+git identity and nothing copied from the real HOME. <code>--home=PATH</code>
+seeds a dedicated macOS account as machine A instead, and refuses one
+whose <code>~/.swe</code> already holds a hub. It prints <code>export DEMO_ROOT</code>,
+<code>DEMO_FORK</code>, <code>DEMO_A</code> and <code>DEMO_B</code> lines to paste or <code>eval</code>, and
+leaves <code>swe setup</code> to the demo. Part of
+<a href="https://github.com/c-wenlong/swe/issues/524">#524</a>.</p>
+</li>
 <li><p><strong>Overview across machines (web and iPhone).</strong> Satellites now add
 their daily token and cost totals per harness to the usage report
 they post every five minutes (<code>daily_usage</code>, from their own ledger,
