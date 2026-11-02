@@ -241,7 +241,7 @@ Say: "mcp.json in the hub lists two servers. Secrets stay out of git: the
 GitHub server only holds a `${GITHUB_TOKEN}` reference."
 
 ```bash
-on_a swe mcp sync swe claude codex --only=context7
+on_a swe mcp sync swe claude codex --only=context7 --no-interactive
 ```
 
 ```text
