@@ -586,6 +586,7 @@ PR process, one concern per PR, and what CI will check. By taking part you agree
 | [SUPPORT.md](SUPPORT.md) | Where to get help, in order: docs, `swe doctor`, issues |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1 |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [docs/demo.md](docs/demo.md) | The 5-minute demo script: one hub's AGENTS.md, skills, plugins, MCP servers and hooks in every harness and on a second machine |
 | [docs/](docs/) | Design docs: [data model](docs/data-model.md), [app architecture](docs/app-architecture.md), [backend architecture](docs/backend-architecture.md), [JSON contracts](docs/json-contracts.md), [testing](docs/testing.md), [coverage audit](docs/COVERAGE.md) |
 
 ## License
