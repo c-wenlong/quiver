@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Demo hub link on every setup surface.** `DEMO_HUB_URL` now points at
+  the public template [c-wenlong/swe-demo-hub](https://github.com/c-wenlong/swe-demo-hub),
+  so `swe setup`, the setup wizard, the web Setup page and the Mac setup
+  sheet show it beside the hub URL field. Fork it or use it as a
+  template, then run `swe setup --hub=<your copy>`. Closes
+  [#1446](https://github.com/c-wenlong/swe/issues/1446).
 - **Overview across machines (web and iPhone).** Satellites now add
   their daily token and cost totals per harness to the usage report
   they post every five minutes (`daily_usage`, from their own ledger,

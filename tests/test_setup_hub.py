@@ -146,7 +146,8 @@ class SetupHubRefusalTest(_HubHarness):
         code, out, err = self._run_json([])
         self.assertEqual(code, 0, err)
         hub = json.loads(out)["data"]["hub"]
-        self.assertEqual(hub, {"can_clone": True, "demo_url": None, "cloned": None})
+        self.assertEqual(hub, {"can_clone": True, "demo_url": hub_repo.DEMO_HUB_URL,
+                               "cloned": None})
         (self.home / ".swe").mkdir()
         (self.home / ".swe" / "AGENTS.md").write_text("x")
         hub = json.loads(self._run_json([])[1])["data"]["hub"]
@@ -156,6 +157,8 @@ class SetupHubRefusalTest(_HubHarness):
         _, out, _ = self._run([])
         self.assertIn("swe setup --hub=<git url>", out)
         self.assertIn(hub_repo.FORK_NOTE, out)
+        with patch.object(hub_repo, "DEMO_HUB_URL", ""):
+            _, out, _ = self._run([])
         self.assertNotIn("Demo hub", out)
         with patch.object(hub_repo, "DEMO_HUB_URL", "https://github.com/x/demo-hub"):
             _, out, _ = self._run([])
@@ -190,7 +193,8 @@ class WizardHubStageTest(unittest.TestCase):
         return outcome, out.getvalue()
 
     def test_blank_starts_an_empty_hub(self):
-        outcome, out = self._stage([""], clone=None)
+        with patch.object(hub_repo, "DEMO_HUB_URL", ""):
+            outcome, out = self._stage([""], clone=None)
         self.assertEqual(outcome.status, "skipped")
         self.assertIn(hub_repo.FORK_NOTE, out)
         self.assertNotIn("Demo hub", out)

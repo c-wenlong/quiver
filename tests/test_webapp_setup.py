@@ -427,7 +427,7 @@ class TestHubClone(_HubClone, unittest.TestCase):
     def test_get_says_a_hub_can_be_cloned_beside_local_state(self):
         # make_home made ~/.swe/config/: local state, no hub.
         data = setup_page.get(self.ctx(), {})
-        self.assertEqual(data["hub"], {"can_clone": True, "demo_url": None,
+        self.assertEqual(data["hub"], {"can_clone": True, "demo_url": hub_mod.DEMO_HUB_URL,
                                        "job": {"state": "idle", "url": None,
                                                "error": None, "cloned": None}})
         self.assertEqual(setup_page.get(self.ctx(), {"hub": "1"}), {"hub": data["hub"]})

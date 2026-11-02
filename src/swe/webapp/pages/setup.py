@@ -199,7 +199,7 @@ def _idle() -> dict:
 def hub_status(home: Path) -> dict:
     """``{can_clone, demo_url, job}``: whether ~/.swe can take a clone
     now (the page shows its hub field only then), the demo hub to fork
-    (null until it exists), and this hub's last clone. ``job.state`` is
+    (null when unset), and this hub's last clone. ``job.state`` is
     ``idle``, ``cloning``, ``done`` or ``failed``; ``job.url`` never
     carries credentials."""
     from swe.init.hub import DEMO_HUB_URL, can_clone
