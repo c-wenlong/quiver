@@ -1309,6 +1309,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CLI: three messages that said the wrong thing.** `swe hooks enable`
+  printed disable's note ("the harness sees a missing script"); it now
+  says the hook is linked back in and runs wherever its settings declare
+  it. A `swe sync` conflict told you to run `git -C ~/.swe merge <ref>`
+  with the placeholder unfilled; it now names the ref that conflicted
+  (`origin/main`, or `origin/device/<machine>`), and says to commit your
+  own changes first when sync had some to commit, since git will not
+  merge over them. Bare `swe skills` has printed the overview since
+  0.2.5, yet that overview, `swe help skills`, the `list` completion and
+  the hints after `swe skills catalog add` and `swe skills discover
+  --apply` all said it listed skills; they now say it shows the
+  overview, and point at `swe skills list`, the tree of every skill
+  under its root.
+
 - **Mac: a picked hub's web app is the whole window now.** The machine
   switcher used to open the hub only in the panel, so the web app's own
   sidebar nested inside the native one. While a hub is up the window is

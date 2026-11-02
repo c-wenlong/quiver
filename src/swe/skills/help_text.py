@@ -10,9 +10,10 @@ def print_skills_overview():
   {c('bold', 'swe skills')} — Discover, list, and manage agent skills
 
 {c('bold', 'List & search')}
-  {c('cyan', 'swe skills')}                   One line per skill: name, root, path
-  {c('cyan', 'swe skills <filter>')}          Filter by name, scope, or harness
-  {c('cyan', 'swe skills -d')}                Include descriptions
+  {c('cyan', 'swe skills')}                   This page
+  {c('cyan', 'swe skills list')}              Every skill, nested under the root that holds it
+  {c('cyan', 'swe skills <filter>')}          Search name, scope or harness: one line per match
+  {c('cyan', 'swe skills -d')}                One line per skill, with its description
   {c('cyan', 'swe skills --json')}             Every skill, and which harnesses see it
 
 {c('bold', 'SWE hub')}

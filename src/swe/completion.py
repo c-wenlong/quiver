@@ -788,7 +788,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("sync", "Regenerate shared wrappers and re-apply the link plan"),
     ],
     "skills": [
-        ("list", "List skills (bare `swe skills` does the same)"),
+        ("list", "Every skill, nested under the root that holds it"),
         ("ls", "Short for list"),
         ("tree", "Show the symlink layout (alias: swe find skills -r)"),
         ("scope", "Show which scope each harness uses"),
@@ -802,7 +802,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("help", "Detailed help for one topic"),
     ],
     "sk": [
-        ("list", "List skills (bare `swe skills` does the same)"),
+        ("list", "Every skill, nested under the root that holds it"),
         ("ls", "Short for list"),
         ("tree", "Show the symlink layout (alias: swe find skills -r)"),
         ("scope", "Show which scope each harness uses"),

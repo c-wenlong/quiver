@@ -343,10 +343,10 @@ to use their own login state and environment."""
     "skills": (
         "List agent skills and their file paths",
         f"""\
-  {c('cyan', 'swe skills')}                   List every SKILL.md across all skill roots
-  {c('cyan', 'swe skills list')}              Same as above
-  {c('cyan', 'swe skills <filter>')}          Filter by name or scope substring
-  {c('cyan', 'swe skills -d')}                Also show each skill's description
+  {c('cyan', 'swe skills')}                   The skills overview (same as swe skills --help)
+  {c('cyan', 'swe skills list')}              Every skill, nested under the root that holds it
+  {c('cyan', 'swe skills <filter>')}          Search name, scope or harness: one line per match
+  {c('cyan', 'swe skills -d')}                One line per skill, with its description
   {c('cyan', 'swe skills tree')}              Symlink layout — now the same view as swe find skills
   {c('dim', 'swe skills scope list forwards to the same place; --sync is accepted but ignored.')}
   {c('cyan', 'swe skills link <harness> [target]')}   Symlink a harness root to shared/other

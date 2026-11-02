@@ -1441,6 +1441,19 @@ raw editor. <code>swe hooks list --json</code> rows now carry <code>summary</cod
 </ul>
 <h3 id="fixed"><a class="anchor" href="#fixed"></a>Fixed</h3>
 <ul>
+<li><p><strong>CLI: three messages that said the wrong thing.</strong> <code>swe hooks enable</code>
+printed disable's note (&quot;the harness sees a missing script&quot;); it now
+says the hook is linked back in and runs wherever its settings declare
+it. A <code>swe sync</code> conflict told you to run <code>git -C ~/.swe merge &lt;ref&gt;</code>
+with the placeholder unfilled; it now names the ref that conflicted
+(<code>origin/main</code>, or <code>origin/device/&lt;machine&gt;</code>), and says to commit your
+own changes first when sync had some to commit, since git will not
+merge over them. Bare <code>swe skills</code> has printed the overview since
+0.2.5, yet that overview, <code>swe help skills</code>, the <code>list</code> completion and
+the hints after <code>swe skills catalog add</code> and <code>swe skills discover --apply</code> all said it listed skills; they now say it shows the
+overview, and point at <code>swe skills list</code>, the tree of every skill
+under its root.</p>
+</li>
 <li><p><strong>Mac: a picked hub's web app is the whole window now.</strong> The machine
 switcher used to open the hub only in the panel, so the web app's own
 sidebar nested inside the native one. While a hub is up the window is

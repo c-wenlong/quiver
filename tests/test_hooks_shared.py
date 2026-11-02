@@ -664,11 +664,15 @@ class CrudCommandsTest(unittest.TestCase):
                           _shared.disabled_names(src.parent))
             self.assertFalse(dest.is_symlink())
             self.assertTrue(src.is_file())   # source stays
+            self.assertIn("declarations stay", out)
             code, out = _run(home, "enable", "gate")
             self.assertEqual(code, 0, out)
             self.assertTrue(dest.is_symlink())
             self.assertFalse(
                 _shared.disabled_names(src.parent))
+            # enable printed disable's "missing script" note.
+            self.assertIn("linked back in", out)
+            self.assertNotIn("missing script", out)
 
     def test_disable_refuses_foreign(self):
         with tempfile.TemporaryDirectory() as tmp:

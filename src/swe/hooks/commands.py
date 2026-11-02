@@ -882,9 +882,14 @@ def _toggle(rest: list[str], json_view: bool, fail, *, off: bool) -> int:
         })
     print(f"  {c('green', '✓')} {word} {name}: "
           + ", ".join(sorted({_short(s, home) for s in sources})))
-    note = ("declarations stay — the harness sees a missing script, "
-            "which its contract tolerates (or a default JSON answer "
-            "for generated wrappers)")
+    if off:
+        note = ("declarations stay — the harness sees a missing script, "
+                "which its contract tolerates (or a default JSON answer "
+                "for generated wrappers)")
+    else:
+        note = ("linked back in (swe hooks shows any link it could not "
+                "place); the harness runs it again wherever its settings "
+                "declare it")
     print(f"  {c('dim', note)}\n")
     return 0
 

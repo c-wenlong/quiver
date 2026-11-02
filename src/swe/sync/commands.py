@@ -68,6 +68,20 @@ def _print_status(doc: dict) -> None:
     print()
 
 
+def _conflict_help(doc: dict) -> list[str]:
+    """How to resolve a conflict by hand, naming the real ref: the trial
+    stops at the merge that conflicts, so it is the last one planned."""
+    merge = f"git -C ~/.swe merge {doc['merges'][-1]['ref']}"
+    if doc.get("commit"):
+        # git refuses to merge over uncommitted edits to the same files.
+        # Only the user can commit them: a blanket `git add -A` could pick
+        # up paths sync keeps out (secrets/, the data stores).
+        return [f"To resolve it by hand: commit your changes in ~/.swe, run {merge},",
+                "fix the files it marks and commit. Or undo one side. Then sync again."]
+    return [f"To resolve it by hand: run {merge}, fix the files it marks",
+            "and commit. Or undo one side. Then sync again."]
+
+
 def _print_sync(doc: dict) -> None:
     dry = doc["dry_run"]
     # A conflict stops before anything is written: its commit and merges
@@ -91,7 +105,8 @@ def _print_sync(doc: dict) -> None:
         for path in doc["conflicts"]:
             print(f"    {path}")
         print(c("dim", "  Nothing was committed, merged or pushed; ~/.swe is as it was."))
-        print(c("dim", "  Resolve it by hand (git -C ~/.swe merge <ref>), or undo one side, then sync again."))
+        for line in _conflict_help(doc):
+            print(c("dim", f"  {line}"))
     elif result == "up-to-date":
         print(f"  {c('green', '✓')} Already in sync.")
     elif result == "would-sync":
