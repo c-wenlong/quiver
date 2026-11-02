@@ -542,7 +542,15 @@ class CommandTest(SyncTestBase):
         code, out, _ = self.run_cmd([], a)
         self.assertEqual(code, 1)
         self.assertIn("from origin/device/laptop", out)
-        self.assertIn("run git -C ~/.swe merge origin/main,", out)
+        # main's conflict can depend on the device merge before it, so the
+        # help lists both, in the order sync runs them.
+        self.assertIn("run git -C ~/.swe merge origin/device/laptop, then "
+                      "git -C ~/.swe merge origin/main,", out)
+
+    def test_conflict_help_quotes_refs_for_the_shell(self):
+        from swe.sync.commands import _conflict_help
+        lines = _conflict_help({"merges": [{"ref": "origin/release/$USER"}]})
+        self.assertIn("git -C ~/.swe merge 'origin/release/$USER'", " ".join(lines))
 
     def test_text_views_and_errors(self):
         a = self.machine("a")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import sys
 from pathlib import Path
 
@@ -69,9 +70,13 @@ def _print_status(doc: dict) -> None:
 
 
 def _conflict_help(doc: dict) -> list[str]:
-    """How to resolve a conflict by hand, naming the real ref: the trial
-    stops at the merge that conflicts, so it is the last one planned."""
-    merge = f"git -C ~/.swe merge {doc['merges'][-1]['ref']}"
+    """How to resolve a conflict by hand, naming the real refs: the trial
+    stops at the merge that conflicts, the last one planned, and that one
+    can depend on the clean merges before it (a device branch, then
+    main), so every planned merge is listed in order. Refs are shell-quoted
+    so the command pastes as printed."""
+    merge = ", then ".join(f"git -C ~/.swe merge {shlex.quote(m['ref'])}"
+                           for m in doc["merges"])
     if doc.get("commit"):
         # git refuses to merge over uncommitted edits to the same files.
         # Only the user can commit them: a blanket `git add -A` could pick
