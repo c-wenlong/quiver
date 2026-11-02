@@ -84,6 +84,8 @@ def _print_sync(doc: dict) -> None:
     for merge in doc.get("merges") or []:
         verb = "would merge" if planned else "merged"
         print(f"  {mark} {verb} {merge['commits']} commit(s) from {merge['ref']}")
+        for path in merge.get("resolved") or []:
+            print(c("dim", f"    {path}: both sides changed it, merged harness by harness"))
     _print_held_back(doc.get("held_back") or [])
     result = doc["result"]
     if result == "conflict":

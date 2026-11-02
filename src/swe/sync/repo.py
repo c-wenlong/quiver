@@ -21,6 +21,11 @@ What is never committed: everything ``paths.GITIGNORE_BODY`` lists
 (``secrets/``, ``cache/``, the ledgers, ``data/remote/`` ...) is excluded
 by pathspec on every ``git add``, so a hub whose own ``.gitignore`` is
 older than this swe still keeps them out. They are reported as held back.
+
+One conflict sync settles itself: ``config/harness.json``, merged harness
+by harness (``registry.merge_registries``) when git's line merge stops on
+it. Two machines that each ran ``swe setup`` before their first sync write
+the same entries with different "added" times; that is not worth a stop.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from swe.harness.registry import merge_registries, registry_text
 from swe.paths import GITIGNORE_BODY, swe_dir_for
 
 DEVICE_PREFIX = "device/"
@@ -45,6 +51,8 @@ NETWORK_TIMEOUT_S = 180
 # git hash-object -t tree /dev/null: what an unborn branch diffs against.
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 MESSAGE_FILE_LIMIT = 20
+# The one conflicted path sync settles itself (see _resolve).
+REGISTRY_PATH = "config/harness.json"
 
 
 class SyncError(Exception):
@@ -406,18 +414,112 @@ def _trial(state: RepoState, changes, message: str) -> tuple[list[dict], list[st
             raise SyncError(f"~/.swe and {ref} share no history, so swe sync will not "
                             f"merge them; merge it once by hand (git -C ~/.swe merge "
                             f"--allow-unrelated-histories {ref}), then sync")
-        trial = _git(state.root, "merge-tree", "--write-tree", "--name-only",
+        trial = _git(state.root, "merge-tree", "--write-tree", "-z",
                      "--no-messages", tip, ref, check=False)
-        lines = trial.stdout.splitlines()
-        if trial.returncode == 1:
-            files = sorted({line for line in lines[1:] if line.strip()})
-            return merges, files
-        if trial.returncode != 0 or not lines:
+        tree, _, rest = trial.stdout.partition("\0")
+        if trial.returncode not in (0, 1) or not tree:
             detail = (trial.stderr or "").strip().splitlines()
             raise SyncError("git merge-tree failed (swe sync needs git 2.38 or newer)"
                             + (f": {detail[-1]}" if detail else ""))
-        tip = _commit_tree(state, lines[0], [tip, ref], f"trial merge {ref}")
+        if trial.returncode == 1:
+            stages = _parse_stages(rest)
+            if not stages:
+                raise SyncError(f"git merge-tree found a conflict with {ref} "
+                                "but named no files")
+            resolved = _resolve(state.root, stages)
+            if resolved is None:
+                return merges, sorted(stages)
+            tree = _with_files(state, tree, resolved)
+            merges[-1]["resolved"] = sorted(resolved)
+        tip = _commit_tree(state, tree, [tip, ref], f"trial merge {ref}")
     return merges, []
+
+
+def _parse_stages(raw: str) -> dict[str, dict[int, tuple[str, str]]]:
+    """``{path: {stage: (mode, blob)}}`` from ``-z`` conflict entries
+    (``<mode> <blob> <stage>\\t<path>``, as merge-tree and ``ls-files -u``
+    print them). Stops at the empty entry that ends merge-tree's list."""
+    stages: dict[str, dict[int, tuple[str, str]]] = {}
+    for entry in raw.split("\0"):
+        if not entry:
+            break
+        info, _, path = entry.partition("\t")
+        mode, blob, stage = info.split(" ")
+        stages.setdefault(path, {})[int(stage)] = (mode, blob)
+    return stages
+
+
+def _resolve(root: Path, stages: dict) -> dict[str, str] | None:
+    """The merged text of every conflicted path, or None when any one of
+    them is not something sync settles. It settles only ``REGISTRY_PATH``,
+    as a plain file both sides still have, whose versions are JSON objects
+    ``merge_registries`` can merge (a side that added it merges against {})."""
+    if set(stages) != {REGISTRY_PATH}:
+        return None
+    blobs = stages[REGISTRY_PATH]
+    if 2 not in blobs or 3 not in blobs:
+        return None  # removed on one side
+    docs = []
+    for stage in (1, 2, 3):
+        if stage not in blobs:
+            docs.append({})
+            continue
+        mode, blob = blobs[stage]
+        if mode != "100644":
+            return None
+        try:
+            doc = json.loads(_git(root, "cat-file", "blob", blob).stdout)
+        except ValueError:
+            return None
+        if not isinstance(doc, dict):
+            return None
+        docs.append(doc)
+    merged = merge_registries(*docs)
+    if merged is None:
+        return None
+    return {REGISTRY_PATH: registry_text(merged)}
+
+
+def _with_files(state: RepoState, tree: str, files: dict[str, str]) -> str:
+    """``tree`` with ``files`` (path -> text) written into it, through a
+    throwaway index."""
+    scratch = tempfile.mkdtemp(prefix="swe-sync-")
+    env = {"GIT_INDEX_FILE": str(Path(scratch) / "index")}
+    try:
+        _git(state.root, "read-tree", tree, env=env)
+        for path, text in files.items():
+            blob = _out(state.root, "hash-object", "-w", "--stdin", input=text)
+            _git(state.root, "update-index", "--add", "--cacheinfo",
+                 f"100644,{blob},{path}", env=env)
+        return _out(state.root, "write-tree", env=env)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _merge(state: RepoState, merge: dict, message: str) -> None:
+    """Merge ``merge["ref"]`` into the checkout. A merge the trial settled
+    stops on the same conflict here: write the same resolution, stage it,
+    and commit the merge. Anything else left unmerged raises, and the
+    caller rolls the sync back."""
+    ref = merge["ref"]
+    if not merge.get("resolved"):
+        _git(state.root, "merge", "--quiet", "--no-edit", "-m", message, ref)
+        return
+    done = _git(state.root, "merge", "--quiet", "--no-edit", "-m", message, ref, check=False)
+    if done.returncode == 0:
+        return
+    stages = _parse_stages(_git(state.root, "ls-files", "-u", "-z").stdout)
+    resolved = _resolve(state.root, stages) if stages else None
+    if resolved is None:
+        raise SyncError(f"git merge of {ref} stopped on conflicts swe sync could not "
+                        "settle: " + (", ".join(sorted(stages)) or "none listed"))
+    # Into the index first, then out to the file, so git writes it the way
+    # the merge wrote everything else.
+    for path, text in resolved.items():
+        blob = _out(state.root, "hash-object", "-w", "--stdin", input=text)
+        _git(state.root, "update-index", "--cacheinfo", f"100644,{blob},{path}")
+        _git(state.root, "checkout-index", "--force", "--", path)
+    _git(state.root, "commit", "--quiet", "-m", message)
 
 
 def _rollback(state: RepoState, head: str | None, mid: str | None, index_tree: str) -> None:
@@ -528,9 +630,8 @@ def _sync_locked(home: Path, dry_run: bool, relink) -> dict:
             _git(state.root, "commit", "--quiet", "-m", message)
         mid = _out(state.root, "rev-parse", "HEAD") if _ref_exists(state.root, "HEAD") else None
         for merge in merges:
-            ref = merge["ref"]
-            _git(state.root, "merge", "--quiet", "--no-edit", "-m",
-                 f"Merge {ref} into {state.branch} (swe sync from {state.machine})", ref)
+            _merge(state, merge, f"Merge {merge['ref']} into {state.branch} "
+                                 f"(swe sync from {state.machine})")
     except SyncError:
         _rollback(state, before, mid, index_tree)
         raise

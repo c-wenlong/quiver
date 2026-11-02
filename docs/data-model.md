@@ -15,7 +15,7 @@ be rebuilt; deleting them loses user state.
 
 | path / key | owner | format | holds | written by | read by |
 |---|---|---|---|---|---|
-| `config/harness.json` | swe | JSON object keyed by harness name | registry: state (`active`/`starred`/`archived`), install evidence, capabilities, order | `harness/registry.py` only | every swe command, the app via `swe list` |
+| `config/harness.json` | swe | JSON object keyed by harness name | registry: state (`active`/`starred`/`archived`), install evidence, capabilities, order | `harness/registry.py` only; versioned in the hub, and `swe sync` merges two machines' copies with `registry.merge_registries` | every swe command, the app via `swe list` |
 | `config/config.json` | swe | JSON object | `swe config` values (report settings etc.), secret keys rejected | `configuration.save_config` | `configuration.load_config` |
 | `mcp.json` | swe | JSON | hub MCP server definitions, `${NAME}` secret refs | `swe mcp` commands | `swe mcp`, app via `swe mcp list` |
 | `config/providers.json` | swe | JSON | provider registry, seeded from built-ins, `_removed` list blocks re-merge | `providers/registry.py` | `swe providers`, doctor |

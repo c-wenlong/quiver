@@ -10,6 +10,7 @@ from swe.harness.registry import (
     alias_map,
     load_registry,
     load_registry_readonly,
+    merge_registries,
     resolve,
     save_registry,
     starred_names,
@@ -87,6 +88,64 @@ class HarnessRegistryTest(unittest.TestCase):
                 loaded = load_registry()
                 self.assertIn("mytool", loaded)
                 self.assertEqual(resolve(loaded, "mt"), "mytool")
+
+
+class MergeRegistriesTest(unittest.TestCase):
+    """The three-way merge `swe sync` runs when git's line merge stops on
+    config/harness.json."""
+
+    CLAUDE = {"command": "claude", "version": "2.1.0", "aliases": ["cc"],
+              "added": "2026-11-02T09:00:00.000001", "discovered_via": "catalog"}
+
+    def entry(self, **changes):
+        return {**self.CLAUDE, **changes}
+
+    def test_both_sides_registering_a_harness_differ_only_in_machine_fields(self):
+        ours = {"claude": self.entry(added="2026-11-02T09:05:00", version="2.1.3")}
+        theirs = {"claude": self.entry(added="2026-11-02T09:01:00",
+                                       discovered_via="setup"),
+                  "codex": {"command": "codex"}}
+        merged = merge_registries({}, ours, theirs)
+        self.assertEqual(merged, {
+            "claude": self.entry(added="2026-11-02T09:01:00", version="2.1.3"),
+            "codex": {"command": "codex"},
+        })
+        self.assertEqual(list(merged), ["claude", "codex"])  # our order first
+
+    def test_one_sided_changes_win_entry_by_entry_and_field_by_field(self):
+        base = {"claude": self.entry(), "codex": {"command": "codex"},
+                "pi": {"command": "pi"}}
+        ours = {"claude": self.entry(state="starred", pin=1),
+                "codex": {"command": "codex"}, "pi": {"command": "pi"}}
+        theirs = {"claude": self.entry(capabilities={"plugins": True}),
+                  "codex": {"command": "codex", "state": "archived"}}
+        self.assertEqual(merge_registries(base, ours, theirs), {
+            "claude": self.entry(state="starred", pin=1, capabilities={"plugins": True}),
+            "codex": {"command": "codex", "state": "archived"},
+        })
+
+    def test_a_real_disagreement_is_a_conflict(self):
+        base = {"claude": self.entry()}
+        cases = [
+            # Both changed a field that is not machine bookkeeping.
+            ({"claude": self.entry(state="starred")},
+             {"claude": self.entry(state="archived")}),
+            # Removed on one side, changed on the other.
+            ({}, {"claude": self.entry(state="starred")}),
+            # A hand-edited entry that is no longer an object.
+            ({"claude": "oops"}, {"claude": self.entry(state="starred")}),
+            # A machine field one side dropped while the other changed it.
+            ({"claude": {k: v for k, v in self.CLAUDE.items() if k != "version"}},
+             {"claude": self.entry(version="9")}),
+        ]
+        for ours, theirs in cases:
+            with self.subTest(ours=ours):
+                self.assertIsNone(merge_registries(base, ours, theirs))
+
+    def test_removed_on_one_side_and_untouched_on_the_other_stays_removed(self):
+        base = {"claude": self.entry(), "pi": {"command": "pi"}}
+        self.assertEqual(merge_registries(base, {"claude": self.entry()}, base),
+                         {"claude": self.entry()})
 
 
 class RegistryRobustnessTest(unittest.TestCase):
