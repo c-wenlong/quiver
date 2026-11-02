@@ -113,6 +113,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Demo hub link on every setup surface.</strong> <code>DEMO_HUB_URL</code> now points at
+the public template <a href="https://github.com/c-wenlong/swe-demo-hub">c-wenlong/swe-demo-hub</a>,
+so <code>swe setup</code>, the setup wizard, the web Setup page and the Mac setup
+sheet show it beside the hub URL field. Fork it or use it as a
+template, then run <code>swe setup --hub=&lt;your copy&gt;</code>. Closes
+<a href="https://github.com/c-wenlong/swe/issues/1446">#1446</a>.</p>
+</li>
 <li><p><strong><code>scripts/demo_home.sh</code>: a safe stage for the primitives demo.</strong> It
 builds a bare clone of the demo hub (<code>swe-demo-hub</code>, or <code>--hub=URL</code>)
 that stands in for the viewer's fork, so <code>swe sync</code> pushes stay on

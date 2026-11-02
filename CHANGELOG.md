@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Demo hub link on every setup surface.** `DEMO_HUB_URL` now points at
+  the public template [c-wenlong/swe-demo-hub](https://github.com/c-wenlong/swe-demo-hub),
+  so `swe setup`, the setup wizard, the web Setup page and the Mac setup
+  sheet show it beside the hub URL field. Fork it or use it as a
+  template, then run `swe setup --hub=<your copy>`. Closes
+  [#1446](https://github.com/c-wenlong/swe/issues/1446).
 - **`scripts/demo_home.sh`: a safe stage for the primitives demo.** It
   builds a bare clone of the demo hub (`swe-demo-hub`, or `--hub=URL`)
   that stands in for the viewer's fork, so `swe sync` pushes stay on

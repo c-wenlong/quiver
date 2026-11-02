@@ -32,10 +32,10 @@ from swe.paths import GITIGNORE_BODY, swe_dir_for
 REACH_TIMEOUT_S = 30
 CLONE_TIMEOUT_S = 600
 
-# The public demo hub people fork to start their own. It doesn't exist yet
-# (#696), so this is empty, and every surface that asks for a hub URL shows
-# its link line only when it is set: adding the repo is this one line.
-DEMO_HUB_URL = ""
+# The public demo hub people fork (or use as a template) to start their own
+# (#1446). Every surface that asks for a hub URL shows it as a link line, and
+# hides that line when this is empty.
+DEMO_HUB_URL = "https://github.com/c-wenlong/swe-demo-hub"
 
 # What every surface says beside the hub URL field.
 FORK_NOTE = ("Fork a hub repo first (or use it as a template for a private copy), "
