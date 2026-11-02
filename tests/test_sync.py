@@ -637,6 +637,54 @@ class CommandTest(SyncTestBase):
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(out)["data"]["conflicts"], ["AGENTS.md"])
 
+    def test_conflict_names_the_ref_to_merge_by_hand(self):
+        # The hint used to print a literal `git -C ~/.swe merge <ref>`.
+        a, b = self.machine("a"), self.machine("b")
+        (a / ".swe" / "AGENTS.md").write_text("a\n")
+        self.run_cmd([], a)
+        (b / ".swe" / "AGENTS.md").write_text("b\n")
+        _, out, _ = self.run_cmd([], b)
+        self.assertNotIn("<ref>", out)
+        self.assertIn("git -C ~/.swe merge origin/main,", out)
+        # The edit is uncommitted, and git will not merge over it.
+        self.assertIn("commit your changes in ~/.swe, run git -C ~/.swe merge", out)
+        # Committed locally: the merge is the first step.
+        git(b / ".swe", "commit", "-q", "-am", "b")
+        _, out, _ = self.run_cmd([], b)
+        self.assertIn("run git -C ~/.swe merge origin/main,", out)
+        self.assertNotIn("commit your changes", out)
+
+    def test_device_conflict_names_the_ref_that_conflicted(self):
+        # Device mode merges origin/device/<machine>, then origin/main:
+        # a conflict with main must name main, not the device branch.
+        a = self.machine("a", branch="device/laptop")
+        self.run_cmd([], a)
+        (a / ".swe" / "x.txt").write_text("x\n")
+        self.run_cmd([], a)   # pushes device/laptop
+        other = self.root / "other"
+        other.mkdir()
+        git(other, "clone", "-q", "-b", "device/laptop", str(self.remote), ".swe")
+        (other / ".swe" / "y.txt").write_text("y\n")
+        self.run_cmd([], other)   # device/laptop moves on
+        writer = self.machine("w")
+        (writer / ".swe" / "AGENTS.md").write_text("main\n")
+        git(writer / ".swe", "commit", "-q", "-am", "main")
+        git(writer / ".swe", "push", "-q", "origin", "main")
+        (a / ".swe" / "AGENTS.md").write_text("laptop\n")
+        git(a / ".swe", "commit", "-q", "-am", "laptop")
+        code, out, _ = self.run_cmd([], a)
+        self.assertEqual(code, 1)
+        self.assertIn("from origin/device/laptop", out)
+        # main's conflict can depend on the device merge before it, so the
+        # help lists both, in the order sync runs them.
+        self.assertIn("run git -C ~/.swe merge origin/device/laptop, then "
+                      "git -C ~/.swe merge origin/main,", out)
+
+    def test_conflict_help_quotes_refs_for_the_shell(self):
+        from swe.sync.commands import _conflict_help
+        lines = _conflict_help({"merges": [{"ref": "origin/release/$USER"}]})
+        self.assertIn("git -C ~/.swe merge 'origin/release/$USER'", " ".join(lines))
+
     def test_text_views_and_errors(self):
         a = self.machine("a")
         (a / ".swe" / "x.txt").write_text("x\n")

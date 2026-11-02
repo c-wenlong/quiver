@@ -296,3 +296,47 @@ class BrowseIsATreeSearchIsATableTest(unittest.TestCase):
             plain = strip_ansi(_run_cmd_skills([SEARCH, "-d"]))
         m.assert_not_called()
         self.assertIn("NAME", plain)
+
+
+class BareSkillsHelpMatchesBehaviourTest(unittest.TestCase):
+    """Bare `swe skills` prints the overview (since v0.2.5), so no help
+    surface may claim it lists skills: the overview, `swe help skills`
+    and the `list` completion all said it did."""
+
+    def _line_for(self, text: str, command: str) -> str:
+        for line in strip_ansi(text).splitlines():
+            if line.strip().startswith(command + "  "):
+                return line
+        self.fail(f"no {command!r} line in:\n{text}")
+
+    def test_bare_prints_the_overview_and_lists_nothing(self):
+        with patch("swe.skills.commands.discover_skills") as found, \
+                patch("swe.find.commands.cmd_find_skills") as tree:
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(cmd_skills([]), 0)
+        found.assert_not_called()
+        tree.assert_not_called()
+        self.assertIn("This page", self._line_for(out.getvalue(), "swe skills"))
+
+    def test_command_help_says_bare_is_the_overview(self):
+        from swe.help_text import HELP
+        line = self._line_for(HELP["skills"][1], "swe skills")
+        self.assertIn("overview", line)
+        self.assertNotIn("List every", line)
+
+    def test_list_rows_describe_the_tree(self):
+        from swe.help_text import HELP
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cmd_skills(["--help"])
+        for text in (out.getvalue(), HELP["skills"][1]):
+            self.assertIn("nested under the root",
+                          self._line_for(text, "swe skills list"))
+
+    def test_list_completion_does_not_claim_bare_does_the_same(self):
+        from swe.completion import get_completions
+        for cmd in ("skills", "sk"):
+            subs = dict(get_completions([cmd, ""]))
+            self.assertIn("list", subs)
+            self.assertNotIn("bare", subs["list"])

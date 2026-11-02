@@ -240,9 +240,13 @@ class SkillsCatalogCommandTest(unittest.TestCase):
             SkillsCatalogTest()._write_skill(catalog, "one", name="one")
             p1, p2, p3, p4 = _catalog_patches(config_dir, catalogs_file)
             with p1, p2, p3, p4:
-                code, _ = self._run([str(catalog)])
+                code, out = self._run([str(catalog)])
                 self.assertEqual(code, 0)
                 self.assertEqual(len(load_skill_catalogs()), 1)
+                # Bare `swe skills` prints the overview, and `list` skips
+                # catalogs: the hint searches by the catalog's label.
+                label = load_skill_catalogs()[0]["label"]
+                self.assertIn(f"Run `swe skills {label}` to list its skills", out)
 
 
 class SkillsDiscoverCommandTest(unittest.TestCase):
@@ -281,6 +285,7 @@ class SkillsDiscoverCommandTest(unittest.TestCase):
                                         apply_return=["cat"])
         self.assertEqual(code, 0)
         self.assertIn("Registered 1 catalog", out)
+        self.assertIn("Run `swe skills <label>` (cat)", out)
         apply_fn.assert_called_once()
 
     def test_apply_nothing_to_add(self):

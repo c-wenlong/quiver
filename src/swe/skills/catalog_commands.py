@@ -62,7 +62,7 @@ def cmd_skills_catalog(args):
                 return 1
             display = tilde(resolve_catalog_path(path))
             print(c("green", f"  ✓ Added catalog {entry['label']}: {display}"))
-            print(c("dim", "  Run `swe skills` to list skills from this catalog.\n"))
+            print(c("dim", f"  Run `swe skills {entry['label']}` to list its skills.\n"))
             return 0
 
     if sub in ("list", "ls"):
@@ -175,7 +175,7 @@ def cmd_skills_discover(args):
         data["applied"] = {"added": added}
         if not opts["json"] and added:
             print(c("green", f"  ✓ Registered {len(added)} catalog(s): {', '.join(added)}"))
-            print(c("dim", "  Run `swe skills` to list all skills.\n"))
+            print(c("dim", f"  Run `swe skills <label>` ({', '.join(added)}) to list a catalog's skills.\n"))
         elif not opts["json"]:
             print(c("dim", "  Nothing to add.\n"))
     elif not opts["json"] and findings and not sys.stdin.isatty():
