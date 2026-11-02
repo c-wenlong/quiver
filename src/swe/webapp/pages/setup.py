@@ -286,11 +286,16 @@ def _apply_lock():
 
 def _clone(home: Path, url: str) -> None:
     """The clone thread: ``swe setup --hub``'s own clone, then release the
-    setup lock and the claim the request took for it."""
+    setup lock and the claim the request took for it.
+
+    The clone's MCP sync rewrites the harness configs the MCP page
+    writes, so it holds that page's CONFIG_LOCK, only for the sync: the
+    clone and plugin installs before it can take minutes, and the MCP
+    page waits on the lock rather than answering busy."""
     from swe.init.hub import HubError, clone_and_register, public_url
 
     try:
-        cloned = clone_and_register(home, url)
+        cloned = clone_and_register(home, url, mcp_lock=CONFIG_LOCK)
     except HubError as exc:
         _finish(home, {"state": "failed", "error": str(exc)})
     except Exception as exc:  # the page must hear about it, never a hung "cloning"

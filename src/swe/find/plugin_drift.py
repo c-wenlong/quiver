@@ -687,14 +687,25 @@ def _harness_env(home: Path) -> dict:
     return env
 
 
-def apply_fix(home: Path, finding_id: str, run=None, harnesses=HARNESSES) -> Finding:
+def took_too_long(seconds: int) -> str:
+    """A command's time limit as "did not finish in ..." says it:
+    ``5 minutes`` for 300, ``90s`` for 90."""
+    seconds = int(seconds)
+    if seconds % 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    return f"{minutes} minute{'' if minutes == 1 else 's'}"
+
+
+def apply_fix(home: Path, finding_id: str, run=None, harnesses=HARNESSES,
+              timeout: int = 300) -> Finding:
     """Run the commands of the finding named ``finding_id``; return it.
 
     Drift is computed again first, so only a fix for a gap that exists right
     now runs, and the commands are the ones this module builds, never text
     a caller supplied. Commands run in order without a shell and stop at the
     first failure, so ``codex plugin remove && add`` never adds after a
-    failed remove.
+    failed remove. Each command gets ``timeout`` seconds.
     """
     import subprocess
 
@@ -711,13 +722,13 @@ def apply_fix(home: Path, finding_id: str, run=None, harnesses=HARNESSES) -> Fin
     for argv in finding.argv:
         try:
             done = run(list(argv), capture_output=True, text=True,
-                       stdin=subprocess.DEVNULL, timeout=300, env=_harness_env(home))
+                       stdin=subprocess.DEVNULL, timeout=timeout, env=_harness_env(home))
         except FileNotFoundError:
             raise FixError(f"{argv[0]} is not on PATH") from None
         except OSError as exc:
             raise FixError(f"couldn't run {argv[0]}: {exc.strerror or exc}") from None
         except subprocess.TimeoutExpired:
-            raise FixError(f"{shlex.join(argv)} did not finish in 5 minutes") from None
+            raise FixError(f"{shlex.join(argv)} did not finish in {took_too_long(timeout)}") from None
         if done.returncode != 0:
             said = (done.stderr or done.stdout or "").strip().splitlines()
             tail = said[-1] if said else f"exit status {done.returncode}"

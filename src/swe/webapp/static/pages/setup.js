@@ -508,17 +508,29 @@ function cloning() {
 }
 
 /* What a clone's plugin installs and MCP sync left undone (`hub.cloned`'s
- * `plugins` and `mcp` rows), one line each: a server waiting on a secret
- * once, with the command that sets it, then each failure per agent. An
+ * `plugins` and `mcp` rows), one line each: each plugin left out (failed,
+ * or not attempted once setup's time ran out) with the command that
+ * installs it, a server waiting on a secret once, with the command that
+ * sets it, then each failure per agent. A row with no name is about the
+ * whole hub (a file that couldn't be read) and says just its error. An
  * older swe sends neither list. */
 function hubInstallNotes(cloned) {
   const lines = [];
   for (const p of cloned.plugins || []) {
-    if (p.error) lines.push(`${p.name}@${p.marketplace} isn't installed in ${agentName(p.harness)}: ${p.error}`);
+    if (!p.name) {
+      if (p.error) lines.push(p.error);
+      continue;
+    }
+    const reason = p.error || (p.retry ? p.skipped : null);
+    if (!reason) continue;
+    const line = `${p.name}@${p.marketplace} isn't installed in ${agentName(p.harness)}: ${reason}`;
+    lines.push(p.retry ? `${line}; retry with: ${p.retry}` : line);
   }
   const waiting = new Set();
   for (const s of cloned.mcp || []) {
-    if (s.error) {
+    if (s.error && !s.name) {
+      lines.push(s.error);
+    } else if (s.error) {
       lines.push(`${s.name} isn't synced to ${agentName(s.harness)}: ${s.error}`);
     } else if ((s.needs || []).length && !waiting.has(s.name)) {
       waiting.add(s.name);
@@ -526,6 +538,17 @@ function hubInstallNotes(cloned) {
     }
   }
   return lines;
+}
+
+/* What the done card says the clone brought in. A clone without the
+ * `plugins` and `mcp` lists installed and synced nothing, so it keeps the
+ * wording from before that step. */
+function hubClonedSummary(cloned) {
+  const where = esc(machineName());
+  if (!Array.isArray(cloned.plugins) || !Array.isArray(cloned.mcp)) {
+    return `Its AGENTS.md, skills, plugins and MCP servers are on ${where} now. Set up links them into each agent.`;
+  }
+  return `Its plugins are installed and its MCP servers synced into each agent on ${where}. Set up links its AGENTS.md and skills.`;
 }
 
 /* swe setup's hub step: shown while ~/.swe has no hub yet, and after a
@@ -539,7 +562,7 @@ function hubCard() {
     const failed = (cloned.marketplaces || []).filter((m) => m.error);
     return `<div class="card setup-hub" role="status">
       <div class="setup-done-title">${CHECK}<span>Cloned ${esc(job.url)} into ~/.swe.</span></div>
-      <p class="caption">Its plugins are installed and its MCP servers synced into each agent on ${esc(machineName())}. Set up links its AGENTS.md and skills.</p>
+      <p class="caption">${hubClonedSummary(cloned)}</p>
       ${failed.map((m) => `<p class="caption note">${esc(m.marketplace)} isn't registered in ${esc(agentName(m.harness))}: ${esc(m.error)}</p>`).join("")}
       ${hubInstallNotes(cloned).map((line) => `<p class="caption note">${esc(line)}</p>`).join("")}
     </div>`;

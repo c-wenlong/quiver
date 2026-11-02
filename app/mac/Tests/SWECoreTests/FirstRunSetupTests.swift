@@ -289,6 +289,33 @@ private func applied(leftAlone: Bool) -> String {
         let cloned = try JSONDecoder().decode(SetupPreview.Hub.Cloned.self, from: Data(old.utf8))
         #expect(cloned.plugins == nil)
         #expect(cloned.installNotes.isEmpty)
+        // It installed and synced nothing, so the card keeps the wording
+        // from before that step rather than claiming both ran.
+        #expect(cloned.summary == "Its AGENTS.md, skills, plugins and MCP servers are on this Mac now. Set up links them into each agent.")
+    }
+
+    @Test func aCloneWithTheInstallStepSaysBothRan() throws {
+        let now = #"{"url": "u", "path": "/h/.swe", "marketplaces": [], "plugins": [], "mcp": []}"#
+        let cloned = try JSONDecoder().decode(SetupPreview.Hub.Cloned.self, from: Data(now.utf8))
+        #expect(cloned.summary == "Its plugins are installed and its MCP servers synced into each agent on this Mac. Set up links its AGENTS.md and skills.")
+    }
+
+    @Test func installNotesNameAPluginSetupHadNoTimeForAndAnUnreadableMcpJson() throws {
+        let json = """
+        {"url": "u", "path": "/h/.swe", "marketplaces": [],
+         "plugins": [{"harness": "codex", "name": "had", "marketplace": "m",
+                      "skipped": "already installed", "error": null, "retry": null},
+                     {"harness": "codex", "name": "late", "marketplace": "m",
+                      "skipped": "not attempted: setup ran out of time", "error": null,
+                      "retry": "swe plugins install late@m --harness=codex"}],
+         "mcp": [{"harness": "", "name": "", "skipped": null, "needs": [],
+                  "error": "Cannot parse JSON in /h/.swe/mcp.json: fix or remove the file"}]}
+        """
+        let cloned = try JSONDecoder().decode(SetupPreview.Hub.Cloned.self, from: Data(json.utf8))
+        #expect(cloned.installNotes == [
+            "late@m isn't installed in \(HarnessMark.accountName("codex")): not attempted: setup ran out of time; retry with: swe plugins install late@m --harness=codex",
+            "Cannot parse JSON in /h/.swe/mcp.json: fix or remove the file",
+        ])
     }
 
     @Test func cloneRunsSweSetupHubAndShowsTheClonedHub() async {

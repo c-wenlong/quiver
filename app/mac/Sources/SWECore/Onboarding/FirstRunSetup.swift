@@ -80,10 +80,26 @@ public struct SetupPreview: Decodable, Sendable, Equatable {
             public let harness: String
             public let name: String
             public let marketplace: String
-            /// "already installed" when there was nothing to do.
+            /// "already installed" when there was nothing to do, or "not
+            /// attempted: setup ran out of time" when its time budget was
+            /// spent before this install could start.
             public let skipped: String?
             /// Why the install failed; nil when it worked or was skipped.
             public let error: String?
+            /// The `swe plugins install` command for a plugin the clone
+            /// left out (failed or not attempted); nil otherwise, and
+            /// missing from an swe older than the time budget.
+            public let retry: String?
+
+            /// One line when the plugin isn't installed, nil when it is
+            /// (or already was). A row with no name is about the whole
+            /// hub, so it says just its error.
+            var note: String? {
+                if name.isEmpty { return error }
+                guard let reason = error ?? (retry != nil ? skipped : nil) else { return nil }
+                let line = "\(name)@\(marketplace) isn't installed in \(HarnessMark.accountName(harness)): \(reason)"
+                return retry.map { "\(line); retry with: \($0)" } ?? line
+            }
         }
 
         /// One hub MCP server `--hub` synced into one harness.
@@ -107,15 +123,28 @@ public struct SetupPreview: Decodable, Sendable, Equatable {
             public let plugins: [Plugin]?
             public let mcp: [Server]?
 
-            /// One line per plugin or server the clone could not bring
-            /// in: a server waiting on a secret once, then each failure.
-            public var installNotes: [String] {
-                var lines = (plugins ?? []).compactMap { row in
-                    row.error.map { "\(row.name)@\(row.marketplace) isn't installed in \(HarnessMark.accountName(row.harness)): \($0)" }
+            /// What the card says the clone brought in. An swe from before
+            /// the install and sync step sends neither list and did
+            /// neither, so it keeps the wording from then.
+            public var summary: String {
+                if plugins == nil || mcp == nil {
+                    return "Its AGENTS.md, skills, plugins and MCP servers are on this Mac now. Set up links them into each agent."
                 }
+                return "Its plugins are installed and its MCP servers synced into each agent on this Mac. Set up links its AGENTS.md and skills."
+            }
+
+            /// One line per plugin or server the clone could not bring
+            /// in: each plugin left out, then a server waiting on a secret
+            /// once, and each failure. A server row with no name is about
+            /// the hub's whole mcp.json (it couldn't be read), so it says
+            /// just its error.
+            public var installNotes: [String] {
+                var lines = (plugins ?? []).compactMap(\.note)
                 var waiting = Set<String>()
                 for row in mcp ?? [] {
-                    if let error = row.error {
+                    if let error = row.error, row.name.isEmpty {
+                        lines.append(error)
+                    } else if let error = row.error {
                         lines.append("\(row.name) isn't synced to \(HarnessMark.accountName(row.harness)): \(error)")
                     } else if !(row.needs ?? []).isEmpty, let skipped = row.skipped,
                               waiting.insert(row.name).inserted {
@@ -187,9 +216,13 @@ extension SweClient {
     }
 
     /// What `swe setup --hub` may take: `git ls-remote` (30 s), the clone
-    /// (600 s), then registering the hub's marketplaces, installing their
-    /// plugins (each a harness CLI call, seconds when it works) and
-    /// syncing its MCP servers.
+    /// (600 s), then registering the hub's marketplaces and installing
+    /// their plugins, which share one 150 s budget (`HUB_INSTALL_BUDGET_S`
+    /// in `swe/init/hub.py`: what it leaves no time for comes back as a
+    /// row, not a hang), then the in-process MCP sync and the setup
+    /// preview. 30 + 600 + 150 = 780 s leaves 120 s for those. Python's
+    /// tests/test_setup_hub_installs.py reads this number: raise the
+    /// budget there and this with it.
     static let hubCloneTimeout: Duration = .seconds(900)
 
     /// `swe setup --hub=<url> --json --non-interactive`: clone the user's

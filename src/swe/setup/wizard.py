@@ -183,22 +183,26 @@ def print_hub_installs(cloned: dict) -> None:
     """What a hub clone installed and synced: its plugins, then its MCP
     servers, one line per outcome with the harnesses it covers. Skips and
     failures say why, and a server left out for a missing secret says the
-    commands that bring it in."""
+    commands that bring it in. A row with no name is about the whole hub
+    (a file that couldn't be read) and says just its error."""
     plugins = cloned.get("plugins") or []
     if plugins:
         print(f"  {c('bold', 'Plugins')}")
-        for (ref, skipped, error), where in _grouped(
-                plugins, lambda r: (_one_line(f"{r['name']}@{r['marketplace']}"),
-                                    _one_line(r["skipped"]), _one_line(r["error"]))):
+        for (ref, skipped, error, left_out), where in _grouped(
+                plugins, lambda r: (_one_line(f"{r['name']}@{r['marketplace']}") if r["name"] else None,
+                                    _one_line(r["skipped"]), _one_line(r["error"]),
+                                    bool(r.get("retry")))):
             harnesses = ", ".join(where)
-            if error:
-                print(f"    {c('yellow', '!')} {ref} not installed in {harnesses}: {error}")
+            if ref is None:
+                print(f"    {c('yellow', '!')} {error}")
+            elif error or left_out:
+                print(f"    {c('yellow', '!')} {ref} not installed in {harnesses}: {error or skipped}")
             elif skipped:
                 print(f"    {c('dim', '·')} {ref} {skipped} in {harnesses}")
             else:
                 print(f"    {c('green', '✓')} {ref} installed in {harnesses}")
-        if any(r["error"] for r in plugins):
-            print(c("dim", "    swe plugins install <plugin>@<marketplace> --harness=<h> retries one."))
+        if any(r.get("retry") for r in plugins):
+            print(c("dim", "    swe plugins install <plugin>@<marketplace> --harness=<h> installs one."))
     servers = cloned.get("mcp") or []
     if servers:
         print(f"  {c('bold', 'MCP servers')}")
@@ -206,7 +210,9 @@ def print_hub_installs(cloned: dict) -> None:
                 servers, lambda r: (_one_line(r["name"]), _one_line(r["skipped"]),
                                     _one_line(r["error"]), tuple(r.get("needs") or ()))):
             harnesses = ", ".join(where)
-            if error:
+            if not name:
+                print(f"    {c('yellow', '!')} {error}")
+            elif error:
                 print(f"    {c('yellow', '!')} {name} not synced to {harnesses}: {error}")
             elif needs:
                 print(f"    {c('yellow', '!')} {name} not synced: {skipped}")

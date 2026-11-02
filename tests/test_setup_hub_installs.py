@@ -9,12 +9,14 @@ write the files the real ones do.
 import copy
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
+import threading
 import tomllib
 import unittest
-from contextlib import ExitStack, redirect_stderr
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -141,6 +143,30 @@ class SyncHubMcpTest(_McpHome):
         self.assertEqual(hub_repo.sync_hub_mcp(self.home), [])
         self.assertFalse(self.claude_json.exists())
 
+    def test_a_hub_mcp_json_that_cannot_be_parsed_is_one_error_row(self):
+        # It read as "no servers", so the clone said nothing about them.
+        source = self.home / ".swe" / "mcp.json"
+        source.parent.mkdir(parents=True)
+        for text, said in (("{not json", "Cannot parse JSON in"),
+                           ('["a list"]', "must contain a JSON object"),
+                           ('{"mcpServers": ["context7"]}', "mcpServers in")):
+            with self.subTest(text=text):
+                source.write_text(text)
+                rows = hub_repo.sync_hub_mcp(self.home)
+                self.assertEqual(len(rows), 1, rows)
+                self.assertEqual({k: v for k, v in rows[0].items() if k != "error"},
+                                 {"harness": "", "name": "", "skipped": None, "needs": []})
+                self.assertIn(said, rows[0]["error"])
+                self.assertIn(str(source), rows[0]["error"])
+        self.assertFalse(self.claude_json.exists())
+
+    def test_a_hub_mcp_json_that_cannot_be_read_is_one_error_row(self):
+        source = self.home / ".swe" / "mcp.json"
+        source.mkdir(parents=True)  # a folder: reading it fails
+        rows = hub_repo.sync_hub_mcp(self.home)
+        self.assertEqual([(r["harness"], r["name"]) for r in rows], [("", "")])
+        self.assertIn("Cannot read", rows[0]["error"])
+
     def test_plain_mcp_sync_still_refuses_on_a_missing_secret(self):
         _write_hub_mcp(self.home)
         out = io.StringIO()
@@ -245,17 +271,140 @@ class InstallHubPluginsTest(unittest.TestCase):
             raise FileNotFoundError(argv[0])
         rows = hub_repo.install_hub_plugins(self.home, run=missing)
         self.assertEqual({r["error"] for r in rows}, {"claude is not on PATH", "codex is not on PATH"})
+        self.assertEqual(rows[0]["retry"], "swe plugins install git-helpers@starter --harness=claude")
+
+    def test_an_archived_harness_gets_no_installs(self):
+        config = self.home / ".swe" / "config"
+        config.mkdir(parents=True)
+        (config / "harness.json").write_text(json.dumps({"codex": {"state": "archived"}}))
+        self.assertEqual({r[0] for r in self.rows()}, {"claude"})
+        self.assertEqual({argv[0] for argv in self.ran}, {"claude"})
+
+    def test_installs_stop_starting_once_the_budget_is_spent(self):
+        now = [0.0]
+        budget = hub_repo.Budget(150, clock=lambda: now[0])
+        timeouts = []
+
+        def slow(argv, **kw):
+            timeouts.append(kw["timeout"])
+            now[0] += 100
+            return self.run_cli(argv, **kw)
+
+        rows = hub_repo.install_hub_plugins(self.home, run=slow, budget=budget)
+        # 90 s for the first (the per-install cap), the 50 s left for the
+        # second, and no time to start the codex two.
+        self.assertEqual(timeouts, [hub_repo.HUB_COMMAND_TIMEOUT_S, 50])
+        self.assertEqual([(r["harness"], r["name"], r["skipped"], r["error"], r["retry"]) for r in rows], [
+            ("claude", "git-helpers", None, None, None),
+            ("claude", "lint", None, None, None),
+            ("codex", "git-helpers", "not attempted: setup ran out of time", None,
+             "swe plugins install git-helpers@starter --harness=codex"),
+            ("codex", "lint", "not attempted: setup ran out of time", None,
+             "swe plugins install lint@starter --harness=codex"),
+        ])
+        self.assertEqual(len(self.ran), 2)
+
+    def test_an_install_past_its_share_of_the_budget_says_how_long_it_had(self):
+        def hangs(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw["timeout"])
+        rows = hub_repo.install_hub_plugins(self.home, run=hangs, budget=hub_repo.Budget(150))
+        self.assertIn("claude plugin install git-helpers@starter did not finish in 90s", rows[0]["error"])
+
+    def test_without_a_budget_each_install_gets_five_minutes(self):
+        timeouts = []
+        hub_repo.install_hub_plugins(
+            self.home, run=lambda argv, **kw: timeouts.append(kw["timeout"]) or self.run_cli(argv))
+        self.assertEqual(set(timeouts), {300})
+
+
+class BudgetTest(unittest.TestCase):
+    def test_marketplaces_share_the_budget_and_past_it_are_not_attempted(self):
+        from types import SimpleNamespace
+
+        findings = [SimpleNamespace(kind="unregistered", harness=h, marketplace="starter", id=h)
+                    for h in ("claude", "codex")]
+        now = [0.0]
+        timeouts = []
+
+        def fix(home, fid, run=None, timeout=None):
+            timeouts.append(timeout)
+            now[0] += 140
+
+        with patch("swe.find.plugin_drift.plugin_drift", return_value=findings), \
+                patch("swe.find.plugin_drift.apply_fix", side_effect=fix):
+            got = hub_repo.register_marketplaces(
+                Path("/h"), budget=hub_repo.Budget(150, clock=lambda: now[0]))
+        self.assertEqual(timeouts, [hub_repo.HUB_COMMAND_TIMEOUT_S])
+        self.assertEqual(got, [("claude", "starter", None),
+                               ("codex", "starter", hub_repo.OUT_OF_TIME)])
+
+    def test_the_mac_waits_well_past_the_clone_and_the_budget(self):
+        """The Mac kills `swe setup --hub` at SweClient.hubCloneTimeout. The
+        clone's own limits plus the install budget must leave it time for
+        the MCP sync and the preview, so the JSON always arrives."""
+        swift = (Path(__file__).resolve().parents[1] / "app/mac/Sources/SWECore/Onboarding"
+                 / "FirstRunSetup.swift").read_text(encoding="utf-8")
+        mac = int(re.search(r"hubCloneTimeout: Duration = \.seconds\((\d+)\)", swift).group(1))
+        fixed = hub_repo.REACH_TIMEOUT_S + hub_repo.CLONE_TIMEOUT_S + hub_repo.HUB_INSTALL_BUDGET_S
+        self.assertGreaterEqual(mac - fixed, 90, (mac, fixed))
+        self.assertLess(hub_repo.HUB_MIN_START_S, hub_repo.HUB_COMMAND_TIMEOUT_S)
+
+
+class CloneAndRegisterTest(unittest.TestCase):
+    def test_the_mcp_lock_is_held_for_the_mcp_sync_and_nothing_else(self):
+        """The web Setup page's clone passes CONFIG_LOCK, which its MCP
+        page holds for its writes to the same harness configs."""
+        lock = threading.Lock()
+        held = {}
+
+        def step(name, value):
+            def run(*_a, **_k):
+                held[name] = lock.locked()
+                return value
+            return run
+
+        with patch.object(hub_repo, "clone_hub", return_value=Path("/h/.swe")), \
+                patch.object(hub_repo, "register_marketplaces", side_effect=step("marketplaces", [])), \
+                patch.object(hub_repo, "install_hub_plugins", side_effect=step("plugins", [])), \
+                patch.object(hub_repo, "sync_hub_mcp", side_effect=step("mcp", [])):
+            cloned = hub_repo.clone_and_register(Path("/h"), "https://h/r.git", mcp_lock=lock)
+            self.assertEqual(held, {"marketplaces": False, "plugins": False, "mcp": True})
+            self.assertFalse(lock.locked())
+            hub_repo.clone_and_register(Path("/h"), "https://h/r.git")  # no lock: still runs
+        self.assertEqual(cloned["mcp"], [])
+
+
+class PrintHubInstallsTest(unittest.TestCase):
+    def test_a_row_about_the_whole_hub_says_just_its_error(self):
+        from swe.setup.wizard import print_hub_installs
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            print_hub_installs({
+                "plugins": [{"harness": "", "name": "", "marketplace": "", "skipped": None,
+                             "error": "couldn't read the hub's plugins: bad", "retry": None}],
+                "mcp": [{"harness": "", "name": "", "skipped": None, "needs": [],
+                         "error": "Cannot parse JSON in /h/.swe/mcp.json: fix or remove the file"}]})
+        out = strip_ansi(out.getvalue())
+        self.assertIn("! couldn't read the hub's plugins: bad\n", out)
+        self.assertIn("! Cannot parse JSON in /h/.swe/mcp.json: fix or remove the file\n", out)
+        self.assertNotIn("@", out)
+        self.assertNotIn("synced to", out)
 
 
 PLUGIN_ROWS = [
     {"harness": "claude", "name": "git-helpers", "marketplace": "starter",
-     "skipped": None, "error": None},
+     "skipped": None, "error": None, "retry": None},
     {"harness": "codex", "name": "git-helpers", "marketplace": "starter",
-     "skipped": None, "error": None},
+     "skipped": None, "error": None, "retry": None},
     {"harness": "codex", "name": "lint", "marketplace": "starter",
-     "skipped": "already installed", "error": None},
+     "skipped": "already installed", "error": None, "retry": None},
     {"harness": "claude", "name": "lint", "marketplace": "starter",
-     "skipped": None, "error": "claude plugin install lint@starter failed with exit status 1:\nboom"},
+     "skipped": None, "error": "claude plugin install lint@starter failed with exit status 1:\nboom",
+     "retry": "swe plugins install lint@starter --harness=claude"},
+    {"harness": "codex", "name": "docs", "marketplace": "starter",
+     "skipped": hub_repo.OUT_OF_TIME, "error": None,
+     "retry": "swe plugins install docs@starter --harness=codex"},
 ]
 FIX = "no value for GITHUB_TOKEN; set it with: swe mcp secret set GITHUB_TOKEN"
 MCP_ROWS = [
@@ -290,7 +439,8 @@ class SetupHubReportsInstallsTest(_HubHarness):
                 self.assertEqual(set(cloned), {"url", "path", "marketplaces", "plugins", "mcp"})
                 self.assertEqual(cloned["plugins"], PLUGIN_ROWS)
                 self.assertEqual(cloned["mcp"], MCP_ROWS)
-        self.install_hub_plugins.assert_called_with(self.home)
+        self.assertEqual(self.install_hub_plugins.call_args.args, (self.home,))
+        self.assertIsInstance(self.install_hub_plugins.call_args.kwargs["budget"], hub_repo.Budget)
         self.sync_hub_mcp.assert_called_with(self.home)
 
     def test_text_mode_says_what_was_installed_and_what_waits_on_a_secret(self):
@@ -302,6 +452,8 @@ class SetupHubReportsInstallsTest(_HubHarness):
         # The CLI's own words stay on the line, folded onto it.
         self.assertIn("! lint@starter not installed in claude: claude plugin install "
                       "lint@starter failed with exit status 1: boom\n", out)
+        self.assertIn(f"! docs@starter not installed in codex: {hub_repo.OUT_OF_TIME}\n", out)
+        self.assertIn("swe plugins install <plugin>@<marketplace> --harness=<h> installs one.", out)
         self.assertIn("✓ context7 synced to claude, codex", out)
         self.assertIn(f"! github not synced: {FIX}", out)
         self.assertIn("then: swe mcp sync swe claude codex --only=github", out)

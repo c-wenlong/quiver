@@ -367,7 +367,7 @@ private struct LinksStep: View {
             Label("Cloned \(cloned.url) into ~/.swe.", systemImage: "checkmark.circle")
                 .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
-            Text("Its plugins are installed and its MCP servers synced into each agent on this Mac. Set up links its AGENTS.md and skills.")
+            Text(cloned.summary)
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(cloned.marketplaces.filter { $0.error != nil }, id: \.self) { row in

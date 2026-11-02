@@ -67,9 +67,14 @@ subtitle, and a footer with Skip setup, Back and Continue.
    the page reads the machine again, so the step shows the cloned hub's
    AGENTS.md, and the card says what was cloned, any plugin
    marketplace that couldn't be registered, any plugin that couldn't be
-   installed, and any MCP server that couldn't be synced (one waiting on
-   a secret is named once, with its `swe mcp secret set` command). Coming back to the page
-   while a clone runs picks the polling up again.
+   installed or wasn't attempted once setup's time budget ran out (with
+   the `swe plugins install` command that installs it), and any MCP
+   server that couldn't be synced (one waiting on a secret is named
+   once, with its `swe mcp secret set` command; a hub `mcp.json` that
+   can't be read or parsed is one line with why). A clone from an swe
+   with no install step (no `plugins` or `mcp` lists) keeps the older
+   wording, which says only that the hub is on the machine. Coming
+   back to the page while a clone runs picks the polling up again.
 
 3. **Pick a look.** System, Light and Dark, each drawn as a small SWE
    window, with the Mac app's blurbs ("Matches this browser" for System).
@@ -177,8 +182,12 @@ is `swe setup --hub=<url>`'s clone (`init.hub.clone_and_register`:
 `git ls-remote`, a clone into a staging folder moved into `~/.swe`
 around what is there, then the hub's plugin marketplaces registered,
 their plugins installed and its MCP servers synced into each harness).
+Registering and installing share a 150 s budget after the clone; see
+`swe setup --json` in [json-contracts.md](../json-contracts.md).
 It answers at once with `{"hub"}` and runs on its own thread, holding
 the page's setup lock, so apply answers 409 `busy` until it ends. The
+MCP sync also holds `CONFIG_LOCK`, the MCP page's write lock, so an
+add or remove there waits for it rather than racing it. The
 URL is kept and answered only with its credentials removed.
 
 | Status | Code | When |
