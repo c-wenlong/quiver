@@ -28,6 +28,13 @@ public struct DoctorReport: Decodable, Sendable, Equatable {
         public let action: Action?
         /// For `install`: the method swe reinstalls the harness with.
         public let via: String?
+        /// The file or place behind the finding, e.g. "declared in
+        /// ~/.claude/settings.json"; older swe builds leave it out.
+        public let source: String?
+        /// The ways out, best first: Run for a fix swe can do, Fix with
+        /// agent for one needing judgment, a copyable command or manual
+        /// steps. Older swe builds leave it out; `fix` is the fallback.
+        public let remedies: [Remedy]?
 
         /// Fixes swe runs for us (`action` in the row, or its first
         /// `action` remedy); an action a newer swe adds decodes as nil so
@@ -62,19 +69,86 @@ public struct DoctorReport: Decodable, Sendable, Equatable {
             }
         }
 
-        private enum CodingKeys: String, CodingKey {
-            case check, severity, message, fix, harness, action, via, remedies
+        /// One way out of a finding (the web page's remedy rows). `kind`
+        /// is lenient like `action`: a kind a newer swe adds decodes as
+        /// `other`, which still shows its title and detail. `action`
+        /// stays a String: a remedy names its fix for `swe doctor --fix`
+        /// to resolve, so an action this build doesn't know simply shows
+        /// no Run, the same as `action` on the finding.
+        public struct Remedy: Decodable, Sendable, Equatable {
+            public enum Kind: String, Sendable { case action, agent, command, steps, other }
+            public let kind: Kind
+            public let title: String
+            public let detail: String?
+            /// `agent`: the prompt the launch carries.
+            public let prompt: String?
+            /// `command`: the line to copy; an `action` can carry one too,
+            /// for the terminal path its confirm offers.
+            public let command: String?
+            /// `steps`: the manual path, one line per step.
+            public let steps: [String]?
+            /// `action`: the fix `swe doctor --fix` runs, by name.
+            public let action: String?
+            /// `install`'s method, as the finding's `via` carries it.
+            public let via: String?
+            /// `undeclare`'s dead script and `dangling-link`'s broken
+            /// link, for the confirm line.
+            public let script: String?
+            public let path: String?
+
+            private enum CodingKeys: String, CodingKey {
+                case kind, title, detail, prompt, command, steps, action, via, script, path
+            }
+
+            public init(kind: Kind, title: String, detail: String? = nil,
+                        prompt: String? = nil, command: String? = nil,
+                        steps: [String]? = nil, action: String? = nil,
+                        via: String? = nil, script: String? = nil, path: String? = nil) {
+                self.kind = kind
+                self.title = title
+                self.detail = detail
+                self.prompt = prompt
+                self.command = command
+                self.steps = steps
+                self.action = action
+                self.via = via
+                self.script = script
+                self.path = path
+            }
+
+            public init(from decoder: any Decoder) throws {
+                let box = try decoder.container(keyedBy: CodingKeys.self)
+                kind = (try box.decodeIfPresent(String.self, forKey: .kind))
+                    .flatMap(Kind.init) ?? .other
+                action = try box.decodeIfPresent(String.self, forKey: .action)
+                // Every remedy swe emits has a title; one that drops it
+                // still shows its action or kind rather than failing the
+                // whole list.
+                title = try box.decodeIfPresent(String.self, forKey: .title)
+                    ?? action ?? kind.rawValue
+                detail = try box.decodeIfPresent(String.self, forKey: .detail)
+                prompt = try box.decodeIfPresent(String.self, forKey: .prompt)
+                command = try box.decodeIfPresent(String.self, forKey: .command)
+                steps = try box.decodeIfPresent([String].self, forKey: .steps)
+                via = try box.decodeIfPresent(String.self, forKey: .via)
+                script = try box.decodeIfPresent(String.self, forKey: .script)
+                path = try box.decodeIfPresent(String.self, forKey: .path)
+            }
+
+            /// The remedy's action as a known case, or nil when a newer
+            /// swe named one this build doesn't have: no Run then, as
+            /// `action` on the finding does.
+            public var knownAction: Action? { action.flatMap(Action.init) }
         }
 
-        /// Just enough of a remedy to find its action.
-        private struct Remedy: Decodable {
-            let kind: String?
-            let action: String?
+        private enum CodingKeys: String, CodingKey {
+            case check, severity, message, fix, harness, action, via, source, remedies
         }
 
         public init(check: String, severity: Severity, message: String,
                     fix: String? = nil, harness: String? = nil, action: Action? = nil,
-                    via: String? = nil) {
+                    via: String? = nil, source: String? = nil,
+                    remedies: [Remedy]? = nil) {
             self.check = check
             self.severity = severity
             self.message = message
@@ -82,6 +156,8 @@ public struct DoctorReport: Decodable, Sendable, Equatable {
             self.harness = harness
             self.action = action
             self.via = via
+            self.source = source
+            self.remedies = remedies
         }
 
         public init(from decoder: any Decoder) throws {
@@ -95,13 +171,14 @@ public struct DoctorReport: Decodable, Sendable, Equatable {
             let method = try box.decodeIfPresent(String.self, forKey: .via)
             via = method
             // A drop or a broken link names its action only on a remedy.
-            let remedies = (try? box.decodeIfPresent([Remedy].self, forKey: .remedies)) ?? nil
+            remedies = (try? box.decodeIfPresent([Remedy].self, forKey: .remedies)) ?? nil
             let own = try box.decodeIfPresent(String.self, forKey: .action)
-            let actionName = own ?? remedies?.first { $0.kind == "action" && $0.action.flatMap(Action.init) != nil }?.action
+            let actionName = own ?? remedies?.first { $0.kind == .action && $0.knownAction != nil }?.action
             // An install with no harness or method to run it with can't be offered.
             action = actionName
                 .flatMap(Action.init)
                 .flatMap { $0 == .install && (named == nil || method == nil) ? nil : $0 }
+            source = try box.decodeIfPresent(String.self, forKey: .source)
         }
     }
 }
@@ -208,6 +285,41 @@ extension SweClient {
     }
 }
 
+/// The confirm line an action remedy's panel carries, porting the web
+/// page's `DOCTOR_RUNS` (static/pages/doctor.js): same wording, "this
+/// Mac" where the web names the hub machine.
+public enum DoctorConfirm {
+    public static func text(action: DoctorReport.Finding.Action,
+                            finding: DoctorReport.Finding,
+                            remedy: DoctorReport.Finding.Remedy?) -> String {
+        let fix = remedy?.command ?? finding.fix ?? remedy?.title ?? "this fix"
+        switch action {
+        case .setup:
+            return "This runs swe setup --apply on this Mac: it registers the harnesses it finds, imports their MCP servers into ~/.swe/mcp.json, and links the shared AGENTS.md and skills into each harness. Real files in the way are left alone, and your stars stay as they are."
+        case .`init`:
+            return "This runs swe init on this Mac: it links the shared AGENTS.md and skills into each harness that doesn't read them yet. Real files in the way are left alone, and new skills folders wait for a run in a terminal."
+        case .discover:
+            return "This runs swe harness discover --apply on this Mac: it adds the high-confidence matches it finds to harness.json."
+        case .install:
+            let name = finding.harness.map { HarnessMark($0).name } ?? "the harness"
+            let via = remedy?.via ?? finding.via ?? "the installer"
+            return "This runs \(fix) on this Mac: it installs \(name) again with \(via), which puts it on PATH, and registers it. A cask or install script that asks for a password can't finish here; copy the command into a terminal instead."
+        case .undeclare:
+            return "On this Mac: deletes the hook entries naming \(remedy?.script ?? "the missing script") from the settings files in the source line, after backing each one up to ~/.swe/backups. Nothing else in the files changes."
+        case .pluginFix:
+            return "On this Mac: runs \(remedy?.detail ?? fix), which registers the marketplace folder or installs the plugin from it. Nothing is removed."
+        case .pluginReinstall:
+            return "On this Mac: runs \(remedy?.detail ?? fix): Codex's copy of the plugin is removed, then installed again from your folder in ~/.swe/plugins."
+        case .danglingLink:
+            return "On this Mac: copies the broken link \(remedy?.path ?? "") to ~/.swe/backups, then removes it. A link synced from another machine may still work there."
+        case .mcpSync:
+            return "On this Mac: \(fix) replaces this one server entry with the hub's copy from ~/.swe/mcp.json, after backing the config file up to ~/.swe/backups."
+        case .marketplaceDrop:
+            return "On this Mac: deletes the missing marketplace entries from the settings files, after backing each one up to ~/.swe/backups. The folders stay gone; restore them by copying them over."
+        }
+    }
+}
+
 /// What a `swe install` run printed, and how it exited.
 public struct InstallRun: Sendable, Equatable {
     public let status: Int32
@@ -297,8 +409,12 @@ public final class DoctorModel {
     }
 
     /// One repair at a time: a run in flight keeps the others waiting.
-    public func run(_ finding: DoctorReport.Finding) async {
-        guard let action = finding.action, running.isEmpty else { return }
+    /// `action` overrides the finding's own: an action remedy's Run runs
+    /// its fix, and `swe doctor --fix` resolves the remedy by name on a
+    /// fresh report, so a finding gone stale is refused by swe.
+    public func run(_ finding: DoctorReport.Finding,
+                    action override: DoctorReport.Finding.Action? = nil) async {
+        guard let action = override ?? finding.action, running.isEmpty else { return }
         running.insert(finding.id)
         runErrors[finding.id] = nil
         installOutput[finding.id] = nil
