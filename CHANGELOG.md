@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`scripts/demo_home.sh`: a safe stage for the primitives demo.** It
+  builds a bare clone of the demo hub (`swe-demo-hub`, or `--hub=URL`)
+  that stands in for the viewer's fork, so `swe sync` pushes stay on
+  disk, plus two empty HOMEs (`machine-a`, `machine-b`) with a neutral
+  git identity and nothing copied from the real HOME. `--home=PATH`
+  seeds a dedicated macOS account as machine A instead, and refuses one
+  whose `~/.swe` already holds a hub. It prints `export DEMO_ROOT`,
+  `DEMO_FORK`, `DEMO_A` and `DEMO_B` lines to paste or `eval`, and
+  leaves `swe setup` to the demo. Part of
+  [#524](https://github.com/c-wenlong/swe/issues/524).
 - **Overview across machines (web and iPhone).** Satellites now add
   their daily token and cost totals per harness to the usage report
   they post every five minutes (`daily_usage`, from their own ledger,

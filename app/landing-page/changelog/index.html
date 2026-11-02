@@ -113,6 +113,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong><code>scripts/demo_home.sh</code>: a safe stage for the primitives demo.</strong> It
+builds a bare clone of the demo hub (<code>swe-demo-hub</code>, or <code>--hub=URL</code>)
+that stands in for the viewer's fork, so <code>swe sync</code> pushes stay on
+disk, plus two empty HOMEs (<code>machine-a</code>, <code>machine-b</code>) with a neutral
+git identity and nothing copied from the real HOME. <code>--home=PATH</code>
+seeds a dedicated macOS account as machine A instead, and refuses one
+whose <code>~/.swe</code> already holds a hub. It prints <code>export DEMO_ROOT</code>,
+<code>DEMO_FORK</code>, <code>DEMO_A</code> and <code>DEMO_B</code> lines to paste or <code>eval</code>, and
+leaves <code>swe setup</code> to the demo. Part of
+<a href="https://github.com/c-wenlong/swe/issues/524">#524</a>.</p>
+</li>
 <li><p><strong>Overview across machines (web and iPhone).</strong> Satellites now add
 their daily token and cost totals per harness to the usage report
 they post every five minutes (<code>daily_usage</code>, from their own ledger,
