@@ -187,6 +187,112 @@ import Testing
         // A `for f (list)` shorthand binds the same way.
         #expect(ShellStartup.sources("for f (\(dir.path)/10-keys.zsh) source $f\n",
                                      keysFile: keys, home: root))
+        // `source glob` reads only the first expansion; a later match is
+        // an argument to that file, not another sourced file.
+        let later = root.appending(path: "later.d")
+        try FileManager.default.createDirectory(at: later, withIntermediateDirectories: true)
+        try "export X=1\n"
+            .write(to: later.appending(path: "00-env.zsh"), atomically: true, encoding: .utf8)
+        try "source \(keys.path)\n"
+            .write(to: later.appending(path: "90-keys.zsh"), atomically: true, encoding: .utf8)
+        #expect(!ShellStartup.sources("source \(later.path)/*.zsh\n", keysFile: keys, home: root))
+        // ...but a `for` variable iterates every word, so it sees it.
+        #expect(ShellStartup.sources("for f in \(later.path)/*.zsh; do source $f; done\n",
+                                     keysFile: keys, home: root))
+    }
+
+    /// A sourced file reached through a symlink is still read — resource
+    /// values describe the link, so the check resolves first.
+    @Test func aSymlinkedDropInCounts() throws {
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
+        let keys = root.appending(path: ".swe/secrets/providers/.api_keys")
+        try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "K=1".write(to: keys, atomically: true, encoding: .utf8)
+        let dir = root.appending(path: "zshrc.d")
+        let real = root.appending(path: "dotfiles/secrets.zsh")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: real.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "source \(keys.path)\n".write(to: real, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            atPath: dir.appending(path: "secrets.zsh").path, withDestinationPath: real.path)
+        #expect(ShellStartup.sources("for f in \(dir.path)/*.zsh; do source $f; done\n",
+                                     keysFile: keys, home: root))
+        #expect(ShellStartup.sources("source \(dir.path)/secrets.zsh\n",
+                                     keysFile: keys, home: root))
+    }
+
+    /// A wildcard the shell wouldn't expand — quoted or escaped — stays
+    /// a literal path character, so it doesn't sweep up matching files.
+    @Test func quotedWildcardsStayLiteral() throws {
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
+        let keys = root.appending(path: ".swe/secrets/providers/.api_keys")
+        try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "K=1".write(to: keys, atomically: true, encoding: .utf8)
+        let dir = root.appending(path: "rc.d")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try "source \(keys.path)\n"
+            .write(to: dir.appending(path: "a.zsh"), atomically: true, encoding: .utf8)
+        for rc in ["source \"\(dir.path)/*.zsh\"\n",
+                   "source '\(dir.path)/*.zsh'\n",
+                   "source \(dir.path)/\\*.zsh\n",
+                   "for f in \"\(dir.path)/*.zsh\"; do source $f; done\n"] {
+            #expect(!ShellStartup.sources(rc, keysFile: keys, home: root), "\(rc)")
+        }
+        // A literal `*`/`[` in a real file's name still reaches it.
+        let odd = dir.appending(path: "literal*[1]/k.zsh")
+        try FileManager.default.createDirectory(at: odd.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "source \(keys.path)\n".write(to: odd, atomically: true, encoding: .utf8)
+        #expect(ShellStartup.sources("source \(dir.path)/literal\\*\\[1\\]/k.zsh\n",
+                                     keysFile: keys, home: root))
+        #expect(ShellStartup.sources("source \"\(dir.path)/literal*[1]/k.zsh\"\n",
+                                     keysFile: keys, home: root))
+    }
+
+    /// After a `for` body ends the variable keeps only the last word, so
+    /// an earlier list entry stops counting as a source.
+    @Test func aFinishedForKeepsOnlyTheLastWord() throws {
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
+        let keys = root.appending(path: ".swe/secrets/providers/.api_keys")
+        try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "K=1".write(to: keys, atomically: true, encoding: .utf8)
+        let other = root.appending(path: "other.zsh")
+        try "export X=1\n".write(to: other, atomically: true, encoding: .utf8)
+        // Inside the body both words count; after `done` only `other`.
+        #expect(!ShellStartup.sources(
+            "for f in \(keys.path) \(other.path); do true; done\nsource $f\n",
+            keysFile: keys, home: root))
+        #expect(!ShellStartup.sources(
+            "for f in \(keys.path) \(other.path)\ndo\n  true\ndone\nsource $f\n",
+            keysFile: keys, home: root))
+        #expect(!ShellStartup.sources(
+            "for f in \(keys.path) \(other.path) { true }\nsource $f\n",
+            keysFile: keys, home: root))
+        #expect(!ShellStartup.sources(
+            "for f in \(keys.path) \(other.path); true\nsource $f\n",
+            keysFile: keys, home: root))
+        // The same `source` inside the body still sees every word.
+        #expect(ShellStartup.sources(
+            "for f in \(other.path) \(keys.path); do source $f; done\n",
+            keysFile: keys, home: root))
+        #expect(ShellStartup.sources(
+            "for f in \(other.path) \(keys.path)\ndo\n  source $f\ndone\n",
+            keysFile: keys, home: root))
+        // Last word wins in shell order — the last one is what `source`
+        // sees after the loop.
+        #expect(ShellStartup.sources(
+            "for f in \(other.path) \(keys.path); do true; done\nsource $f\n",
+            keysFile: keys, home: root))
     }
 
     /// Two files sourcing each other can't loop forever; missing files
