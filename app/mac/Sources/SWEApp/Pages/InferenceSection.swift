@@ -87,6 +87,22 @@ struct InferenceSection: View {
                     }
                 }
             }
+            if case .notWritable(let rc, let real) = model.sourcing, !model.rows.isEmpty {
+                Card {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("New terminals don't get these keys. \(rc.lastPathComponent) resolves to \(real.path), which is read-only, so SWE can't edit it.")
+                            .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("Add this line to the file that generates it: \(model.sourceLine)")
+                                .font(Theme.font(size: 12, design: .monospaced))
+                                .foregroundStyle(Theme.textSecondary)
+                                .textSelection(.enabled)
+                            Spacer()
+                            CopyButton(help: "Copy the line") { copyToPasteboard(model.sourceLine) }
+                        }
+                    }
+                }
+            }
             if !model.problems.isEmpty {
                 Card(title: "Lines that set nothing") {
                     ForEach(model.problems, id: \.line) { problem in
@@ -336,7 +352,7 @@ struct InferenceSection: View {
         switch model.sourcing {
         case .sourced:
             return "From \(displayPath(model.path)). New terminals pick up changes."
-        case .notSourced:
+        case .notSourced, .notWritable:
             return "From \(displayPath(model.path)). New terminals don't read this file yet."
         case .unsupportedShell:
             return "From \(displayPath(model.path)). Add `source \(displayPath(model.path))` to your shell's startup file so new terminals get these keys."

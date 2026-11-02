@@ -1571,6 +1571,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last. The whole log is written to
   `~/.quiver/cache/rebuild/last-build.log`, which the message links to,
   and the warning text can be selected to copy either out.
+- **Keys and plans: the "new terminals don't get these keys" card is
+  honest about managed startup files.** It used to fire on any rc whose
+  own text lacked the `source` line, so a home-manager `.zshrc` that
+  sources a drop-in folder (`for f in .../**/*.zsh; do source "$f"`)
+  showed it even when a drop-in already loaded the keys; and clicking
+  Add failed with a bare "The file couldn't be saved", since the write
+  goes through to a read-only Nix store path. The check now follows the
+  rc's sourced files, globs and `for`-loop variables (bounded), and a
+  not-sourced rc that can't be written shows the line to copy into the
+  generating config instead of the button.
 
 ### Security
 

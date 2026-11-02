@@ -1719,6 +1719,17 @@ last. The whole log is written to
 <code>~/.quiver/cache/rebuild/last-build.log</code>, which the message links to,
 and the warning text can be selected to copy either out.</p>
 </li>
+<li><p><strong>Keys and plans: the &quot;new terminals don't get these keys&quot; card is
+honest about managed startup files.</strong> It used to fire on any rc whose
+own text lacked the <code>source</code> line, so a home-manager <code>.zshrc</code> that
+sources a drop-in folder (<code>for f in .../**/*.zsh; do source &quot;$f&quot;</code>)
+showed it even when a drop-in already loaded the keys; and clicking
+Add failed with a bare &quot;The file couldn't be saved&quot;, since the write
+goes through to a read-only Nix store path. The check now follows the
+rc's sourced files, globs and <code>for</code>-loop variables (bounded), and a
+not-sourced rc that can't be written shows the line to copy into the
+generating config instead of the button.</p>
+</li>
 </ul>
 <h3 id="security"><a class="anchor" href="#security"></a>Security</h3>
 <ul>

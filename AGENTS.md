@@ -149,5 +149,6 @@ Each entry records a trap that already shipped as a bug or cost a long debug. Be
 - **App UI**: fonts through `Theme`, hover text through `.hoverTip` (not `.help`), brand names and colours only in `ModelBrands.swift` / `HarnessColor.fixed`, every account card the same history section.
 - **App performance**: no filesystem calls on the main actor for Plugins and Skills (`LatestBuild`), slow ledger reads off the `Ledger` actor, and the window shell never measures a page (`PanelFrame`).
 - **Scratch app builds** register with LaunchServices: unregister them with `lsregister -u` after testing, or widgets break.
+- **Managed shell rc** (`APIKeys/ShellStartup.swift`): a home-manager `.zshrc` resolves into a read-only store; `writable()` gates the button and the write, and `sources()` follows drop-in globs.
 
 Add a new gotcha to the matching doc, and a one-liner here only if an agent would otherwise walk into it.
