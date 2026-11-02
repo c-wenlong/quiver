@@ -301,6 +301,139 @@ class ConflictTest(SyncTestBase):
             self.sync(a)
 
 
+class RegistryMergeTest(SyncTestBase):
+    """config/harness.json is versioned in the hub, so every machine writes
+    it. Git's line merge stops on two machines' copies even when only the
+    "added" times differ; sync merges it harness by harness instead."""
+
+    REG = "config/harness.json"
+
+    def entry(self, added: str, **more) -> dict:
+        return {"command": "claude", "version": "2.1.0", "aliases": ["cc"],
+                "added": added, "discovered_via": "catalog", **more}
+
+    def write_registry(self, home: Path, registry: dict) -> None:
+        path = home / ".swe" / self.REG
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(registry, indent=2) + "\n")
+
+    def registry(self, home: Path) -> dict:
+        return json.loads((home / ".swe" / self.REG).read_text())
+
+    def test_two_machines_set_up_before_their_first_sync(self):
+        # Both ran `swe setup --hub=<same hub>`: each registered claude on
+        # its own, a few seconds apart; B also has codex.
+        a, b = self.machine("a"), self.machine("b")
+        self.write_registry(a, {"claude": self.entry("2026-11-02T09:00:01")})
+        self.write_registry(b, {"claude": self.entry("2026-11-02T09:00:07"),
+                                "codex": {"command": "codex", "added": "2026-11-02T09:00:08"}})
+        self.assertEqual(self.sync(a)["result"], "synced")
+        doc = self.sync(b)
+        self.assertEqual(doc["result"], "synced")
+        self.assertEqual(doc["conflicts"], [])
+        self.assertEqual(doc["merges"], [{"ref": "origin/main", "commits": 1,
+                                          "resolved": [self.REG]}])
+        merged = {"claude": self.entry("2026-11-02T09:00:01"),
+                  "codex": {"command": "codex", "added": "2026-11-02T09:00:08"}}
+        self.assertEqual(self.registry(b), merged)
+        self.assertEqual(json.loads(self.remote_file("main", self.REG)), merged)
+        hub = b / ".swe"
+        self.assertEqual(git(hub, "status", "--porcelain=v1"), "")
+        self.assertFalse((hub / ".git" / "MERGE_HEAD").exists())
+        self.assertEqual(len(git(hub, "rev-list", "--parents", "-1", "HEAD").split()), 3)
+        # A takes the merge in, and from then on both are in step.
+        self.assertEqual(self.sync(a)["result"], "synced")
+        self.assertEqual(self.registry(a), merged)
+        self.assertEqual(self.sync(b)["result"], "up-to-date")
+
+    def test_a_hub_that_already_tracks_it_merges_edits_to_different_fields(self):
+        a = self.machine("a")
+        self.write_registry(a, {"claude": self.entry("2026-01-01T00:00:00")})
+        self.sync(a)
+        b = self.machine("b")
+        # Both append a field to the same entry: the same lines for git.
+        self.write_registry(a, {"claude": self.entry("2026-01-01T00:00:00",
+                                                     state="starred", pin=1)})
+        self.sync(a)
+        self.write_registry(b, {"claude": self.entry("2026-01-01T00:00:00",
+                                                     capabilities={"plugins": True})})
+        doc = self.sync(b)
+        self.assertEqual(doc["result"], "synced")
+        self.assertEqual(doc["merges"][0]["resolved"], [self.REG])
+        self.assertEqual(self.registry(b)["claude"],
+                         self.entry("2026-01-01T00:00:00", state="starred", pin=1,
+                                    capabilities={"plugins": True}))
+
+    def test_a_real_disagreement_still_stops_and_changes_nothing(self):
+        a = self.machine("a")
+        self.write_registry(a, {"claude": self.entry("2026-01-01T00:00:00")})
+        self.sync(a)
+        b = self.machine("b")
+        self.write_registry(a, {"claude": self.entry("2026-01-01T00:00:00", state="starred")})
+        self.sync(a)
+        self.write_registry(b, {"claude": self.entry("2026-01-01T00:00:00", state="archived")})
+        before = self.snapshot(b)
+        doc = self.sync(b)
+        self.assertEqual(doc["result"], "conflict")
+        self.assertEqual(doc["conflicts"], [self.REG])
+        self.assertEqual(self.snapshot(b), before)
+
+    def test_a_registry_conflict_beside_another_conflict_is_left_alone(self):
+        a, b = self.machine("a"), self.machine("b")
+        self.write_registry(a, {"claude": self.entry("2026-11-02T09:00:01")})
+        (a / ".swe" / "AGENTS.md").write_text("a\n")
+        self.sync(a)
+        self.write_registry(b, {"claude": self.entry("2026-11-02T09:00:07")})
+        (b / ".swe" / "AGENTS.md").write_text("b\n")
+        doc = self.sync(b)
+        self.assertEqual(doc["result"], "conflict")
+        self.assertEqual(doc["conflicts"], ["AGENTS.md", self.REG])
+
+    def test_dry_run_reports_the_resolution_and_changes_nothing(self):
+        a, b = self.machine("a"), self.machine("b")
+        self.write_registry(a, {"claude": self.entry("2026-11-02T09:00:01")})
+        self.sync(a)
+        self.write_registry(b, {"claude": self.entry("2026-11-02T09:00:07")})
+        before = self.snapshot(b)
+        doc = self.sync(b, dry_run=True)
+        self.assertEqual(doc["result"], "would-sync")
+        self.assertEqual(doc["merges"][0]["resolved"], [self.REG])
+        self.assertEqual(self.snapshot(b), before)
+
+    def test_a_real_merge_that_will_not_settle_is_rolled_back(self):
+        a, b = self.machine("a"), self.machine("b")
+        self.write_registry(a, {"claude": self.entry("2026-11-02T09:00:01")})
+        self.sync(a)
+        self.write_registry(b, {"claude": self.entry("2026-11-02T09:00:07")})
+        before = self.snapshot(b)
+        real = repo._resolve
+        calls = []
+
+        def trial_only(root, stages):
+            calls.append(sorted(stages))
+            return real(root, stages) if len(calls) == 1 else None
+
+        with mock.patch.object(repo, "_resolve", trial_only):
+            with self.assertRaisesRegex(repo.SyncError, "could not settle: config/harness.json"):
+                self.sync(b)
+        self.assertEqual(calls, [[self.REG], [self.REG]])
+        self.assertEqual(self.snapshot(b), before)
+        self.assertFalse((b / ".swe" / ".git" / "MERGE_HEAD").exists())
+        self.assertEqual(self.registry(b)["claude"]["added"], "2026-11-02T09:00:07")
+
+    def test_text_view_names_the_resolved_file(self):
+        a, b = self.machine("a"), self.machine("b")
+        self.write_registry(a, {"claude": self.entry("2026-11-02T09:00:01")})
+        self.sync(a)
+        self.write_registry(b, {"claude": self.entry("2026-11-02T09:00:07")})
+        out = io.StringIO()
+        with mock.patch.object(repo, "default_relink", self.relink), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(cmd_sync([], home=b), 0)
+        self.assertIn(f"{self.REG}: both sides changed it, merged harness by harness",
+                      out.getvalue())
+
+
 class NeverSyncedTest(SyncTestBase):
     def test_old_gitignore_still_keeps_secrets_cache_and_data_out(self):
         a = self.machine("a")

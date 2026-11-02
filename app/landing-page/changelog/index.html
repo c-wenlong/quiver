@@ -120,6 +120,17 @@ sheet show it beside the hub URL field. Fork it or use it as a
 template, then run <code>swe setup --hub=&lt;your copy&gt;</code>. Closes
 <a href="https://github.com/c-wenlong/swe/issues/1446">#1446</a>.</p>
 </li>
+<li><p><strong><code>scripts/demo_home.sh</code>: a safe stage for the primitives demo.</strong> It
+builds a bare clone of the demo hub (<code>swe-demo-hub</code>, or <code>--hub=URL</code>)
+that stands in for the viewer's fork, so <code>swe sync</code> pushes stay on
+disk, plus two empty HOMEs (<code>machine-a</code>, <code>machine-b</code>) with a neutral
+git identity and nothing copied from the real HOME. <code>--home=PATH</code>
+seeds a dedicated macOS account as machine A instead, and refuses one
+whose <code>~/.swe</code> already holds a hub. It prints <code>export DEMO_ROOT</code>,
+<code>DEMO_FORK</code>, <code>DEMO_A</code> and <code>DEMO_B</code> lines to paste or <code>eval</code>, and
+leaves <code>swe setup</code> to the demo. Part of
+<a href="https://github.com/c-wenlong/swe/issues/524">#524</a>.</p>
+</li>
 <li><p><strong>Overview across machines (web and iPhone).</strong> Satellites now add
 their daily token and cost totals per harness to the usage report
 they post every five minutes (<code>daily_usage</code>, from their own ledger,
@@ -1445,14 +1456,31 @@ raw editor. <code>swe hooks list --json</code> rows now carry <code>summary</cod
 printed disable's note (&quot;the harness sees a missing script&quot;); it now
 says the hook is linked back in and runs wherever its settings declare
 it. A <code>swe sync</code> conflict told you to run <code>git -C ~/.swe merge &lt;ref&gt;</code>
-with the placeholder unfilled; it now names the ref that conflicted
-(<code>origin/main</code>, or <code>origin/device/&lt;machine&gt;</code>), and says to commit your
+with the placeholder unfilled; it now lists every merge sync planned,
+in order and shell-quoted (<code>origin/device/&lt;machine&gt;</code>, then
+<code>origin/main</code>, in device mode), and says to commit your
 own changes first when sync had some to commit, since git will not
 merge over them. Bare <code>swe skills</code> has printed the overview since
 0.2.5, yet that overview, <code>swe help skills</code>, the <code>list</code> completion and
 the hints after <code>swe skills catalog add</code> and <code>swe skills discover --apply</code> all said it listed skills; they now say it shows the
-overview, and point at <code>swe skills list</code>, the tree of every skill
-under its root.</p>
+overview and point at <code>swe skills list</code>, the tree of every skill
+under its root. The catalog hints name <code>swe skills &lt;label&gt;</code>, since
+<code>list</code> does not read registered catalogs.</p>
+</li>
+<li><p><strong><code>swe sync</code> no longer stops on two machines' <code>harness.json</code>.</strong> The
+registry (<code>config/harness.json</code>) is versioned in the hub, so every
+machine that runs <code>swe setup --hub=&lt;same hub&gt;</code> writes it. When two
+did so before their first sync, the second machine's <code>swe sync</code>
+stopped on a merge conflict in a file whose copies differed only in
+each harness's <code>added</code> time. Sync now merges that file harness by
+harness, then field by field, when git's line merge stops on it: a
+change only one side made goes through, <code>added</code> keeps the earlier
+time, and <code>version</code> and <code>discovered_via</code> keep this machine's value.
+Both sides changing anything else (state, pin, capabilities ...)
+differently is still a conflict that changes nothing, as is a
+<code>harness.json</code> conflict next to a conflict in any other file. Hubs
+that already track the file keep it; nothing is untracked or deleted.
+The <code>--json</code> merge row gains <code>resolved: [path]</code> when this happened.</p>
 </li>
 <li><p><strong>Mac: a picked hub's web app is the whole window now.</strong> The machine
 switcher used to open the hub only in the panel, so the web app's own

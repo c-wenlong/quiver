@@ -455,3 +455,96 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
             == "export PATH=x")
     }
 }
+
+/// `source` and the full `remedies` row: decode, lenient kinds, a
+/// remedy's own Run, and the confirm wording.
+@MainActor
+@Suite struct DoctorRemedyTests {
+    private func hooksFinding() -> DoctorReport.Finding {
+        DoctorReport.Finding(
+            check: "drift.hooks", severity: .warning,
+            message: "claude declares guard.py, which is missing",
+            fix: "Remove the declaration", source: "declared in ~/.claude/settings.json",
+            remedies: [.init(kind: .action, title: "Drop the declaration",
+                             action: "undeclare", script: "guard.py")])
+    }
+
+    @Test func sourceAndEveryRemedyFieldDecodes() throws {
+        let json = Data(#"""
+        {"schema": 1, "data": {"ok": false, "findings": [
+          {"check": "drift.hooks", "severity": "warning",
+           "message": "claude declares guard.py, which is missing",
+           "fix": "Remove the declaration or restore the script",
+           "source": "declared in ~/.claude/settings.json",
+           "remedies": [
+             {"kind": "action", "title": "Drop the declaration",
+              "action": "undeclare", "script": "guard.py",
+              "detail": "Removes it from ~/.claude/settings.json after a backup"},
+             {"kind": "agent", "title": "Fix with agent",
+              "prompt": "Restore ~/.swe/hooks/guard.py or drop the declaration"},
+             {"kind": "command", "title": "Check it by hand",
+              "command": "swe hooks check"},
+             {"kind": "steps", "title": "Do it yourself",
+              "steps": ["open the file", "delete the entry"]},
+             {"kind": "badge", "title": "a kind this build does not know"}
+           ]},
+          {"check": "old", "severity": "info", "message": "older swe", "fix": "swe init"}
+        ]}}
+        """#.utf8)
+        let report = try JSONDecoder().decode(Envelope<DoctorReport>.self, from: json).data
+        let finding = report.findings[0]
+        #expect(finding.source == "declared in ~/.claude/settings.json")
+        #expect(finding.remedies?.map(\.kind) == [.action, .agent, .command, .steps, .other])
+        let drop = finding.remedies?[0]
+        #expect(drop?.action == "undeclare")
+        #expect(drop?.knownAction == .undeclare)
+        #expect(drop?.script == "guard.py")
+        #expect(finding.remedies?[1].prompt?.hasPrefix("Restore") == true)
+        #expect(finding.remedies?[2].command == "swe hooks check")
+        #expect(finding.remedies?[3].steps == ["open the file", "delete the entry"])
+        // An older swe's finding keeps them nil.
+        #expect(report.findings[1].source == nil)
+        #expect(report.findings[1].remedies == nil)
+    }
+
+    /// A remedy action a newer swe names stays a String: the row shows
+    /// its title and detail but offers no Run, as `action` does.
+    @Test func aNewerActionNameHasNoRun() {
+        let remedy = DoctorReport.Finding.Remedy(kind: .action, title: "Do it", action: "warp-fix")
+        #expect(remedy.action == "warp-fix")
+        #expect(remedy.knownAction == nil)
+    }
+
+    /// A remedy row's Run names its own action, not the finding's:
+    /// `swe doctor --fix` resolves that remedy on a fresh report.
+    @Test func aRemedyRunNamesItsOwnAction() async {
+        let fixed = Data(#"""
+        {"schema": 1, "data": {"dry_run": false, "ran": [{"action": "undeclare", "fix": "f",
+          "findings": [], "error": null}], "fixed": [], "still_failing": [],
+          "skipped": [], "not_cleared": [], "fixable_left": []}}
+        """#.utf8)
+        let runner = ScriptedRunner([
+            (["doctor", "--fix=drift.hooks"], .init(status: 0, stdout: fixed, stderr: "")),
+            (["doctor"], .init(status: 0, stdout: Data(#"{"schema":1,"data":{"ok":true,"findings":[]}}"#.utf8), stderr: "")),
+        ])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        let finding = hooksFinding()
+        await model.run(finding, action: .undeclare)
+        #expect(runner.calls.contains(
+            ["doctor", "--fix=drift.hooks",
+             "--message=claude declares guard.py, which is missing",
+             "--action=undeclare", "--json"]))
+        #expect(runner.calls.last == ["doctor", "--json"])
+        #expect(model.running.isEmpty)
+        #expect(model.runErrors.isEmpty)
+    }
+
+    @Test func confirmTextNamesTheTargetOrFallsBack() {
+        let finding = hooksFinding()
+        let drop = finding.remedies![0]
+        #expect(DoctorConfirm.text(action: .undeclare, finding: finding, remedy: drop)
+            .contains("guard.py"))
+        #expect(DoctorConfirm.text(action: .marketplaceDrop, finding: finding, remedy: nil)
+            .contains("settings files"))
+    }
+}
