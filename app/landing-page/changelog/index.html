@@ -1471,6 +1471,12 @@ raw editor. <code>swe hooks list --json</code> rows now carry <code>summary</cod
 </ul>
 <h3 id="fixed"><a class="anchor" href="#fixed"></a>Fixed</h3>
 <ul>
+<li><p><strong>Hub marketplaces skip archived harnesses.</strong> <code>swe setup --hub</code>,
+<code>swe init --hub</code> and <code>swe sync</code> registered the hub's plugin
+marketplaces in every installed harness, including ones the registry
+marks archived, which swe is meant to leave alone. They now skip
+archived harnesses, as the plugin installs and MCP sync already did.</p>
+</li>
 <li><p><strong>CLI: three messages that said the wrong thing.</strong> <code>swe hooks enable</code>
 printed disable's note (&quot;the harness sees a missing script&quot;); it now
 says the hook is linked back in and runs wherever its settings declare

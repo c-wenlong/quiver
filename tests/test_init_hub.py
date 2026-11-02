@@ -1,6 +1,7 @@
 """`swe init --hub=<url>`: clone an existing hub as ~/.swe (#696)."""
 
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -315,6 +316,18 @@ class RegisterMarketplacesTest(unittest.TestCase):
             self._hub_with_plugin(home)
             got = register_marketplaces(home, run=mock.Mock(side_effect=FileNotFoundError))
         self.assertEqual(got, [("claude", "mine", "claude is not on PATH")])
+
+    def test_an_archived_harness_is_not_asked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / ".claude").mkdir()
+            self._hub_with_plugin(home)
+            config = home / ".swe" / "config"
+            config.mkdir(parents=True)
+            (config / "harness.json").write_text(json.dumps({"claude": {"state": "archived"}}))
+            run = mock.Mock()
+            self.assertEqual(register_marketplaces(home, run=run), [])
+        run.assert_not_called()
 
     def test_no_harness_installed_means_nothing_runs(self):
         with tempfile.TemporaryDirectory() as tmp:
