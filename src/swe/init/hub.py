@@ -18,6 +18,7 @@ credential fails before anything is written.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -252,23 +253,153 @@ def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
 
 
 def clone_and_register(home: Path, url: str, run=subprocess.run) -> dict:
-    """Clone ``url`` as ``~/.swe``, then register its marketplaces.
+    """Clone ``url`` as ``~/.swe``, register its marketplaces, install
+    their plugins and sync its MCP servers into each harness.
 
-    What ``swe setup --hub`` runs; ``swe init --hub`` does the same with
-    its linking pass in between. Returns ``{"url", "path",
-    "marketplaces": [{"harness", "marketplace", "error"}]}`` with ``url``
-    already stripped of credentials. Raises HubError when nothing was
-    cloned.
+    What ``swe setup --hub`` runs, and the web Setup page's clone; ``swe
+    init --hub`` only registers the marketplaces. Returns ``{"url",
+    "path", "marketplaces": [{"harness", "marketplace", "error"}],
+    "plugins": [...], "mcp": [...]}`` (see ``install_hub_plugins`` and
+    ``sync_hub_mcp``) with ``url`` already stripped of credentials.
+    Raises HubError when nothing was cloned; nothing after the clone
+    raises, a failure is a row.
     """
     root = clone_hub(home, url, run=run)
+    marketplaces = [
+        {"harness": harness, "marketplace": marketplace, "error": error}
+        for harness, marketplace, error in register_marketplaces(home)
+    ]
     return {
         "url": public_url(url.strip()),
         "path": str(root),
-        "marketplaces": [
-            {"harness": harness, "marketplace": marketplace, "error": error}
-            for harness, marketplace, error in register_marketplaces(home)
-        ],
+        "marketplaces": marketplaces,
+        "plugins": install_hub_plugins(home),
+        "mcp": sync_hub_mcp(home),
     }
+
+
+def install_hub_plugins(home: Path, run=None) -> list[dict]:
+    """Install every plugin each hub marketplace lists, in each harness
+    that has that marketplace registered, as ``swe plugins install
+    <plugin>@<marketplace> --harness=<h>`` does.
+
+    One row per plugin and harness: ``{"harness", "name", "marketplace",
+    "skipped", "error"}``. ``skipped`` is ``"already installed"`` for one
+    that was; ``error`` says why an install failed. Installed when both
+    are null. A failure never stops the plugins after it.
+    """
+    from swe.find.plugin_drift import registered_hub_plugins
+    from swe.plugins.actions import plugin_action
+
+    rows = []
+    try:
+        wanted = registered_hub_plugins(home)
+    except Exception as exc:  # a broken manifest must not undo the clone
+        return [{"harness": "", "name": "", "marketplace": "", "skipped": None,
+                 "error": f"couldn't read the hub's plugins: {exc}"}]
+    for harness, marketplace, name in wanted:
+        row = {"harness": harness, "name": name, "marketplace": marketplace,
+               "skipped": None, "error": None}
+        try:
+            result = plugin_action(home, "install", f"{name}@{marketplace}", harness, run=run)
+        except Exception as exc:
+            row["error"] = str(exc)
+        else:
+            if not result["changed"]:
+                if result["detail"] == "already installed":
+                    row["skipped"] = result["detail"]
+                else:
+                    row["error"] = result["detail"]
+        rows.append(row)
+    return rows
+
+
+def mcp_targets(home: Path) -> list[str]:
+    """The harnesses setup links into that have an MCP config format swe
+    knows: installed (its folder is there, or its command is on PATH),
+    not archived, with a verified ``MCP_CONFIG_MAP`` entry. A harness swe
+    would only guess a config path for is left out."""
+    from swe.configuration import ConfigurationError
+    from swe.init.layout import (HARNESS_SIGNATURES, archived_names,
+                                 harness_installed, load_registry, registry_name)
+    from swe.mcp.cli import MCP_CONFIG_MAP
+
+    try:
+        registry = load_registry(home)
+    except ConfigurationError:
+        registry = {}
+    archived = archived_names(registry)
+    targets: list[str] = []
+    for label, sig in HARNESS_SIGNATURES.items():
+        name = registry_name(label)
+        if (name in MCP_CONFIG_MAP and name not in targets and name not in archived
+                and harness_installed(label, sig, home, registry)):
+            targets.append(name)
+    return targets
+
+
+def _hub_server_names(home: Path) -> list[str]:
+    from swe.paths import mcp_source_file_for
+
+    try:
+        data = json.loads(mcp_source_file_for(home).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    return sorted(servers) if isinstance(servers, dict) else []
+
+
+def secret_fix(names: list[str]) -> str:
+    """What to say about a server left out for want of ``${NAME}`` values."""
+    sets = "; ".join(f"swe mcp secret set {name}" for name in names)
+    return (f"no value for {', '.join(names)}; "
+            f"set {'it' if len(names) == 1 else 'them'} with: {sets}")
+
+
+def sync_hub_mcp(home: Path) -> list[dict]:
+    """``swe mcp sync swe <targets>`` for the harnesses ``mcp_targets``
+    names, without asking.
+
+    One row per server and harness: ``{"harness", "name", "skipped",
+    "error", "needs"}``, synced when ``skipped`` and ``error`` are null.
+    A server whose ``${NAME}`` has no value is skipped with the command
+    that sets it (``secret_fix``) and those names in ``needs``, and the
+    rest still sync; a server the harness already has is left as it is.
+    Only names reach a row, never a secret's value.
+    """
+    from swe.mcp.cli import LOCAL_ONLY_NOTE, get_tool_config, sync_hub_to
+
+    names = _hub_server_names(home)
+    if not names:
+        return []
+    rows: list[dict] = []
+    for target in mcp_targets(home):
+        def row(name, skipped=None, error=None, needs=(), target=target):
+            rows.append({"harness": target, "name": name, "skipped": skipped,
+                         "error": error, "needs": list(needs)})
+        try:
+            report = sync_hub_to(target)
+        except Exception as exc:
+            for name in names:
+                row(name, error=str(exc))
+            continue
+        if report["code"]:
+            said = report["said"].splitlines()
+            reason = said[-1] if said else f"swe mcp sync stopped with status {report['code']}"
+            for name in names:
+                row(name, error=reason)
+            continue
+        label = (get_tool_config(target) or {}).get("label", target)
+        done = report["targets"][0] if report["targets"] else {}
+        for name in done.get("added", []) + done.get("updated", []):
+            row(name)
+        for name in done.get("skipped", []):
+            row(name, skipped=f"{label} already has a server by this name; left as it is")
+        for name in done.get("unsupported", []):
+            row(name, skipped=f"a remote server; {label} {LOCAL_ONLY_NOTE}")
+        for name, needs in sorted(report["missing"].items()):
+            row(name, skipped=secret_fix(needs), needs=needs)
+    return rows
 
 
 def register_marketplaces(home: Path, run=None) -> list[tuple[str, str, str | None]]:

@@ -507,6 +507,27 @@ function cloning() {
   return hubJob().state === "cloning";
 }
 
+/* What a clone's plugin installs and MCP sync left undone (`hub.cloned`'s
+ * `plugins` and `mcp` rows), one line each: a server waiting on a secret
+ * once, with the command that sets it, then each failure per agent. An
+ * older swe sends neither list. */
+function hubInstallNotes(cloned) {
+  const lines = [];
+  for (const p of cloned.plugins || []) {
+    if (p.error) lines.push(`${p.name}@${p.marketplace} isn't installed in ${agentName(p.harness)}: ${p.error}`);
+  }
+  const waiting = new Set();
+  for (const s of cloned.mcp || []) {
+    if (s.error) {
+      lines.push(`${s.name} isn't synced to ${agentName(s.harness)}: ${s.error}`);
+    } else if ((s.needs || []).length && !waiting.has(s.name)) {
+      waiting.add(s.name);
+      lines.push(`${s.name} isn't synced yet: ${s.skipped}`);
+    }
+  }
+  return lines;
+}
+
 /* swe setup's hub step: shown while ~/.swe has no hub yet, and after a
  * clone this page started, to say how it went. */
 function hubCard() {
@@ -514,11 +535,13 @@ function hubCard() {
   const job = hubJob();
   if (!hub || (!hub.can_clone && job.state === "idle")) return "";
   if (job.state === "done" && !hub.can_clone) {
-    const failed = ((job.cloned && job.cloned.marketplaces) || []).filter((m) => m.error);
+    const cloned = job.cloned || {};
+    const failed = (cloned.marketplaces || []).filter((m) => m.error);
     return `<div class="card setup-hub" role="status">
       <div class="setup-done-title">${CHECK}<span>Cloned ${esc(job.url)} into ~/.swe.</span></div>
-      <p class="caption">Its AGENTS.md, skills, plugins and MCP servers are on ${esc(machineName())} now. Set up links them into each agent.</p>
+      <p class="caption">Its plugins are installed and its MCP servers synced into each agent on ${esc(machineName())}. Set up links its AGENTS.md and skills.</p>
       ${failed.map((m) => `<p class="caption note">${esc(m.marketplace)} isn't registered in ${esc(agentName(m.harness))}: ${esc(m.error)}</p>`).join("")}
+      ${hubInstallNotes(cloned).map((line) => `<p class="caption note">${esc(line)}</p>`).join("")}
     </div>`;
   }
   if (!hub.can_clone && job.state !== "cloning" && job.state !== "failed") return "";

@@ -65,7 +65,19 @@ private let clonedPreviewJSON = """
          "cloned": {"url": "https://github.com/me/hub.git", "path": "/h/.swe",
                     "marketplaces": [{"harness": "claude", "marketplace": "mine", "error": null},
                                      {"harness": "codex", "marketplace": "mine",
-                                      "error": "codex is not on PATH"}]}}}
+                                      "error": "codex is not on PATH"}],
+                    "plugins": [{"harness": "claude", "name": "git-helpers", "marketplace": "mine",
+                                 "skipped": null, "error": null},
+                                {"harness": "claude", "name": "lint", "marketplace": "mine",
+                                 "skipped": null, "error": "network is down"}],
+                    "mcp": [{"harness": "claude", "name": "context7", "skipped": null,
+                             "error": null, "needs": []},
+                            {"harness": "claude", "name": "github", "error": null,
+                             "skipped": "no value for GITHUB_TOKEN; set it with: swe mcp secret set GITHUB_TOKEN",
+                             "needs": ["GITHUB_TOKEN"]},
+                            {"harness": "codex", "name": "github", "error": null,
+                             "skipped": "no value for GITHUB_TOKEN; set it with: swe mcp secret set GITHUB_TOKEN",
+                             "needs": ["GITHUB_TOKEN"]}]}}}
 """
 
 private func applied(leftAlone: Bool) -> String {
@@ -272,6 +284,13 @@ private func applied(leftAlone: Bool) -> String {
         #expect(!hubThere.offersHub)
     }
 
+    @Test func aCloneFromAnOlderSweHasNoInstallNotes() throws {
+        let old = #"{"url": "u", "path": "/h/.swe", "marketplaces": []}"#
+        let cloned = try JSONDecoder().decode(SetupPreview.Hub.Cloned.self, from: Data(old.utf8))
+        #expect(cloned.plugins == nil)
+        #expect(cloned.installNotes.isEmpty)
+    }
+
     @Test func cloneRunsSweSetupHubAndShowsTheClonedHub() async {
         let runner = SetupRunner(preview: hubPreviewJSON, applied: applied(leftAlone: false))
         runner.cloned = clonedPreviewJSON
@@ -288,6 +307,11 @@ private func applied(leftAlone: Bool) -> String {
         #expect(setup.hubURL.isEmpty)
         #expect(setup.cloned?.url == "https://github.com/me/hub.git")
         #expect(setup.cloned?.marketplaces.compactMap(\.error) == ["codex is not on PATH"])
+        // The failed plugin, then the server waiting on its secret once.
+        #expect(setup.cloned?.installNotes == [
+            "lint@mine isn't installed in \(HarnessMark.accountName("claude")): network is down",
+            "github isn't synced yet: no value for GITHUB_TOKEN; set it with: swe mcp secret set GITHUB_TOKEN",
+        ])
         #expect(!setup.offersHub)
         // The hub brought its own AGENTS.md: nothing to adopt, so the apply
         // that follows sends no --adopt.

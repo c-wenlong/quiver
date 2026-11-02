@@ -367,13 +367,19 @@ private struct LinksStep: View {
             Label("Cloned \(cloned.url) into ~/.swe.", systemImage: "checkmark.circle")
                 .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
-            Text("Its AGENTS.md, skills, plugins and MCP servers are on this Mac now. Set up links them into each agent.")
+            Text("Its plugins are installed and its MCP servers synced into each agent on this Mac. Set up links its AGENTS.md and skills.")
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(cloned.marketplaces.filter { $0.error != nil }, id: \.self) { row in
                 Text("\(row.marketplace) isn't registered in \(HarnessMark.accountName(row.harness)): \(row.error ?? "")")
                     .font(Theme.caption).foregroundStyle(Theme.warningText)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(cloned.installNotes, id: \.self) { line in
+                Text(line)
+                    .font(Theme.caption).foregroundStyle(Theme.warningText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
         }
         .padding(Theme.cardPadding)

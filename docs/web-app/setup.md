@@ -65,8 +65,10 @@ subtitle, and a footer with Skip setup, Back and Continue.
    A refusal or failure (an existing hub, a URL git can't reach, a
    timeout, a path on both sides) shows under the field. Once it's done
    the page reads the machine again, so the step shows the cloned hub's
-   AGENTS.md, and the card says what was cloned and any plugin
-   marketplace that couldn't be registered. Coming back to the page
+   AGENTS.md, and the card says what was cloned, any plugin
+   marketplace that couldn't be registered, any plugin that couldn't be
+   installed, and any MCP server that couldn't be synced (one waiting on
+   a secret is named once, with its `swe mcp secret set` command). Coming back to the page
    while a clone runs picks the polling up again.
 
 3. **Pick a look.** System, Light and Dark, each drawn as a small SWE
@@ -129,7 +131,8 @@ refresh button reads everything again and starts the steps over.
   hub process's last clone: `state` is `idle`, `cloning`, `done` or
   `failed`, `url` is the URL with any credentials removed, `error` is
   why it failed, and `cloned` is `swe setup --hub`'s
-  `{url, path, marketplaces}`. `GET /v1/app/setup?hub=1` answers
+  `{url, path, marketplaces, plugins, mcp}` (see `swe setup --json` in
+  [json-contracts.md](../json-contracts.md)). `GET /v1/app/setup?hub=1` answers
   `{"hub"}` alone, with no discovery, for the page to poll.
 
 `POST /v1/app/setup/apply` with `{"starred": ["claude", "gemini"],
@@ -172,7 +175,8 @@ again. 404 `unknown_harness` for an id the page doesn't list, 422
 `POST /v1/app/setup/hub` with `{"url": "https://github.com/me/hub.git"}`
 is `swe setup --hub=<url>`'s clone (`init.hub.clone_and_register`:
 `git ls-remote`, a clone into a staging folder moved into `~/.swe`
-around what is there, then the hub's plugin marketplaces registered).
+around what is there, then the hub's plugin marketplaces registered,
+their plugins installed and its MCP servers synced into each harness).
 It answers at once with `{"hub"}` and runs on its own thread, holding
 the page's setup lock, so apply answers 409 `busy` until it ends. The
 URL is kept and answered only with its credentials removed.

@@ -637,6 +637,36 @@ def plugin_drift(home: Path, harnesses=HARNESSES) -> list[Finding]:
     return findings
 
 
+def registered_hub_plugins(home: Path, harnesses=HARNESSES) -> list[tuple[str, str, str]]:
+    """``(harness, marketplace, plugin)`` for every plugin each ~/.swe
+    marketplace lists, in each harness that has that marketplace
+    registered. ``marketplace`` is the name the harness registered it
+    under, so ``<plugin>@<marketplace>`` is the ref its CLI installs.
+
+    Every listed plugin counts, wherever its source is (a folder in the
+    marketplace, GitHub, a URL): the harness fetches it on install.
+    """
+    manifests = _hub_manifests(home)
+    if not manifests:
+        return []
+    found: list[tuple[str, str, str]] = []
+    for hname in harnesses:
+        reader = _READERS.get(hname)
+        view = reader(home) if reader else None
+        if view is None:
+            continue
+        for _mname, mdir, entries in manifests:
+            registered_as = view.registered.get(_real(mdir))
+            if registered_as is None:
+                continue
+            for entry in entries:
+                name = entry.get("name") if isinstance(entry, dict) else None
+                row = (hname, registered_as, name)
+                if isinstance(name, str) and name and row not in found:
+                    found.append(row)
+    return found
+
+
 # --------------------------------------------------------------------------
 # Running a fix
 

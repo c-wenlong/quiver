@@ -75,11 +75,55 @@ public struct SetupPreview: Decodable, Sendable, Equatable {
             public let error: String?
         }
 
+        /// One hub plugin `--hub` installed in one harness.
+        public struct Plugin: Decodable, Sendable, Hashable {
+            public let harness: String
+            public let name: String
+            public let marketplace: String
+            /// "already installed" when there was nothing to do.
+            public let skipped: String?
+            /// Why the install failed; nil when it worked or was skipped.
+            public let error: String?
+        }
+
+        /// One hub MCP server `--hub` synced into one harness.
+        public struct Server: Decodable, Sendable, Hashable {
+            public let harness: String
+            public let name: String
+            /// Why it was left out: a `${NAME}` with no value (with the
+            /// `swe mcp secret set` command), or a server already there.
+            public let skipped: String?
+            public let error: String?
+            /// The secret names it waits for; empty unless that is why.
+            public let needs: [String]?
+        }
+
         public struct Cloned: Decodable, Sendable, Equatable {
             /// Without credentials: swe strips them before printing.
             public let url: String
             public let path: String
             public let marketplaces: [Marketplace]
+            /// Missing from an swe older than the install and sync step.
+            public let plugins: [Plugin]?
+            public let mcp: [Server]?
+
+            /// One line per plugin or server the clone could not bring
+            /// in: a server waiting on a secret once, then each failure.
+            public var installNotes: [String] {
+                var lines = (plugins ?? []).compactMap { row in
+                    row.error.map { "\(row.name)@\(row.marketplace) isn't installed in \(HarnessMark.accountName(row.harness)): \($0)" }
+                }
+                var waiting = Set<String>()
+                for row in mcp ?? [] {
+                    if let error = row.error {
+                        lines.append("\(row.name) isn't synced to \(HarnessMark.accountName(row.harness)): \(error)")
+                    } else if !(row.needs ?? []).isEmpty, let skipped = row.skipped,
+                              waiting.insert(row.name).inserted {
+                        lines.append("\(row.name) isn't synced yet: \(skipped)")
+                    }
+                }
+                return lines
+            }
         }
 
         /// No hub in `~/.swe` yet (no AGENTS.md, no .git), so the sheet
@@ -143,8 +187,10 @@ extension SweClient {
     }
 
     /// What `swe setup --hub` may take: `git ls-remote` (30 s), the clone
-    /// (600 s), then registering the hub's marketplaces.
-    static let hubCloneTimeout: Duration = .seconds(720)
+    /// (600 s), then registering the hub's marketplaces, installing their
+    /// plugins (each a harness CLI call, seconds when it works) and
+    /// syncing its MCP servers.
+    static let hubCloneTimeout: Duration = .seconds(900)
 
     /// `swe setup --hub=<url> --json --non-interactive`: clone the user's
     /// hub repo as `~/.swe`, then the preview of what setup would do
