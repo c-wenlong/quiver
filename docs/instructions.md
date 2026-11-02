@@ -27,9 +27,20 @@ chapters in index order. Before adopting chapters, put all rules you want
 to retain into the source chapters. Edit those chapters afterward: the next
 build replaces edits made directly to the generated file.
 
-SWE's Mac AGENTS.md editor still edits the shared output directly; the
-web app reads it. Neither client has a chapter editor. Use a text editor
-for the source chapters when you adopt this mode. A running watcher also
+On the Mac, the AGENTS.md page's Global tab is a chapter editor once
+`index.txt` exists. Its rail lists the chapters in index order: drag one to
+reorder it, add a chapter (a new `.md` file under `~/.swe/AGENTS_MD`, listed
+at the end of `index.txt`), or remove one from the index, which leaves its
+file on disk. Select a chapter to edit it in the Raw or Rich editor. Every
+save of a chapter or of the order runs `swe instructions build`. The
+Generated AGENTS.md card says whether the output is current, offers Rebuild
+for edits made elsewhere, and previews the output read-only. Before
+`index.txt` exists, the Global tab edits the flat `~/.swe/AGENTS.md` and
+offers Convert to chapters, which runs `swe instructions init`.
+
+The web app has no chapter editor: its AGENTS.md page shows the generated
+file read-only, and the iPhone app has no AGENTS.md page. Without the Mac
+app, edit the source chapters in a text editor. A running watcher also
 replaces direct output edits with the compiled source.
 
 ## Commands

@@ -58,7 +58,7 @@ Status words:
 | Plugins | yes | part | - | Web: no rename or Add marketplace |
 | Skills | yes | part | - | Web: no frontmatter edits |
 | AGENTS.md | yes | part | - | Web: read and link, no editing |
-| Instruction chapters | yes | - | - | `swe instructions init/build/check/watch` compiles `~/.swe/AGENTS_MD/index.txt` into the shared `~/.swe/AGENTS.md` (macOS/Linux). Mac: the AGENTS.md page's Global tab edits chapters (reorder/add/remove in index.txt, per-chapter editing, auto-build on save, read-only output preview); flat files get a "Convert to chapters" card running `instructions init`. iOS and web still read the generated file only |
+| Instruction chapters | yes | - | - | `swe instructions init/build/check/watch` compiles `~/.swe/AGENTS_MD/index.txt` into the shared `~/.swe/AGENTS.md` (macOS/Linux). Mac: the AGENTS.md page's Global tab edits chapters (reorder/add/remove in index.txt, per-chapter editing, auto-build on save, read-only output preview); flat files get a "Convert to chapters" card running `instructions init`. Web: the AGENTS.md page shows the generated file read-only, no chapter editor. iOS: no AGENTS.md page |
 | MCP servers | yes | yes | - | |
 | MCP gateway (shared servers) | - | - | - | CLI only: `swe mcp gateway`. The Mac and web MCP pages show a shared server's harness entry as its 127.0.0.1 URL |
 | Hooks | yes | yes | - | |
