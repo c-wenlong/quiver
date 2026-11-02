@@ -576,7 +576,9 @@ next take:
 rm -rf /tmp/swe-demo ~/.swe ~/.claude ~/.claude.json ~/.codex
 ```
 
-Run that only while logged in as the demo account. Setup also links into the
+If the account had no `~/.gitconfig` before, `demo_home.sh` wrote one with
+the Demo User identity; delete it too (`rm ~/.gitconfig`) for a full reset.
+Run all of this only while logged in as the demo account. Setup also links into the
 home folder of every other coding CLI it found (`~/.cursor`, `~/.qwen` and so
 on; `swe init --check --full` lists them before you delete `~/.swe`). The
 simplest clean slate is to delete the demo account in System Settings › Users
