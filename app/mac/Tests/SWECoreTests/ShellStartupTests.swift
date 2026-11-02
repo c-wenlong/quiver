@@ -130,6 +130,83 @@ import Testing
         }
     }
 
+    /// The home-manager pattern: the rc loops over a drop-in folder and
+    /// sources each match, and one drop-in sources the keys file.
+    @Test func aForLoopOverDropInFilesCounts() throws {
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
+        let keys = root.appending(path: ".swe/secrets/providers/.api_keys")
+        try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "K=1".write(to: keys, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            atPath: root.appending(path: ".api_keys").path,
+            withDestinationPath: keys.path)
+        let dropins = root.appending(path: ".config/zshrc.d")
+        try FileManager.default.createDirectory(at: dropins.appending(path: "aliases"),
+                                                withIntermediateDirectories: true)
+        try "[ -f \"$HOME/.api_keys\" ] && source \"$HOME/.api_keys\"\n"
+            .write(to: dropins.appending(path: "secrets.zsh"), atomically: true, encoding: .utf8)
+        try "export OTHER=1\n"
+            .write(to: dropins.appending(path: "misc.zsh"), atomically: true, encoding: .utf8)
+        try "source ~/.api_keys\n"
+            .write(to: dropins.appending(path: "aliases/git.zsh"), atomically: true, encoding: .utf8)
+        let rc = "for f in \"$HOME/.config/zshrc.d\"/**/*.zsh(N); do\n  source \"$f\"\ndone\n"
+        #expect(ShellStartup.sources(rc, keysFile: keys, home: root))
+        // `${f}` works the same; a folder that never sources it doesn't.
+        #expect(ShellStartup.sources("for f in ~/.config/zshrc.d/*.zsh\n  source \"${f}\"\n",
+                                     keysFile: keys, home: root))
+        let empty = root.appending(path: "empty")
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        #expect(!ShellStartup.sources("for f in \(empty.path)/*.zsh; do source $f; done\n",
+                                      keysFile: keys, home: root))
+    }
+
+    /// `source dir/*.zsh` globs on disk, and a file a sourced file
+    /// sources counts the same (the chain is followed, depth-capped).
+    @Test func aGlobOrChainedSourceCounts() throws {
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
+        let keys = root.appending(path: ".swe/secrets/providers/.api_keys")
+        try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "K=1".write(to: keys, atomically: true, encoding: .utf8)
+        let dir = root.appending(path: "rc.d")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try "source \(keys.path)\n"
+            .write(to: dir.appending(path: "10-keys.zsh"), atomically: true, encoding: .utf8)
+        try "export X=1\n"
+            .write(to: dir.appending(path: "20-env.zsh"), atomically: true, encoding: .utf8)
+        #expect(ShellStartup.sources("source \(dir.path)/*.zsh\n", keysFile: keys, home: root))
+        // A literal file that itself sources the keys file counts too.
+        try "source \(dir.path)/10-keys.zsh\n"
+            .write(to: root.appending(path: "middle.zsh"), atomically: true, encoding: .utf8)
+        #expect(ShellStartup.sources("source \(root.path)/middle.zsh\n", keysFile: keys, home: root))
+        // A `for f (list)` shorthand binds the same way.
+        #expect(ShellStartup.sources("for f (\(dir.path)/10-keys.zsh) source $f\n",
+                                     keysFile: keys, home: root))
+    }
+
+    /// Two files sourcing each other can't loop forever; missing files
+    /// and non-source mentions are skipped.
+    @Test func cyclesAndMissingFilesDoNotCount() throws {
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
+        let keys = root.appending(path: ".swe/secrets/providers/.api_keys")
+        try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "K=1".write(to: keys, atomically: true, encoding: .utf8)
+        try "source \(root.path)/b.zsh\n"
+            .write(to: root.appending(path: "a.zsh"), atomically: true, encoding: .utf8)
+        try "source \(root.path)/a.zsh\n"
+            .write(to: root.appending(path: "b.zsh"), atomically: true, encoding: .utf8)
+        #expect(!ShellStartup.sources("source \(root.path)/a.zsh\n", keysFile: keys, home: root))
+        #expect(!ShellStartup.sources("source \(root.path)/gone/*.zsh\n", keysFile: keys, home: root))
+    }
+
     @Test func appendingKeepsTheExistingTextWhole() {
         let keys = home.appending(path: ".api_keys")
         let line = ShellStartup.sourceLine(for: keys, home: home)
@@ -264,5 +341,46 @@ import Testing
             try ShellStartupWriter(home: home, backupDirectory: backups)
                 .addSource(keysFile: keys, shell: "/bin/fish")
         }
+    }
+
+    /// A read-only rc (a Nix store path, a read-only checkout) is refused
+    /// before the backup, so a doomed attempt leaves nothing behind.
+    @Test(skippedAsRoot) func anUnwritableRcFailsBeforeTheBackup() throws {
+        let (home, backups, keys, rc) = try home()
+        try "x\n".write(to: rc, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: rc.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: rc.path) }
+        #expect(throws: ShellStartupWriter.Error.unwritable(rc.resolvingSymlinksInPath())) {
+            try ShellStartupWriter(home: home, backupDirectory: backups)
+                .addSource(keysFile: keys, shell: "/bin/zsh")
+        }
+        #expect((try? FileManager.default.contentsOfDirectory(atPath: backups.path)) ?? [] == [])
+        #expect(try String(contentsOf: rc, encoding: .utf8) == "x\n")
+    }
+
+    /// A writable file in a folder the rename can't touch is refused too.
+    @Test(skippedAsRoot) func anUnwritableFolderFailsBeforeTheBackup() throws {
+        let (home, backups, keys, rc) = try home()
+        try "x\n".write(to: rc, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: home.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.path) }
+        #expect(throws: ShellStartupWriter.Error.unwritable(rc.resolvingSymlinksInPath())) {
+            try ShellStartupWriter(home: home, backupDirectory: backups)
+                .addSource(keysFile: keys, shell: "/bin/zsh")
+        }
+    }
+
+    @Test(skippedAsRoot) func writableChecksTheFileAndItsFolder() throws {
+        let (home, _, _, rc) = try home()
+        // Missing file, writable folder: the write would create it.
+        #expect(ShellStartup.writable(rc))
+        try "x\n".write(to: rc, atomically: true, encoding: .utf8)
+        #expect(ShellStartup.writable(rc))
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: rc.path)
+        #expect(!ShellStartup.writable(rc))
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: rc.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: home.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.path) }
+        #expect(!ShellStartup.writable(rc))
     }
 }

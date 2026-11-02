@@ -712,6 +712,10 @@ public final class APIKeysModel {
         case sourced
         /// The startup file that lacks the line.
         case notSourced(file: URL)
+        /// The startup file lacks the line and can't be written: `file`
+        /// is the link the shell reads, `resolved` the read-only target
+        /// (a Nix store path, a read-only checkout).
+        case notWritable(file: URL, resolved: URL)
         /// No startup file is known for this shell name.
         case unsupportedShell(String)
     }
@@ -1136,9 +1140,15 @@ public final class APIKeysModel {
             sourcing = .unsupportedShell(shellName)
             return
         }
-        let text = (try? String(contentsOf: rc.resolvingSymlinksInPath(), encoding: .utf8)) ?? ""
-        sourcing = ShellStartup.sources(text, keysFile: store.url, home: home)
-            ? .sourced : .notSourced(file: rc)
+        let real = rc.resolvingSymlinksInPath()
+        let text = (try? String(contentsOf: real, encoding: .utf8)) ?? ""
+        if ShellStartup.sources(text, keysFile: store.url, home: home) {
+            sourcing = .sourced
+        } else {
+            sourcing = ShellStartup.writable(real)
+                ? .notSourced(file: rc)
+                : .notWritable(file: rc, resolved: real)
+        }
     }
 
     /// The exact line `addSourceLine` would write, for the prompt.

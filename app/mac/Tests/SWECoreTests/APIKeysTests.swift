@@ -884,6 +884,35 @@ struct FakeShell: ShellEnvironmentReading {
         await model.shellReread?.value
         #expect(model.sourcing == .sourced)
     }
+
+    /// A read-only rc (a Nix store path) is reported as not writable,
+    /// so the page shows the line to copy instead of the Add button.
+    @Test(skippedAsRoot) func aReadOnlyRcReportsNotWritable() async throws {
+        let (model, _, rc) = try model(shell: "/bin/zsh")
+        try "export A=1\n".write(to: rc, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: rc.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: rc.path) }
+        await model.load()
+        #expect(model.sourcing == .notWritable(file: rc, resolved: rc.resolvingSymlinksInPath()))
+    }
+
+    /// A home-manager rc that loops over a drop-in folder is sourced
+    /// when a file in that folder reads the keys file.
+    @Test func aDropInLoopCountsAsSourced() async throws {
+        let (model, home, rc) = try model(shell: "/bin/zsh")
+        let keys = home.appending(path: ".swe/secrets/providers/.api_keys")
+        try FileManager.default.createSymbolicLink(
+            atPath: home.appending(path: ".api_keys").path,
+            withDestinationPath: keys.path)
+        let dropins = home.appending(path: ".config/zshrc.d")
+        try FileManager.default.createDirectory(at: dropins, withIntermediateDirectories: true)
+        try "[ -f \"$HOME/.api_keys\" ] && source \"$HOME/.api_keys\"\n"
+            .write(to: dropins.appending(path: "secrets.zsh"), atomically: true, encoding: .utf8)
+        try "for f in \"$HOME/.config/zshrc.d\"/**/*.zsh(N); do\n  source \"$f\"\ndone\n"
+            .write(to: rc, atomically: true, encoding: .utf8)
+        await model.load()
+        #expect(model.sourcing == .sourced)
+    }
 }
 
 @MainActor
