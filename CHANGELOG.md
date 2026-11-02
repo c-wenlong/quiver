@@ -1339,6 +1339,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Hub marketplaces skip archived harnesses.** `swe setup --hub`,
+  `swe init --hub` and `swe sync` registered the hub's plugin
+  marketplaces in every installed harness, including ones the registry
+  marks archived, which swe is meant to leave alone. They now skip
+  archived harnesses, as the plugin installs and MCP sync already did.
+
 - **CLI: three messages that said the wrong thing.** `swe hooks enable`
   printed disable's note ("the harness sees a missing script"); it now
   says the hook is linked back in and runs wherever its settings declare

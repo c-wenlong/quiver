@@ -485,16 +485,18 @@ def register_marketplaces(home: Path, run=None,
 
     The work is ``swe find plugins``'s own ``unregistered`` fixes, so the
     commands are the ones that module builds (``claude plugin marketplace
-    add <dir>``, ``codex plugin marketplace add <dir>``) and a harness that
-    is not installed is never asked. Returns ``(harness, marketplace,
+    add <dir>``, ``codex plugin marketplace add <dir>``). A harness that
+    is not installed is never asked, and neither is one the registry has
+    archived: swe leaves those alone. Returns ``(harness, marketplace,
     error)`` per attempt; ``error`` is None when it worked, and
     ``OUT_OF_TIME`` for one ``budget`` left no time to start.
     """
     from swe.find.plugin_drift import FixError, apply_fix, plugin_drift
 
+    _registry, archived = _archived(home)
     results = []
     for finding in plugin_drift(home):
-        if finding.kind != "unregistered":
+        if finding.kind != "unregistered" or finding.harness in archived:
             continue
         timeout = budget.timeout() if budget is not None else HUB_PLAIN_TIMEOUT_S
         if timeout is None:
