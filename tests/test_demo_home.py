@@ -156,6 +156,36 @@ class DemoHomeTest(unittest.TestCase):
                 self.assertFalse(root.exists())
                 self.assertEqual(sorted(p.name for p in home.iterdir()), [".swe"])
 
+    def test_home_with_a_dangling_git_link_or_a_quiver_hub_is_refused(self):
+        dangling = self.scratch / "home-link"
+        (dangling / ".swe").mkdir(parents=True)
+        (dangling / ".swe" / ".git").symlink_to(self.scratch / "gone")
+        legacy = self.scratch / "home-quiver"
+        (legacy / ".quiver").mkdir(parents=True)
+        (legacy / ".quiver" / "AGENTS.md").write_text("x")
+        for home, says in ((dangling, "already has a hub"), (legacy, ".quiver has a hub")):
+            with self.subTest(home=home.name):
+                before = sorted(p.name for p in home.iterdir())
+                root = self.scratch / f"stage-{home.name}"
+                run = self._script(f"--hub={self.hub}", f"--root={root}", f"--home={home}")
+                self.assertEqual(run.returncode, 1)
+                self.assertIn(says, run.stderr)
+                self.assertFalse(root.exists())
+                self.assertEqual(sorted(p.name for p in home.iterdir()), before)
+
+    def test_a_failed_home_seed_removes_only_what_it_added(self):
+        home = self.scratch / "home"
+        (home / ".claude").mkdir(parents=True)
+        (home / ".claude" / "keep").write_text("mine")
+        # A stale lock makes git config fail after .codex was created.
+        (home / ".gitconfig.lock").write_text("")
+        root = self.scratch / "stage"
+        run = self._script(f"--hub={self.hub}", f"--root={root}", f"--home={home}")
+        self.assertNotEqual(run.returncode, 0)
+        self.assertFalse(root.exists())
+        self.assertEqual(sorted(p.name for p in home.iterdir()), [".claude", ".gitconfig.lock"])
+        self.assertEqual((home / ".claude" / "keep").read_text(), "mine")
+
     def test_home_must_be_an_existing_folder(self):
         root = self.scratch / "stage"
         run = self._script(f"--hub={self.hub}", f"--root={root}",

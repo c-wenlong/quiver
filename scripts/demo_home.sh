@@ -87,8 +87,15 @@ if [ -n "$home_a" ]; then
         die "$swe_dir is a symlink; swe setup will not clone through it. Nothing changed."
     elif [ -e "$swe_dir" ] && [ ! -d "$swe_dir" ]; then
         die "$swe_dir is a file, not a folder. Nothing changed."
-    elif [ -e "$swe_dir/AGENTS.md" ] || [ -L "$swe_dir/AGENTS.md" ] || [ -e "$swe_dir/.git" ]; then
+    fi
+    # Hub markers count by name, as in check_target: a dangling .git link
+    # is still a hub. With no ~/.swe yet, swe migrates ~/.quiver to it on
+    # first sight, so a hub there would be in the way too.
+    has_hub() { [ -e "$1/AGENTS.md" ] || [ -L "$1/AGENTS.md" ] || [ -e "$1/.git" ] || [ -L "$1/.git" ]; }
+    if has_hub "$swe_dir"; then
         die "$swe_dir already has a hub, so this is not a fresh HOME. Use another --home, or move ~/.swe aside first. Nothing changed."
+    elif [ ! -e "$swe_dir" ] && [ ! -L "$swe_dir" ] && has_hub "$home_a/.quiver"; then
+        die "$home_a/.quiver has a hub, which swe would move to ~/.swe before setup. Use another --home, or move ~/.quiver aside first. Nothing changed."
     fi
     need_dir_or_absent "$home_a/.claude"
     need_dir_or_absent "$home_a/.codex"
@@ -114,6 +121,7 @@ fi
 
 created_root=""
 created=""   # names under $root, removed on failure when $root was not new
+home_created=""   # entries this run added under --home, removed on failure
 cleanup() {
     status=$?
     if [ "$status" -ne 0 ]; then
@@ -122,6 +130,7 @@ cleanup() {
         else
             for name in $created; do rm -rf "${root:?}/$name"; done
         fi
+        for name in $home_created; do rm -rf "${home_a:?}/$name"; done
         say "demo_home: failed; removed what this run created."
     fi
     exit "$status"
@@ -148,6 +157,11 @@ git -C "$root/fork.git" remote remove origin >/dev/null 2>&1 || true
 # Give a HOME empty harness folders and the demo identity. An existing
 # .gitconfig (only possible with --home) is kept as it is.
 seed_machine() {
+    for name in .claude .codex .gitconfig; do
+        if [ "$1" = "$home_a" ] && [ ! -e "$1/$name" ] && [ ! -L "$1/$name" ]; then
+            home_created="$home_created $name"
+        fi
+    done
     mkdir -p "$1/.claude" "$1/.codex"
     if [ -e "$1/.gitconfig" ] || [ -L "$1/.gitconfig" ]; then
         if ! git config --file "$1/.gitconfig" user.email >/dev/null 2>&1; then
