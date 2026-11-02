@@ -1452,6 +1452,21 @@ raw editor. <code>swe hooks list --json</code> rows now carry <code>summary</cod
 </ul>
 <h3 id="fixed"><a class="anchor" href="#fixed"></a>Fixed</h3>
 <ul>
+<li><p><strong><code>swe sync</code> no longer stops on two machines' <code>harness.json</code>.</strong> The
+registry (<code>config/harness.json</code>) is versioned in the hub, so every
+machine that runs <code>swe setup --hub=&lt;same hub&gt;</code> writes it. When two
+did so before their first sync, the second machine's <code>swe sync</code>
+stopped on a merge conflict in a file whose copies differed only in
+each harness's <code>added</code> time. Sync now merges that file harness by
+harness, then field by field, when git's line merge stops on it: a
+change only one side made goes through, <code>added</code> keeps the earlier
+time, and <code>version</code> and <code>discovered_via</code> keep this machine's value.
+Both sides changing anything else (state, pin, capabilities ...)
+differently is still a conflict that changes nothing, as is a
+<code>harness.json</code> conflict next to a conflict in any other file. Hubs
+that already track the file keep it; nothing is untracked or deleted.
+The <code>--json</code> merge row gains <code>resolved: [path]</code> when this happened.</p>
+</li>
 <li><p><strong>Mac: a picked hub's web app is the whole window now.</strong> The machine
 switcher used to open the hub only in the panel, so the web app's own
 sidebar nested inside the native one. While a hub is up the window is

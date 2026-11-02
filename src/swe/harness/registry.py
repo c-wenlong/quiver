@@ -99,7 +99,87 @@ def save_registry(tools: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     # Atomic: a crash mid-write used to leave a truncated harness.json that
     # then bricked every registry command with a bare JSONDecodeError.
-    atomic_write_text(HARNESS_FILE, json.dumps(tools, indent=2) + "\n")
+    atomic_write_text(HARNESS_FILE, registry_text(tools))
+
+
+def registry_text(tools: dict) -> str:
+    """harness.json's bytes for ``tools``: what save_registry writes and
+    what `swe sync` commits after merging two machines' copies."""
+    return json.dumps(tools, indent=2) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Three-way merge, for `swe sync`. harness.json is versioned in the hub
+# (config/ is the versioned half of ~/.swe), so every machine shares it. Two
+# machines that each register the same harness before their first sync (both
+# ran `swe setup --hub=<same hub>`) write the same entry with a different
+# "added" time, and git's line merge stops on that. Merging entry by entry,
+# then field by field, lets every change through that touches a different
+# harness or field; only a real disagreement is still a conflict.
+# ---------------------------------------------------------------------------
+
+_ABSENT = object()
+# What a both-changed rule returns for a conflict. Not None: null is a
+# real value (a version probe that failed).
+_CONFLICT = object()
+
+# Fields a machine fills in about itself when it registers or probes a
+# harness. When both sides set one differently: "added" keeps the earlier
+# time, the others keep this machine's value (it probed its own binary).
+MACHINE_FIELDS = ("added", "version", "discovered_via")
+
+
+def _merge_keys(base: dict, ours: dict, theirs: dict, both_changed) -> dict | None:
+    """Merge three objects key by key: a key one side changed takes that
+    side's value (a removal included); ``both_changed(key, b, o, t)``
+    decides the rest and returns ``_ABSENT`` to drop the key or
+    ``_CONFLICT`` for a conflict. Our key order first, then keys only theirs has."""
+    merged = {}
+    for key in [*ours, *(k for k in theirs if k not in ours)]:
+        b = base.get(key, _ABSENT)
+        o = ours.get(key, _ABSENT)
+        t = theirs.get(key, _ABSENT)
+        if o == t or t == b:
+            value = o
+        elif o == b:
+            value = t
+        else:
+            value = both_changed(key, b, o, t)
+            if value is _CONFLICT:
+                return None
+        if value is not _ABSENT:
+            merged[key] = value
+    return merged
+
+
+def _merge_field(key, b, o, t):
+    if key not in MACHINE_FIELDS or o is _ABSENT or t is _ABSENT:
+        return _CONFLICT
+    if key == "added" and isinstance(o, str) and isinstance(t, str):
+        return min(o, t)  # ISO times sort as strings
+    return o
+
+
+def _merge_entry(name, b, o, t):
+    if b is _ABSENT:
+        b = {}  # both sides registered it on their own
+    if not all(isinstance(x, dict) for x in (b, o, t)):
+        return _CONFLICT  # removed on one side, changed on the other
+    merged = _merge_keys(b, o, t, _merge_field)
+    return _CONFLICT if merged is None else merged
+
+
+def merge_registries(base: dict, ours: dict, theirs: dict) -> dict | None:
+    """Three-way merge of harness.json documents, or None on a conflict.
+
+    ``base`` is the common ancestor's registry ({} when neither side had
+    the file). A harness only one side added, removed or changed takes
+    that side's entry; within an entry both sides changed, a field only
+    one side changed takes that side's value, and the ``MACHINE_FIELDS``
+    are settled as above. Anything else both sides changed differently
+    (state, pin, capabilities, aliases ...) is a conflict.
+    """
+    return _merge_keys(base, ours, theirs, _merge_entry)
 
 
 def alias_map(tools: dict) -> dict[str, str]:

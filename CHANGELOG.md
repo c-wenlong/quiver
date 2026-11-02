@@ -1319,6 +1319,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe sync` no longer stops on two machines' `harness.json`.** The
+  registry (`config/harness.json`) is versioned in the hub, so every
+  machine that runs `swe setup --hub=<same hub>` writes it. When two
+  did so before their first sync, the second machine's `swe sync`
+  stopped on a merge conflict in a file whose copies differed only in
+  each harness's `added` time. Sync now merges that file harness by
+  harness, then field by field, when git's line merge stops on it: a
+  change only one side made goes through, `added` keeps the earlier
+  time, and `version` and `discovered_via` keep this machine's value.
+  Both sides changing anything else (state, pin, capabilities ...)
+  differently is still a conflict that changes nothing, as is a
+  `harness.json` conflict next to a conflict in any other file. Hubs
+  that already track the file keep it; nothing is untracked or deleted.
+  The `--json` merge row gains `resolved: [path]` when this happened.
+
 - **Mac: a picked hub's web app is the whole window now.** The machine
   switcher used to open the hub only in the panel, so the web app's own
   sidebar nested inside the native one. While a hub is up the window is

@@ -135,7 +135,13 @@ Sync merges and never rebases, and each merge is tried first with `git
 merge-tree --write-tree` on unreferenced commits built from a scratch index.
 A conflict therefore stops the sync before the branch, the index or the
 working tree moves, and a merge that still fails late is aborted and rolled
-back to the saved HEAD and index tree. It never force-pushes. Every `git add`
+back to the saved HEAD and index tree. It never force-pushes. One conflict it
+settles itself: `config/harness.json`, which every machine writes (`swe setup`
+registers what it finds), so two machines set up from one hub differ at least
+in each entry's `added` time. When the line merge stops on that file alone,
+`registry.merge_registries` merges it harness by harness and field by field;
+`added` keeps the earlier time, `version` and `discovered_via` keep this
+machine's value, and any other field both sides changed is still a conflict. Every `git add`
 excludes `paths.GITIGNORE_BODY`'s paths by pathspec, so a hub with an older
 `.gitignore` still never commits `secrets/`, `cache/` or the listed `data/` stores; those files
 are reported as held back.
