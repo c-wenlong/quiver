@@ -188,7 +188,7 @@ def _print_marketplaces(rows: list[dict]) -> None:
 def _hub_data(home: Path, cloned: dict | None) -> dict:
     """The ``hub`` key of ``swe setup --json``: whether a hub can still be
     cloned as ``~/.swe`` (the apps show their hub URL field only then),
-    the demo hub to fork (null until it exists), and what this run cloned."""
+    the demo hub to fork (null when unset), and what this run cloned."""
     from swe.init.hub import DEMO_HUB_URL, can_clone
 
     return {"can_clone": can_clone(home), "demo_url": DEMO_HUB_URL or None,

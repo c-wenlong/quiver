@@ -58,8 +58,8 @@ subtitle, and a footer with Skip setup, Back and Continue.
    `AGENTS.md`, no `.git`; the hub's own state there doesn't count),
    **Start from your hub repo** offers `swe setup --hub`: a URL field,
    the note "Fork a hub repo first (or use it as a template for a private
-   copy), then paste your fork's URL.", the demo hub link once
-   `DEMO_HUB_URL` is set, and **Clone**. The clone runs on the hub's own
+   copy), then paste your fork's URL.", the demo hub link
+   (`DEMO_HUB_URL`, hidden when empty), and **Clone**. The clone runs on the hub's own
    thread; the card reads "Cloning <url>… This can take a few minutes."
    and Continue waits while the page polls `GET /v1/app/setup?hub=1`.
    A refusal or failure (an existing hub, a URL git can't reach, a
@@ -125,7 +125,7 @@ refresh button reads everything again and starts the steps over.
 - `first_run` is the Mac app's `FirstRun.shouldOffer` check: no shared
   `AGENTS.md`.
 - `hub` is `hub_status`: `can_clone` (whether `~/.swe` can take a
-  clone now), `demo_url` (null until the demo hub exists) and `job`, this
+  clone now), `demo_url` (the demo hub to fork, null when unset) and `job`, this
   hub process's last clone: `state` is `idle`, `cloning`, `done` or
   `failed`, `url` is the URL with any credentials removed, `error` is
   why it failed, and `cloned` is `swe setup --hub`'s
