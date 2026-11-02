@@ -119,6 +119,9 @@ def registry_text(tools: dict) -> str:
 # ---------------------------------------------------------------------------
 
 _ABSENT = object()
+# What a both-changed rule returns for a conflict. Not None: null is a
+# real value (a version probe that failed).
+_CONFLICT = object()
 
 # Fields a machine fills in about itself when it registers or probes a
 # harness. When both sides set one differently: "added" keeps the earlier
@@ -129,8 +132,8 @@ MACHINE_FIELDS = ("added", "version", "discovered_via")
 def _merge_keys(base: dict, ours: dict, theirs: dict, both_changed) -> dict | None:
     """Merge three objects key by key: a key one side changed takes that
     side's value (a removal included); ``both_changed(key, b, o, t)``
-    decides the rest and returns ``_ABSENT`` to drop the key or ``None``
-    for a conflict. Our key order first, then keys only theirs has."""
+    decides the rest and returns ``_ABSENT`` to drop the key or
+    ``_CONFLICT`` for a conflict. Our key order first, then keys only theirs has."""
     merged = {}
     for key in [*ours, *(k for k in theirs if k not in ours)]:
         b = base.get(key, _ABSENT)
@@ -142,7 +145,7 @@ def _merge_keys(base: dict, ours: dict, theirs: dict, both_changed) -> dict | No
             value = t
         else:
             value = both_changed(key, b, o, t)
-            if value is None:
+            if value is _CONFLICT:
                 return None
         if value is not _ABSENT:
             merged[key] = value
@@ -151,7 +154,7 @@ def _merge_keys(base: dict, ours: dict, theirs: dict, both_changed) -> dict | No
 
 def _merge_field(key, b, o, t):
     if key not in MACHINE_FIELDS or o is _ABSENT or t is _ABSENT:
-        return None
+        return _CONFLICT
     if key == "added" and isinstance(o, str) and isinstance(t, str):
         return min(o, t)  # ISO times sort as strings
     return o
@@ -161,8 +164,9 @@ def _merge_entry(name, b, o, t):
     if b is _ABSENT:
         b = {}  # both sides registered it on their own
     if not all(isinstance(x, dict) for x in (b, o, t)):
-        return None  # removed on one side, changed on the other
-    return _merge_keys(b, o, t, _merge_field)
+        return _CONFLICT  # removed on one side, changed on the other
+    merged = _merge_keys(b, o, t, _merge_field)
+    return _CONFLICT if merged is None else merged
 
 
 def merge_registries(base: dict, ours: dict, theirs: dict) -> dict | None:

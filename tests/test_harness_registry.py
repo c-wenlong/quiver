@@ -112,6 +112,12 @@ class MergeRegistriesTest(unittest.TestCase):
         })
         self.assertEqual(list(merged), ["claude", "codex"])  # our order first
 
+    def test_a_null_version_from_a_failed_probe_is_kept_not_a_conflict(self):
+        ours = {"claude": self.entry(added="2026-11-02T09:05:00", version=None)}
+        theirs = {"claude": self.entry(added="2026-11-02T09:01:00", version="2.1.3")}
+        self.assertEqual(merge_registries({}, ours, theirs), {
+            "claude": self.entry(added="2026-11-02T09:01:00", version=None)})
+
     def test_one_sided_changes_win_entry_by_entry_and_field_by_field(self):
         base = {"claude": self.entry(), "codex": {"command": "codex"},
                 "pi": {"command": "pi"}}
